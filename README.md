@@ -196,7 +196,7 @@ it does not publish an app, grant tenant data access, or install a Composer App.
 Docker is sufficient; Node.js and the CLI need not be installed on the host:
 
 ```sh
-docker run --rm -v "${PWD}:/workspace" ghcr.io/nexia-cloud-os/cli:0.1.0-alpha.3 init my-app
+docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm -v "${PWD}:/workspace" -w /workspace node:22-bookworm-slim npx --yes --ignore-scripts @amuzcorp/nexia-cli@0.1.0-alpha.3 init my-app
 cd my-app
 # Only when using an alternate platform:
 docker compose run --rm dev internal endpoint https://your-developer-platform
@@ -213,12 +213,14 @@ app source, and stores CLI configuration in a dedicated named volume. It uses a
 non-root process and never mounts the Docker socket or host credentials.
 `NEXIA_PORT=4312 docker compose up --build` selects another local preview port.
 The default port is 4310. Local platform DNS is mapped through Docker's host
-gateway; use HTTPS for a remote platform. On Linux with a non-1000 user ID, give
-the container user write access to the selected workspace before `init`.
+gateway; use HTTPS for a remote platform. The initialization command uses the
+host user ID so newly created files remain owned by the developer.
 
-The image workflow tests and builds pull requests without pushing images; main
-publishes versioned amd64/arm64 images and an `alpha` tag to GHCR. The versioned
-image must be available before distributing a CLI release that references it.
+The generated image installs the exact public npm CLI version on the official
+Node.js image, so GHCR credentials are unnecessary. It does not copy app files or
+credentials into image layers. The image workflow also tests and builds pull
+requests without pushing images; main publishes versioned amd64/arm64 images and
+an `alpha` tag to GHCR for users with registry access.
 
 ## AI handoff
 
