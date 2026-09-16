@@ -14,13 +14,7 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --ignore-scripts --no-audit --no-fund
-          else
-            npm install --ignore-scripts --no-audit --no-fund
-          fi
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm pack --dry-run
 

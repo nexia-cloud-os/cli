@@ -4,7 +4,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nexia-cloud-os/cli.git"
+    "url": "git+https://github.com/nexia-cloud-os/cli.git"
   },
   "publishConfig": {
     "access": "public",
@@ -17,7 +17,7 @@
     "node": ">=22"
   },
   "bin": {
-    "nexia": "./src/cli.js"
+    "nexia": "src/cli.js"
   },
   "files": [
     "src",

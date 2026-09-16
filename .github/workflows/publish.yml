@@ -26,13 +26,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node --input-type=module -e 'import fs from "node:fs"; const p=JSON.parse(fs.readFileSync("package.json")); if(p.private || p.version !== process.env.RELEASE_VERSION || !p.version.includes("-alpha.")) process.exit(1);'
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --ignore-scripts --no-audit --no-fund
-          else
-            npm install --ignore-scripts --no-audit --no-fund
-          fi
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm pack --dry-run
       - run: npm publish --access public --tag alpha
