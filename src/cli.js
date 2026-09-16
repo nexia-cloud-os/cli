@@ -109,5 +109,6 @@ try {
   } else throw new Error(`Unknown command: ${command}\nRun nexia help for available commands.`);
 } catch (error) {
   console.error(`Nexia: ${error.code === 'EEXIST' ? 'The target directory already exists. Choose a new directory; existing files were not overwritten.' : error.message}`);
+  console.error('Developer support: https://github.com/nexia-cloud-os/developer-support/issues/new/choose (remove credentials and private data before reporting).');
   process.exitCode = 1;
 }
