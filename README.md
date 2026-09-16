@@ -7,13 +7,15 @@ Install the experimental alpha from npm:
 
 ```sh
 npm install -g @amuzcorp/nexia-cli@alpha
+# Create a project and prepare its sandbox in the developer console.
+nexia login <project-id>
 nexia init my-app
 nexia dev my-app
 ```
 
 This alpha supports local preview, browser-approved project connections, and
 static app submission for administrator review. It does not execute remote
-Functions or install tenant Apps. See the alpha.2 workflow below.
+Functions or install tenant Apps. The alpha.3 development flow requires a ready remote sandbox.
 
 ## Install or update PHP and Composer
 
@@ -65,10 +67,15 @@ node developer-kit/src/cli.js validate ./my-app
 node developer-kit/src/cli.js dev ./my-app
 ```
 
-Open the printed loopback URL and edit `my-app/public/index.html`. Saving public
+Open the printed **Nexia workspace** URL, enter the project sandbox, and connect
+the local app. It opens as a real Nexia work tab alongside the sidebar, settings,
+and other workspace features. Edit `my-app/public/index.html`. Saving public
 files triggers a browser refresh where recursive file watching is supported.
 Stop the server with Ctrl+C. If the port is busy, choose `--port 4311`.
-Restart the preview after changing screen routes in `nexia.json`.
+Restart the preview and reconnect after changing screen routes in `nexia.json`.
+Allow local-network access if the browser prompts. The manifest is readable
+only by the exact project workspace origin; local app files receive no Nexia
+cookies or tokens. An expired sandbox must be restored by the operator.
 
 `init` requires a new directory and never replaces existing files. Parent
 directories must already exist. A filesystem failure can leave a partially
@@ -77,7 +84,9 @@ created directory; inspect it and choose a new target before retrying.
 The preview serves only the `public/` tree, refuses hidden paths and escaping
 symlinks, binds to `127.0.0.1`, and rejects other Host/origin values. Do not put
 secrets in public assets. It runs no project commands and provides no API proxy,
-tenant access, authentication, React bundling, Functions runtime, or deployment.
+tenant API authority, React bundling, or a Functions runtime. Authentication and
+the full Nexia workspace run on the remote sandbox. Core source and runtime
+images are never included in the developer kit or generated Docker environment.
 Automatic refresh is full-page reload, not state-preserving HMR.
 
 ## Manifest
@@ -150,9 +159,11 @@ the `alpha` dist-tag. `UNLICENSED` metadata reserves rights; npm availability
 does not grant an open-source license. Publication requires explicit release
 authorization and npm organization access.
 
-## Project connection and review (alpha.2)
+## Project connection and review (alpha.3)
 
-Create a developer account and project in the Nexia developer console. Configure
+Create a developer account and project in the Nexia developer console. Prepare
+its dedicated workspace before running `dev`; preparing a workspace may take a
+few minutes. Configure
 an alternate platform with `nexia internal endpoint https://your-platform`, or
 `http://developers.nexia.test:8080` for a local instance. Endpoint changes clear
 the saved CLI connection. Login does not request your password in the terminal:
@@ -185,13 +196,15 @@ it does not publish an app, grant tenant data access, or install a Composer App.
 Docker is sufficient; Node.js and the CLI need not be installed on the host:
 
 ```sh
-docker run --rm -v "${PWD}:/workspace" ghcr.io/nexia-cloud-os/cli:0.1.0-alpha.2 init my-app
+docker run --rm -v "${PWD}:/workspace" ghcr.io/nexia-cloud-os/cli:0.1.0-alpha.3 init my-app
 cd my-app
-docker compose up --build
-# In another terminal:
-docker compose run --rm dev internal endpoint http://developers.nexia.test:8080
+# Only when using an alternate platform:
+docker compose run --rm dev internal endpoint https://your-developer-platform
 docker compose run --rm dev login <project-id>
 docker compose run --rm dev link
+# Prepare the project workspace in the developer console.
+docker compose up --build
+# In another terminal, after verifying the app in the Nexia workspace:
 docker compose run --rm dev deploy
 ```
 

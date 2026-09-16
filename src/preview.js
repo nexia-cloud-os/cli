@@ -3,10 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import path from 'node:path';
 import { resolvePublicFile, validateProject } from './project.js';
+import { validateEndpoint } from './connection.js';
 
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2' };
 
-export async function startPreview(directory, port = 4310, { container = false } = {}) {
+export async function startPreview(directory, port = 4310, { container = false, workspaceOrigin = null } = {}) {
+  if (workspaceOrigin !== null) workspaceOrigin = validateEndpoint(workspaceOrigin);
   const manifest = await validateProject(directory);
   const root = path.join(path.resolve(directory), 'public');
   const streams = new Set();
@@ -14,8 +16,11 @@ export async function startPreview(directory, port = 4310, { container = false }
     // Reject DNS rebinding and cross-origin reads. The listener is loopback only.
     const address = server.address();
     const origin = `http://127.0.0.1:${address.port}`;
-    if (req.headers.host !== `127.0.0.1:${address.port}` || (req.headers.origin && req.headers.origin !== origin)) {
+    if (req.headers.host !== `127.0.0.1:${address.port}` || (req.headers.origin && req.headers.origin !== origin && !(req.url === '/__nexia_manifest' && req.headers.origin === workspaceOrigin))) {
       res.writeHead(403).end('Open the exact preview URL printed in your terminal.'); return;
+    }
+    if (req.method === 'OPTIONS' && req.url === '/__nexia_manifest' && workspaceOrigin && req.headers.origin === workspaceOrigin && req.headers['access-control-request-method'] === 'GET' && !req.headers['access-control-request-headers']) {
+      res.writeHead(204, { 'Access-Control-Allow-Origin': workspaceOrigin, 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Private-Network': 'true', Vary: 'Origin' }).end(); return;
     }
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
     let pathname;
@@ -24,6 +29,14 @@ export async function startPreview(directory, port = 4310, { container = false }
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Security-Policy', `frame-ancestors ${workspaceOrigin || "'none'"}`);
+    if (pathname === '/__nexia_manifest') {
+      if (!workspaceOrigin || req.headers.origin !== workspaceOrigin) { res.writeHead(403).end(); return; }
+      res.setHeader('Access-Control-Allow-Origin', workspaceOrigin);
+      res.setHeader('Vary', 'Origin');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(req.method === 'HEAD' ? undefined : JSON.stringify(manifest)); return;
+    }
     if (pathname === '/__nexia_reload') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive' });
       if (req.method === 'HEAD') { res.end(); return; }
