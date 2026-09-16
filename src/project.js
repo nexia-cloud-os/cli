@@ -49,10 +49,14 @@ export async function initProject(directory) {
   };
   const files = {
     'nexia.json': JSON.stringify(manifest, null, 2) + '\n',
-    'public/index.html': '<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nexia app preview</title><style>body{font:18px system-ui;max-width:48rem;margin:10vh auto;padding:24px;line-height:1.6}small{color:#555}</style><main><small>Local preview</small><h1>Your Nexia app starts here</h1><p>Edit public/index.html and save to refresh this page.</p><p>This preview is not connected to Nexia. Data access and deployment require the remote development service.</p></main></html>\n',
+    'public/index.html': '<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nexia app preview</title><style>body{font:18px system-ui;max-width:48rem;margin:10vh auto;padding:24px;line-height:1.6}small{color:#555}</style><main><small>Local preview</small><h1>Your Nexia app starts here</h1><p>Edit public/index.html and save to refresh this page.</p><p>This preview is not connected to Nexia. Run nexia deploy when your app is ready for review.</p></main></html>\n',
     'README.md': '# Local Nexia app\n\nRun `nexia validate .`, then `nexia dev`. Edit files in `public/`.\nThis is a static local preview. It does not save data to Nexia or install an App.\nThe JSON manifest is an experimental remote-app contract, not the existing PHP App manifest.\n',
-    'AGENTS.md': '# App development\n\nKeep public browser assets inside public/. Never put secrets there.\nUse the public Nexia SDK/API contracts. Local preview has no Core connection.\nDo not invent successful authentication, installation, or deployment.\n',
+    'AGENTS.md': '# App development\n\nKeep public browser assets inside public/. Never put secrets there.\nUse public Nexia contracts and advertised capabilities only. Browser previews have no tenant data authority.\nRun nexia validate and inspect browser behavior before submission. nexia deploy uploads an immutable version for review, not customer installation. Never read or copy CLI credentials.\n',
     '.gitignore': 'node_modules/\n.nexia/\n.env*\n',
+    'Dockerfile': 'FROM ghcr.io/nexia-cloud-os/cli:0.1.0-alpha.2\nWORKDIR /workspace\nCMD ["dev", ".", "--container"]\n',
+    'compose.yaml': 'services:\n  dev:\n    build: .\n    ports:\n      - "127.0.0.1:${NEXIA_PORT:-4310}:${NEXIA_PORT:-4310}"\n    command: ["dev", ".", "--container", "--port", "${NEXIA_PORT:-4310}"]\n    volumes:\n      - .:/workspace\n      - nexia-config:/home/node/.config/nexia\n    extra_hosts:\n      - "developers.nexia.test:host-gateway"\n    init: true\nvolumes:\n  nexia-config:\n',
+    '.dockerignore': '**\n!Dockerfile\n',
+
   };
   for (const [filename, content] of Object.entries(files)) {
     await writeFile(path.join(target, filename), content, { flag: 'wx' });

@@ -11,8 +11,9 @@ nexia init my-app
 nexia dev my-app
 ```
 
-This release provides local preview only. It does not connect an app to Core,
-authenticate a developer, or deploy an app. The workspace commands below also support development from source.
+This alpha supports local preview, browser-approved project connections, and
+static app submission for administrator review. It does not execute remote
+Functions or install tenant Apps. See the alpha.2 workflow below.
 
 ## Install or update PHP and Composer
 
@@ -107,10 +108,9 @@ node developer-kit/src/cli.js doctor --endpoint http://127.0.0.1:8000 --allow-in
 ```
 
 The shared client reads `/.well-known/nexia-developer-platform` and validates its
-response. Discovery proves only that the host advertises the protocol. The Core
-foundation currently advertises remote capabilities as unavailable. `login`,
-`projects`, and `deploy` exit with a prerequisite message and never create fake
-remote state or ask for tokens.
+response. Discovery proves only that the host advertises the protocol. Core 0.6.0 advertises project pairing, project management, manifest validation
+and review submission. Create projects in the web console, then use `login` and
+`deploy` as described below. Remote Function execution remains unavailable.
 
 ## Read-only MCP
 
@@ -132,7 +132,8 @@ arguments. The project directory is fixed at startup. `get_project` reads an
 optional `.nexia/project.json` and returns only `project_id`, `app_id`,
 `environment`, and the endpoint origin. It strips endpoint credentials, paths,
 and query strings. These fields describe a local binding, never verified remote
-state. No command creates that binding yet. There are no mutation tools.
+state. `init` and `link` create that binding after checking the CLI connection.
+There are no mutation tools in this MCP adapter.
 
 The minimal adapter supports MCP protocol `2024-11-05`, initialization, ping,
 tool listing/calls, and newline-delimited JSON-RPC. It has no remote transport,
@@ -148,3 +149,69 @@ dry-run. They never install or upgrade host PHP/Composer. Public releases use
 the `alpha` dist-tag. `UNLICENSED` metadata reserves rights; npm availability
 does not grant an open-source license. Publication requires explicit release
 authorization and npm organization access.
+
+## Project connection and review (alpha.2)
+
+Create a developer account and project in the Nexia developer console. Configure
+an alternate platform with `nexia internal endpoint https://your-platform`, or
+`http://developers.nexia.test:8080` for a local instance. Endpoint changes clear
+the saved CLI connection. Login does not request your password in the terminal:
+
+```sh
+nexia login <project-id>
+# Open the displayed URL and approve the displayed code for your project.
+nexia init my-app
+cd my-app
+nexia dev
+nexia validate
+nexia deploy
+```
+
+`init` binds the new directory to the connected project. For an existing app,
+use `nexia link` explicitly. `nexia status` shows the server-confirmed connection;
+`nexia logout` revokes it. Connections expire after 30 days and can be revoked in
+the console. Credentials are stored with owner-only permissions outside the app
+in `~/.config/nexia/connection.json` (`NEXIA_CONFIG_HOME` overrides this directory).
+Never put that file in source control, an image, or an AI prompt.
+
+Deploy uploads at most 100 static public files and 5 MB. It never runs project
+scripts, uploads hidden files, follows public symlinks, or executes server code.
+Versions are immutable; retrying identical content is idempotent. Changed content
+requires a new manifest version. A successful submission is `pending_review`;
+it does not publish an app, grant tenant data access, or install a Composer App.
+
+## Docker-only development
+
+Docker is sufficient; Node.js and the CLI need not be installed on the host:
+
+```sh
+docker run --rm -v "${PWD}:/workspace" ghcr.io/nexia-cloud-os/cli:0.1.0-alpha.2 init my-app
+cd my-app
+docker compose up --build
+# In another terminal:
+docker compose run --rm dev internal endpoint http://developers.nexia.test:8080
+docker compose run --rm dev login <project-id>
+docker compose run --rm dev link
+docker compose run --rm dev deploy
+```
+
+The generated Compose file binds the preview to host loopback, mounts only the
+app source, and stores CLI configuration in a dedicated named volume. It uses a
+non-root process and never mounts the Docker socket or host credentials.
+`NEXIA_PORT=4312 docker compose up --build` selects another local preview port.
+The default port is 4310. Local platform DNS is mapped through Docker's host
+gateway; use HTTPS for a remote platform. On Linux with a non-1000 user ID, give
+the container user write access to the selected workspace before `init`.
+
+The image workflow tests and builds pull requests without pushing images; main
+publishes versioned amd64/arm64 images and an `alpha` tag to GHCR. The versioned
+image must be available before distributing a CLI release that references it.
+
+## AI handoff
+
+The project's **Ask AI to build** page supplies scoped copyable instructions,
+including platform selection, login, starter creation, preview, and review
+submission. The starter's `AGENTS.md` keeps public assets and credentials apart.
+The read-only `nexia mcp` adapter can expose manifest validation and non-secret
+project metadata to a coding assistant. No AI provider key or billing account is
+created by this workflow.

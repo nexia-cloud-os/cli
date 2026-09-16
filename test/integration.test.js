@@ -14,7 +14,7 @@ import { serveMcp } from '../src/mcp.js';
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 function invoke(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NEXIA_CONFIG_HOME: path.join(tmpdir(), `nexia-test-empty-config-${process.pid}`) } });
     let stdout = '', stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
@@ -28,7 +28,7 @@ async function temporary(t) {
   return directory;
 }
 
-test('CLI creates and validates an app, rejects overwrite, and reports unavailable deploy', async (t) => {
+test('CLI creates and validates an app, rejects overwrite, and requires a connection for deploy', async (t) => {
   const root = await temporary(t);
   const directory = path.join(root, 'sample');
   assert.equal((await invoke(['init', directory])).code, 0);
@@ -36,7 +36,7 @@ test('CLI creates and validates an app, rejects overwrite, and reports unavailab
   assert.equal((await invoke(['init', directory])).code, 1);
   const deploy = await invoke(['deploy']);
   assert.equal(deploy.code, 1);
-  assert.match(deploy.stderr, /No remote action was performed/);
+  assert.match(deploy.stderr, /Connect a project first/);
   if (process.platform === 'darwin') {
     const setup = await invoke(['setup', '--dry-run']);
     assert.equal(setup.code, 0);

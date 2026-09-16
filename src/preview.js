@@ -6,7 +6,7 @@ import { resolvePublicFile, validateProject } from './project.js';
 
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2' };
 
-export async function startPreview(directory, port = 4310) {
+export async function startPreview(directory, port = 4310, { container = false } = {}) {
   const manifest = await validateProject(directory);
   const root = path.join(path.resolve(directory), 'public');
   const streams = new Set();
@@ -46,7 +46,7 @@ export async function startPreview(directory, port = 4310) {
   let watcher;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+    server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
   });
   try {
     watcher = watch(root, { recursive: true }, () => {
