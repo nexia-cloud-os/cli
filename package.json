@@ -1,0 +1,37 @@
+{
+  "name": "@amuzcorp/nexia-cli",
+  "version": "0.1.0-alpha.1",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nexia-cloud-os/cli.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "description": "Nexia local app development tools",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "nexia": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@amuzcorp/nexia-dev-protocol": "0.1.0-alpha.1",
+    "@amuzcorp/nexia-dev-client": "0.1.0-alpha.1"
+  },
+  "homepage": "https://github.com/nexia-cloud-os/cli#readme",
+  "bugs": {
+    "url": "https://github.com/nexia-cloud-os/cli/issues"
+  }
+}
