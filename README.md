@@ -230,3 +230,7 @@ submission. The starter's `AGENTS.md` keeps public assets and credentials apart.
 The read-only `nexia mcp` adapter can expose manifest validation and non-secret
 project metadata to a coding assistant. No AI provider key or billing account is
 created by this workflow.
+
+## Developer support
+
+For setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.
