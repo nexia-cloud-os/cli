@@ -1,5 +1,5 @@
 {
-  "name": "@amuzcorp/nexia-cli",
+  "name": "@nexia/cli",
   "version": "0.1.0-alpha.3",
   "license": "UNLICENSED",
   "repository": {
@@ -27,8 +27,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@amuzcorp/nexia-dev-protocol": "0.1.0-alpha.1",
-    "@amuzcorp/nexia-dev-client": "0.1.0-alpha.1"
+    "@nexia/dev-protocol": "0.1.0-alpha.1",
+    "@nexia/dev-client": "0.1.0-alpha.1"
   },
   "homepage": "https://github.com/nexia-cloud-os/cli#readme",
   "bugs": {

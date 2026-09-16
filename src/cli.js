@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { createNexiaClient } from '@amuzcorp/nexia-dev-client';
+import { createNexiaClient } from '@nexia/dev-client';
 import { initProject, validateProject } from './project.js';
 import { startPreview } from './preview.js';
 import { serveMcp } from './mcp.js';

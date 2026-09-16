@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { validateManifest } from '@amuzcorp/nexia-dev-protocol';
+import { validateManifest } from '@nexia/dev-protocol';
 
 export async function readManifest(directory) {
   const filename = path.join(path.resolve(directory), 'nexia.json');
@@ -54,7 +54,7 @@ export async function initProject(directory) {
     'AGENTS.md': '# App development\n\nKeep public browser assets inside public/. Never put secrets there.\nUse public Nexia contracts and advertised capabilities only. Open the remote Nexia workspace URL from nexia dev and verify tabs, sidebar, settings, and live app refresh. Never clone, copy, mount, or distribute Nexia Core. Local apps have no tenant data authority.\nRun nexia validate and inspect browser behavior before submission. nexia deploy uploads an immutable version for review, not customer installation. Never read or copy CLI credentials.\nFor setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.\n',
     'SUPPORT.md': "# Developer support\n\nFor setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.\n",
     '.gitignore': 'node_modules/\n.nexia/\n.env*\n',
-    'Dockerfile': 'FROM node:22-bookworm-slim\nRUN npm install --global --ignore-scripts --no-audit --no-fund @amuzcorp/nexia-cli@0.1.0-alpha.3 && mkdir -p /workspace /home/node/.config/nexia && chown -R node:node /workspace /home/node/.config\nUSER node\nWORKDIR /workspace\nEXPOSE 4310\nENTRYPOINT ["nexia"]\nCMD ["dev", ".", "--container"]\n',
+    'Dockerfile': 'FROM node:22-bookworm-slim\nRUN npm install --global --ignore-scripts --no-audit --no-fund @nexia/cli@0.1.0-alpha.3 && mkdir -p /workspace /home/node/.config/nexia && chown -R node:node /workspace /home/node/.config\nUSER node\nWORKDIR /workspace\nEXPOSE 4310\nENTRYPOINT ["nexia"]\nCMD ["dev", ".", "--container"]\n',
     'compose.yaml': 'services:\n  dev:\n    build: .\n    ports:\n      - "127.0.0.1:${NEXIA_PORT:-4310}:${NEXIA_PORT:-4310}"\n    command: ["dev", ".", "--container", "--port", "${NEXIA_PORT:-4310}"]\n    volumes:\n      - .:/workspace\n      - nexia-config:/home/node/.config/nexia\n    extra_hosts:\n      - "developers.nexia.test:host-gateway"\n    init: true\nvolumes:\n  nexia-config:\n',
     '.dockerignore': '**\n!Dockerfile\n',
 

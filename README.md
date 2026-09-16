@@ -1,12 +1,12 @@
 # Nexia Developer Kit
 
-Experimental `@amuzcorp/nexia-cli` alpha package for Node.js 22 or newer. It contains
+Experimental `@nexia/cli` alpha package for Node.js 22 or newer. It contains
 plain ESM JavaScript and requires no transpilation.
 
 Install the experimental alpha from npm:
 
 ```sh
-npm install -g @amuzcorp/nexia-cli@alpha
+npm install -g @nexia/cli@alpha
 # Create a project and prepare its sandbox in the developer console.
 nexia login <project-id>
 nexia init my-app
@@ -151,7 +151,7 @@ interoperability remains to be verified during finalization.
 
 ## Validation and release
 
-Run focused tests with `npm test --workspace @amuzcorp/nexia-cli` from the
+Run focused tests with `npm test --workspace @nexia/cli` from the
 development workspace, or `npm test` from this package after installing its
 dependencies. The tests exercise local preview, CLI commands, MCP, and setup
 dry-run. They never install or upgrade host PHP/Composer. Public releases use
@@ -196,7 +196,7 @@ it does not publish an app, grant tenant data access, or install a Composer App.
 Docker is sufficient; Node.js and the CLI need not be installed on the host:
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm -v "${PWD}:/workspace" -w /workspace node:22-bookworm-slim npx --yes --ignore-scripts @amuzcorp/nexia-cli@0.1.0-alpha.3 init my-app
+docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm -v "${PWD}:/workspace" -w /workspace node:22-bookworm-slim npx --yes --ignore-scripts @nexia/cli@0.1.0-alpha.3 init my-app
 cd my-app
 # Only when using an alternate platform:
 docker compose run --rm dev internal endpoint https://your-developer-platform
