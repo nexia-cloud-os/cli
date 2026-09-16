@@ -1,0 +1,33 @@
+name: Publish alpha to npm
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact alpha version from package.json
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Check release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node --input-type=module -e 'import fs from "node:fs"; const p=JSON.parse(fs.readFileSync("package.json")); if(p.private || p.version !== process.env.RELEASE_VERSION || !p.version.includes("-alpha.")) process.exit(1);'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - run: npm pack --dry-run
+      - run: npm publish --access public --tag alpha
+
