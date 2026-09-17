@@ -86,3 +86,24 @@ test('MCP validates local app and strips credentials from local binding output',
   assert.equal(project.binding.endpoint, 'https://example.com');
   assert.doesNotMatch(output, /do-not-return|password|hidden/);
 });
+
+test('remote workspace can read only the manifest from its exact allowed origin', async (t) => {
+  const root = await temporary(t);
+  const directory = path.join(root, 'sample');
+  await initProject(directory);
+  const workspaceOrigin = 'https://sbx-test.dev.nexia.to';
+  const preview = await startPreview(directory, 0, { workspaceOrigin });
+  t.after(() => preview.close());
+  const manifestUrl = `${preview.url}/__nexia_manifest`;
+  assert.equal((await fetch(manifestUrl)).status, 403);
+  assert.equal((await fetch(manifestUrl, { headers: { Origin: 'https://other.dev.nexia.to' } })).status, 403);
+  const response = await fetch(manifestUrl, { headers: { Origin: workspaceOrigin } });
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), workspaceOrigin);
+  assert.equal((await response.json()).app.id, 'dev.local.sample');
+  assert.equal((await fetch(preview.url)).headers.get('Content-Security-Policy'), `frame-ancestors ${workspaceOrigin}`);
+  assert.equal((await fetch(preview.url, { headers: { Origin: workspaceOrigin } })).status, 403);
+  const preflight = await fetch(manifestUrl, { method: 'OPTIONS', headers: { Origin: workspaceOrigin, 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('Access-Control-Allow-Private-Network'), 'true');
+  await assert.rejects(startPreview(directory, 0, { workspaceOrigin: 'http://untrusted.example' }));
+});

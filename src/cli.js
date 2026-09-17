@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { createNexiaClient } from '@amuzcorp/nexia-dev-client';
+import { createNexiaClient } from '@nexia/dev-client';
 import { initProject, validateProject } from './project.js';
 import { startPreview } from './preview.js';
 import { serveMcp } from './mcp.js';
 import { setup } from './setup.js';
-import { readConnection, setEndpoint, login, request, saveConnection } from './connection.js';
+import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { deploy } from './deploy.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 async function linkProject(directory) {
   const config = await readConnection();
@@ -28,7 +28,7 @@ const help = `Nexia developer tools
   nexia setup [--dry-run]           Install/upgrade PHP and Composer (macOS)
   nexia init <new-directory>        Create an app without overwriting files
   nexia validate [directory]        Check nexia.json and public entries
-  nexia dev [directory] [--port N]   Preview locally; refresh when files change
+  nexia dev [directory] [--port N]   Open in the remote Nexia workspace
   nexia doctor --endpoint URL       Inspect Core development capabilities
   nexia mcp [directory]             Read-only local MCP server on stdio
 
@@ -79,8 +79,22 @@ try {
   } else if (command === 'dev') {
     const port = options.port === undefined ? 4310 : Number(options.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be an integer from 1 to 65535.');
-    const preview = await startPreview(directory, port, { container: options.container === true });
-    console.log(`Local preview: ${preview.url}\n${preview.reload ? 'Save public files to refresh.' : 'Automatic refresh unavailable; refresh the browser after saving.'}\nBrowser preview is local. Use nexia deploy to submit for review. No tenant data access is granted.\nPress Ctrl+C to stop.`);
+    const config = await readConnection();
+    const connection = await request(config, 'connection');
+    if (connection.status !== 'connected' || connection.sandbox?.status !== 'active') {
+      throw new Error('A ready project sandbox is required. Open your project in the developer console and prepare its workspace first.');
+    }
+    const binding = JSON.parse(await readFile(path.join(directory, '.nexia', 'project.json'), 'utf8').catch(() => { throw new Error('Link this app first: nexia link'); }));
+    if (binding.project_id !== connection.project.id || binding.endpoint !== config.endpoint) throw new Error('This app belongs to a different project. Run nexia link to select the connected project.');
+    const workspace = new URL(validateEndpoint(connection.sandbox.workspace_url));
+    const platform = new URL(config.endpoint);
+    const launch = new URL(connection.sandbox.launch_url);
+    if (launch.origin !== platform.origin || launch.username || launch.password || workspace.username || workspace.password || !['http:', 'https:'].includes(workspace.protocol)) {
+      throw new Error('The platform returned an invalid workspace connection.');
+    }
+    const preview = await startPreview(directory, port, { container: options.container === true, workspaceOrigin: workspace.origin });
+    launch.searchParams.set('preview', preview.url);
+    console.log(`Nexia workspace: ${launch.href}\nOpen this address to add your app to the remote workspace.\n${preview.reload ? 'Save public files to refresh the app tab.' : 'Automatic refresh unavailable; refresh the app tab after saving.'}\nCore runs on the platform; this machine serves only your app.\nPress Ctrl+C to stop.`);
     let closing = false;
     const stop = async () => { if (closing) return; closing = true; await preview.close(); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -95,5 +109,6 @@ try {
   } else throw new Error(`Unknown command: ${command}\nRun nexia help for available commands.`);
 } catch (error) {
   console.error(`Nexia: ${error.code === 'EEXIST' ? 'The target directory already exists. Choose a new directory; existing files were not overwritten.' : error.message}`);
+  console.error('Developer support: https://github.com/nexia-cloud-os/developer-support/issues/new/choose (remove credentials and private data before reporting).');
   process.exitCode = 1;
 }

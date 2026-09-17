@@ -1,19 +1,21 @@
 # Nexia Developer Kit
 
-Experimental `@amuzcorp/nexia-cli` alpha package for Node.js 22 or newer. It contains
+Experimental `@nexia/cli` alpha package for Node.js 22 or newer. It contains
 plain ESM JavaScript and requires no transpilation.
 
 Install the experimental alpha from npm:
 
 ```sh
-npm install -g @amuzcorp/nexia-cli@alpha
+npm install -g @nexia/cli@alpha
+# Create a project and prepare its sandbox in the developer console.
+nexia login <project-id>
 nexia init my-app
 nexia dev my-app
 ```
 
 This alpha supports local preview, browser-approved project connections, and
 static app submission for administrator review. It does not execute remote
-Functions or install tenant Apps. See the alpha.2 workflow below.
+Functions or install tenant Apps. The alpha.3 development flow requires a ready remote sandbox.
 
 ## Install or update PHP and Composer
 
@@ -65,10 +67,15 @@ node developer-kit/src/cli.js validate ./my-app
 node developer-kit/src/cli.js dev ./my-app
 ```
 
-Open the printed loopback URL and edit `my-app/public/index.html`. Saving public
+Open the printed **Nexia workspace** URL, enter the project sandbox, and connect
+the local app. It opens as a real Nexia work tab alongside the sidebar, settings,
+and other workspace features. Edit `my-app/public/index.html`. Saving public
 files triggers a browser refresh where recursive file watching is supported.
 Stop the server with Ctrl+C. If the port is busy, choose `--port 4311`.
-Restart the preview after changing screen routes in `nexia.json`.
+Restart the preview and reconnect after changing screen routes in `nexia.json`.
+Allow local-network access if the browser prompts. The manifest is readable
+only by the exact project workspace origin; local app files receive no Nexia
+cookies or tokens. An expired sandbox must be restored by the operator.
 
 `init` requires a new directory and never replaces existing files. Parent
 directories must already exist. A filesystem failure can leave a partially
@@ -77,7 +84,9 @@ created directory; inspect it and choose a new target before retrying.
 The preview serves only the `public/` tree, refuses hidden paths and escaping
 symlinks, binds to `127.0.0.1`, and rejects other Host/origin values. Do not put
 secrets in public assets. It runs no project commands and provides no API proxy,
-tenant access, authentication, React bundling, Functions runtime, or deployment.
+tenant API authority, React bundling, or a Functions runtime. Authentication and
+the full Nexia workspace run on the remote sandbox. Core source and runtime
+images are never included in the developer kit or generated Docker environment.
 Automatic refresh is full-page reload, not state-preserving HMR.
 
 ## Manifest
@@ -142,7 +151,7 @@ interoperability remains to be verified during finalization.
 
 ## Validation and release
 
-Run focused tests with `npm test --workspace @amuzcorp/nexia-cli` from the
+Run focused tests with `npm test --workspace @nexia/cli` from the
 development workspace, or `npm test` from this package after installing its
 dependencies. The tests exercise local preview, CLI commands, MCP, and setup
 dry-run. They never install or upgrade host PHP/Composer. Public releases use
@@ -150,9 +159,11 @@ the `alpha` dist-tag. `UNLICENSED` metadata reserves rights; npm availability
 does not grant an open-source license. Publication requires explicit release
 authorization and npm organization access.
 
-## Project connection and review (alpha.2)
+## Project connection and review (alpha.3)
 
-Create a developer account and project in the Nexia developer console. Configure
+Create a developer account and project in the Nexia developer console. Prepare
+its dedicated workspace before running `dev`; preparing a workspace may take a
+few minutes. Configure
 an alternate platform with `nexia internal endpoint https://your-platform`, or
 `http://developers.nexia.test:8080` for a local instance. Endpoint changes clear
 the saved CLI connection. Login does not request your password in the terminal:
@@ -185,13 +196,15 @@ it does not publish an app, grant tenant data access, or install a Composer App.
 Docker is sufficient; Node.js and the CLI need not be installed on the host:
 
 ```sh
-docker run --rm -v "${PWD}:/workspace" ghcr.io/nexia-cloud-os/cli:0.1.0-alpha.2 init my-app
+docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm -v "${PWD}:/workspace" -w /workspace node:22-bookworm-slim npx --yes --ignore-scripts @nexia/cli@0.1.0-alpha.3 init my-app
 cd my-app
-docker compose up --build
-# In another terminal:
-docker compose run --rm dev internal endpoint http://developers.nexia.test:8080
+# Only when using an alternate platform:
+docker compose run --rm dev internal endpoint https://your-developer-platform
 docker compose run --rm dev login <project-id>
 docker compose run --rm dev link
+# Prepare the project workspace in the developer console.
+docker compose up --build
+# In another terminal, after verifying the app in the Nexia workspace:
 docker compose run --rm dev deploy
 ```
 
@@ -200,12 +213,14 @@ app source, and stores CLI configuration in a dedicated named volume. It uses a
 non-root process and never mounts the Docker socket or host credentials.
 `NEXIA_PORT=4312 docker compose up --build` selects another local preview port.
 The default port is 4310. Local platform DNS is mapped through Docker's host
-gateway; use HTTPS for a remote platform. On Linux with a non-1000 user ID, give
-the container user write access to the selected workspace before `init`.
+gateway; use HTTPS for a remote platform. The initialization command uses the
+host user ID so newly created files remain owned by the developer.
 
-The image workflow tests and builds pull requests without pushing images; main
-publishes versioned amd64/arm64 images and an `alpha` tag to GHCR. The versioned
-image must be available before distributing a CLI release that references it.
+The generated image installs the exact public npm CLI version on the official
+Node.js image, so GHCR credentials are unnecessary. It does not copy app files or
+credentials into image layers. The image workflow also tests and builds pull
+requests without pushing images; main publishes versioned amd64/arm64 images and
+an `alpha` tag to GHCR for users with registry access.
 
 ## AI handoff
 
@@ -215,3 +230,7 @@ submission. The starter's `AGENTS.md` keeps public assets and credentials apart.
 The read-only `nexia mcp` adapter can expose manifest validation and non-secret
 project metadata to a coding assistant. No AI provider key or billing account is
 created by this workflow.
+
+## Developer support
+
+For setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.
