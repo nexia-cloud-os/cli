@@ -54,6 +54,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   let preview, build, browserRuntime = null;
   try {
     while (!signal?.aborted) {
+      let readPhase = true;
       try {
         build?.check();
         const selected = await readConnection();
@@ -65,11 +66,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
         }
         if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
+          readPhase = false;
           const response = await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession } });
           if (response.writer?.app_id !== scope.app_id || response.writer.sandbox_id !== scope.sandbox_id
             || !Number.isSafeInteger(response.writer.generation) || response.writer.generation < 1) throw new Error('Invalid development writer lease.');
           writer = response.writer;
           writerCheckedAt = Date.now();
+          readPhase = true;
         }
         if (!connectionChecked) {
           const connection = await request(config, 'connection');
@@ -110,6 +113,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         let cancelled = false;
         if (state) {
           let result;
+          readPhase = Boolean(state.operation_id);
           try {
             result = state.operation_id
               ? await request(config, `v2/runtime-operations/${state.operation_id}`)
@@ -151,6 +155,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           const snapshot = await sourceSnapshot(directory);
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { browserRuntime = null; continue; }
           if (!state || snapshot.digest !== state.digest || operation?.stopped_at) {
+            readPhase = false;
             const { revision } = await syncSource(directory, { log: () => {}, config, scope });
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.
             browserRuntime = null;
@@ -166,6 +171,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           if (lastStatus !== 'source-busy') log(error.message);
           lastStatus = 'source-busy';
           await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
+        if (readPhase && (error.name === 'TimeoutError' || [502, 503, 504].includes(error.status)
+          || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(error.cause?.code))) {
+          browserRuntime = null;
+          log('Platform temporarily unavailable; retrying the status read. Source and pending requests retained.');
+          await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
         if (error.status !== 429) throw error;
