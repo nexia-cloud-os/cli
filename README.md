@@ -3,25 +3,62 @@
 Experimental `@nexia/cli` alpha package for Node.js 22 or newer. It contains
 plain ESM JavaScript and requires no transpilation.
 
-Install the experimental alpha from npm:
+## First PHP/React App
+
+Create a developer account and project at https://developers.nexia.to, then
+prepare its sandbox. Install Node.js 22.12+, npm 11.6.2 (11.x), PHP 8.4+ and
+Composer. Install the CLI and let it manage the PHP generators:
 
 ```sh
 npm install -g @nexia/cli@alpha
-# Create a project and prepare its sandbox in the developer console.
+nexia setup --devtools
 nexia login <project-id>
-nexia init my-app
-nexia dev my-app
+nexia init my-app --vendor acme --family other --name MyApp
+cd my-app
+nexia link
+nexia make:resource Note --label-ko '메모'
+nexia app register
+composer install --no-scripts
+npm install
+nexia dev
 ```
 
-This alpha supports local preview, browser-approved project connections, and
-static app submission for administrator review. It does not execute remote
-Functions or install tenant Apps. The alpha.3 development flow requires a ready remote sandbox.
+Replace `acme`, the App name, and the project ID with your own values. Each
+command is one complete line. Login opens the approval page on a local
+interactive terminal and always prints its URL. In Docker, SSH, or if opening
+fails, open that URL yourself. `--no-browser` disables automatic opening.
+
+After preparation, open **Development → Project Apps → Test permissions** in the console. Grant Note read, create and update permissions. Select a legal entity only when the App declares legal-entity-scoped permissions. Grants are explicit and expire with the sandbox. Refresh an already open App tab.
+
+Keep `nexia dev` running, open its workspace URL, and connect the App address
+when prompted. Open Notes in a work tab, create a record, save, and reopen it to
+verify persistence. `nexia dev` starts the generated App's Vite build watcher
+and serves completed bundles; PHP changes are synchronized to the sandbox.
+Install npm dependencies once before starting. Frontend changes refresh the
+App frame after a successful rebuild unless a form has unsaved changes.
+
+`init` creates files, `link` selects a project for an existing App directory,
+`app register` reserves its identity and links it to the project, and `dev`
+starts this App's development session. Run `link` after `init`, even when
+already logged in. Registration alone does not run, publish, or install an App. Existing directories are never overwritten or converted.
+
+For multiple Apps, repeat registration in each App directory and run one
+`nexia dev` per App, choosing different ports (`--port 4311` for the second).
+`nexia apps list` lists the project's Apps. Running all child directories from
+a parent project folder is not supported.
+
+The official platform is the default. For a local or separately operated
+platform only, run `nexia config endpoint <URL>` before login. Changing the
+endpoint clears the saved CLI connection. Do not use a local test launcher as
+a production installation method.
+
+`nexia setup --devtools` installs the PHP generators into the CLI-owned tools directory. It does not modify global Composer packages or require another executable on PATH. Existing independent generator installations remain supported.
 
 ## Install or update PHP and Composer
 
 ```sh
-node developer-kit/src/cli.js setup --dry-run
-node developer-kit/src/cli.js setup
+nexia setup --dry-run
+nexia setup
 ```
 
 This explicit setup command currently supports **macOS** only.
@@ -54,24 +91,24 @@ Linux and Windows
 automatic installation are not implemented. No host installation has been run
 as part of package verification.
 
-## First local app
+## Legacy static browser Apps (explicit template)
 
-From the parent development workspace, install workspace dependencies with
-`npm install`. The protocol and client dependencies resolve to sibling packages
-there. Independent checkouts use the exact alpha versions from npm and their
-committed lockfiles.
+Choose local CLI or Docker execution for the same App directory. Platform
+repositories are maintained by administrators; App developers do not clone or
+modify CLI, Core or Sandbox source. For the local path, install the public CLI
+as above, approve login, and use:
 
 ```sh
-node developer-kit/src/cli.js init ./my-app
-node developer-kit/src/cli.js validate ./my-app
-node developer-kit/src/cli.js dev ./my-app
+nexia init my-app --template browser
+nexia validate my-app
+nexia dev my-app
 ```
 
 Open the printed **Nexia workspace** URL, enter the project sandbox, and connect
 the local app. It opens as a real Nexia work tab alongside the sidebar, settings,
 and other workspace features. Edit `my-app/public/index.html`. Saving public
-files triggers a browser refresh where recursive file watching is supported.
-Stop the server with Ctrl+C. If the port is busy, choose `--port 4311`.
+files triggers a browser refresh using filesystem events locally and polling for Docker bind mounts. Unsupported local watchers fall back to polling in the CLI.
+Keep dev running in one terminal; use another for validate/deploy. Stop the server with Ctrl+C. If the port is busy, choose `--port 4311`.
 Restart the preview and reconnect after changing screen routes in `nexia.json`.
 Allow local-network access if the browser prompts. The manifest is readable
 only by the exact project workspace origin; local app files receive no Nexia
@@ -89,7 +126,7 @@ the full Nexia workspace run on the remote sandbox. Core source and runtime
 images are never included in the developer kit or generated Docker environment.
 Automatic refresh is full-page reload, not state-preserving HMR.
 
-## Manifest
+## Legacy browser manifest
 
 `nexia.json` is the canonical experimental remote-app manifest for this draft.
 It is not a replacement for existing PHP App manifests. General YAML parsing is
@@ -111,9 +148,9 @@ permission authorization.
 ## Discover the Core host
 
 ```sh
-node developer-kit/src/cli.js doctor --endpoint https://your-nexia-host
+nexia doctor --endpoint https://your-nexia-host
 # Local development only:
-node developer-kit/src/cli.js doctor --endpoint http://127.0.0.1:8000 --allow-insecure-loopback
+nexia doctor --endpoint http://127.0.0.1:8000 --allow-insecure-loopback
 ```
 
 The shared client reads `/.well-known/nexia-developer-platform` and validates its
@@ -129,8 +166,8 @@ Configure an MCP client to run Node with absolute arguments:
 {
   "mcpServers": {
     "nexia-local": {
-      "command": "node",
-      "args": ["/absolute/path/developer-kit/src/cli.js", "mcp", "/absolute/path/my-app"]
+      "command": "nexia",
+      "args": ["mcp", "/absolute/path/my-app"]
     }
   }
 }
@@ -141,7 +178,7 @@ arguments. The project directory is fixed at startup. `get_project` reads an
 optional `.nexia/project.json` and returns only `project_id`, `app_id`,
 `environment`, and the endpoint origin. It strips endpoint credentials, paths,
 and query strings. These fields describe a local binding, never verified remote
-state. `init` and `link` create that binding after checking the CLI connection.
+state. `link` creates that binding after checking the CLI connection; `init` only creates source files.
 There are no mutation tools in this MCP adapter.
 
 The minimal adapter supports MCP protocol `2024-11-05`, initialization, ping,
@@ -159,68 +196,105 @@ the `alpha` dist-tag. `UNLICENSED` metadata reserves rights; npm availability
 does not grant an open-source license. Publication requires explicit release
 authorization and npm organization access.
 
-## Project connection and review (alpha.3)
+## Project connection and review
 
 Create a developer account and project in the Nexia developer console. Prepare
-its dedicated workspace before running `dev`; preparing a workspace may take a
-few minutes. Configure
-an alternate platform with `nexia internal endpoint https://your-platform`, or
-`http://developers.nexia.test:8080` for a local instance. Endpoint changes clear
-the saved CLI connection. Login does not request your password in the terminal:
+its sandbox before running `dev`; preparation may take a few minutes.
+The default platform is `https://developers.nexia.to`. Login opens the approval
+page locally and prints its URL for Docker, SSH or an automatic-opening failure.
+Login does not request your password in the terminal:
 
 ```sh
 nexia login <project-id>
 # Open the displayed URL and approve the displayed code for your project.
-nexia init my-app
+nexia init my-app --vendor acme --family other --name MyApp
 cd my-app
+nexia link
+nexia make:resource Note --label-ko '메모'
+nexia app register
+composer install --no-scripts
+npm install
+npm run build
 nexia dev
-nexia validate
-nexia deploy
 ```
 
-`init` binds the new directory to the connected project. For an existing app,
-use `nexia link` explicitly. `nexia status` shows the server-confirmed connection;
+Keep `dev` running and confirm a saved record in the workspace. In another
+terminal in the App directory, validate and submit the version for review:
+
+```sh
+nexia validate
+nexia deploy --version 1.0.0
+```
+
+For a local or separately operated platform only, use
+`nexia config endpoint <URL>` with the operator-provided address before login.
+Changing the endpoint clears the saved CLI connection.
+
+`init` only creates local files. Use `nexia link` explicitly for both new and
+existing Apps. `nexia status` shows the server-confirmed connection;
 `nexia logout` revokes it. Connections expire after 30 days and can be revoked in
 the console. Credentials are stored with owner-only permissions outside the app
 in `~/.config/nexia/connection.json` (`NEXIA_CONFIG_HOME` overrides this directory).
 Never put that file in source control, an image, or an AI prompt.
 
-Deploy uploads at most 100 static public files and 5 MB. It never runs project
-scripts, uploads hidden files, follows public symlinks, or executes server code.
-Versions are immutable; retrying identical content is idempotent. Changed content
-requires a new manifest version. A successful submission is `pending_review`;
-it does not publish an app, grant tenant data access, or install a Composer App.
+For PHP/React Apps, `deploy --version` synchronizes the registered App's source
+and requests an isolated artifact build. Check the returned build ID with
+`nexia submissions status <build-id>`. Build processing, review approval,
+publication and installation are separate steps; submission grants no tenant
+data access.
 
-## Docker-only development
+For legacy static browser Apps, `deploy` uses the version in `nexia.json` and
+uploads at most 100 public files and 5 MB. It never runs project scripts,
+uploads hidden files, follows public symlinks, or executes server code.
+Static versions are immutable; retrying identical content is idempotent.
+Changed content requires a new manifest version. A successful static submission
+is `pending_review`; it does not publish or install the App.
 
-Docker is sufficient; Node.js and the CLI need not be installed on the host:
+## Docker development (alternative to local CLI)
+
+Start from a PHP/React App directory generated with the public tools in
+[First PHP/React App](#first-phpreact-app), or an existing App checkout. Its
+generated Dockerfile installs PHP, Composer, Node.js, npm, CLI and devtools;
+continuing development in this directory requires only Docker with Compose
+on the host. The standalone Node-only CLI image does not include the PHP
+generators and cannot create a PHP/React App by itself.
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -e npm_config_cache=/tmp/npm -v "${PWD}:/workspace" -w /workspace node:22-bookworm-slim npx --yes --ignore-scripts @nexia/cli@0.1.0-alpha.3 init my-app
 cd my-app
-# Only when using an alternate platform:
-docker compose run --rm dev internal endpoint https://your-developer-platform
+export NEXIA_UID="$(id -u)" NEXIA_GID="$(id -g)"
+docker compose build
 docker compose run --rm dev login <project-id>
 docker compose run --rm dev link
-# Prepare the project workspace in the developer console.
-docker compose up --build
-# In another terminal, after verifying the app in the Nexia workspace:
-docker compose run --rm dev deploy
+docker compose run --rm dev app register
+docker compose run --rm --entrypoint npm dev install
+docker compose run --rm --entrypoint npm dev run build
+docker compose up
 ```
 
-The generated Compose file binds the preview to host loopback, mounts only the
-app source, and stores CLI configuration in a dedicated named volume. It uses a
-non-root process and never mounts the Docker socket or host credentials.
-`NEXIA_PORT=4312 docker compose up --build` selects another local preview port.
-The default port is 4310. Local platform DNS is mapped through Docker's host
-gateway; use HTTPS for a remote platform. The initialization command uses the
-host user ID so newly created files remain owned by the developer.
+For an alternate platform only, run
+`docker compose run --rm dev config endpoint <URL>` before login. Docker has a
+separate connection; selecting an endpoint in the host CLI does not configure
+Docker. The official platform is the default in both modes.
 
-The generated image installs the exact public npm CLI version on the official
-Node.js image, so GHCR credentials are unnecessary. It does not copy app files or
-credentials into image layers. The image workflow also tests and builds pull
-requests without pushing images; main publishes versioned amd64/arm64 images and
-an `alpha` tag to GHCR for users with registry access.
+Approve the printed URL in your host browser. Grant the App's test permissions
+in the console, then open its workspace and save/reopen a record as described
+above. While editing React, use another terminal for
+`docker compose run --rm --entrypoint npm dev run build -- --watch`.
+After verification, submit with `docker compose run --rm dev deploy --version 1.0.0`.
+
+Repeat the UID/GID export in each macOS/Linux terminal using Compose. On Windows
+PowerShell omit the export line and use the default container UID. Both modes
+share App files and project binding, but each has its own private login. Log in
+and link when switching modes; do not copy credentials. Stop the previous
+preview first to avoid port conflicts. Preserve `.nexia/runtime.json` and the
+login volume; stopping development does not delete sandbox data.
+
+The generated image installs public tools without copying App files or
+credentials into its layers. Compose mounts only the App source and a dedicated
+login volume, runs as a non-root user, and never mounts the Docker socket.
+Preview binds to host loopback. Set `NEXIA_PORT=4312` before `docker compose up`
+for a second App; the default port is 4310. Local platform DNS maps through
+Docker's host gateway; use HTTPS for a remote platform.
 
 ## AI handoff
 
@@ -234,3 +308,185 @@ created by this workflow.
 ## Developer support
 
 For setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.
+
+## Sandbox resource contracts
+
+After project login and sandbox preparation, run `nexia resources list` or
+`nexia resources list --json`. The current platform returns published resource
+keys, versions, field/search contracts, declared permissions, actions and public
+events for that project's active sandbox. Internal descriptors, removed contracts
+and inactive Apps are excluded. This is metadata discovery, not record access or
+permission assignment. Calls still need their existing tenant, actor, organization
+and owning-App authorization. Native runtime SDK transport is not enabled by this
+command; resources without a public ResourceDescriptor are not auto-generated yet.
+
+
+## PHP/React App generation
+
+Install the PHP generators with `nexia setup --devtools`. PHP 8.4+
+is required. Create an App and add a resource without a Core checkout. `init` only creates
+local source and does not contact the platform or reuse a saved login to link it.
+Select the project explicitly with `nexia link`, then use `nexia app register`:
+
+```sh
+nexia init leave-manager --vendor acme --family people --name LeaveManager
+nexia make:resource Request leave-manager --label-ko '휴가 신청'
+nexia make:page LeaveCalendar leave-manager --label-ko '휴가 달력'
+```
+
+The PHP namespace is `Nexia\Apps\Acme\LeaveManager`, the Composer package
+is `acme/leave-manager`, and the frontend package is `@acme/leave-manager`.
+`--vendor acme` supplies the Composer/npm vendor and the `Acme` namespace segment.
+`--name LeaveManager` supplies the PHP class segment and default App key
+`leave-manager`; the directory name is used when `--name` is omitted.
+`--family people` groups the App in navigation and is not its package name.
+`--key` changes the App key and package suffix; `--table-prefix` changes the
+database prefix; `--display-name` changes only the displayed title. `--dry-run`
+previews files. Registration uses `nexia app register <directory>` after login
+and link. The generator never installs the App into a tenant or runs its PHP
+bootstrap. PHP/React is the default. Use `--template browser` only for a legacy static App.
+
+### Development fixtures
+
+Use the connected project's active sandbox to inspect installed Apps' declared
+fixture keys. You do not need another App's source or database credentials.
+
+```sh
+nexia fixtures list
+nexia fixtures run <app-key> <fixture-key>
+nexia fixtures status <run-id>
+```
+
+`run` submits a background job; `queued` is not completion. The CLI prints a
+request ID before submission. If the response is lost, repeat the same command
+with `--request-id <request-id>` to retrieve/recover that request, not a new seed.
+Use `--json` for machine-readable output. A `needs_review` result can mean the DB
+commit succeeded but its status could not be confirmed; ask the platform
+administrator to inspect it before submitting a new request. Revoked connections,
+expired sandboxes and unavailable Apps are rejected. Required installation data
+runs during installation and does not require this optional fixture command.
+
+Native `nexia.json` uses `schema_version: "2"`, `runtime: "laravel"`, and an
+`app` object containing the App metadata. Optional `core_version` and
+`test_paths` also belong in nexia.json; test paths are relative to the App.
+Composer retains dependencies and autoload declarations; remove duplicate
+`extra.nexia` fields when adopting the native declaration. `nexia validate`
+delegates native metadata and PHP checks to the independently installed public
+PHP tool. Native manifests do not require preview screens or public/index.html.
+For legacy PHP/browser hybrids with preview schema_version "1", validation also
+checks the browser entries. The public preview and submission reject symbolic
+links, including a linked public/ directory; copy intended browser assets into
+that directory. Native source validation does not submit or execute an App.
+
+### Private native source snapshots
+
+After registering the App and preparing its sandbox, run `nexia sync` from the
+App directory (or `nexia sync <directory>`). This saves a private immutable source
+revision; it does not start a runtime, submit a review or install the App. The
+same files produce the same revision in the same sandbox. Missing files are
+absent from the next complete snapshot; this never deletes database records.
+
+The snapshot includes supported code/assets under `src`, `database`, `resources`,
+`routes`, `config`, `tests`, `public`, and the supported root manifests/lockfiles.
+It excludes dotfiles, `.nexia`, `vendor` and `node_modules`, rejects symlinks,
+Composer `auth.json` and PHP files under `public`, and runs no App scripts.
+Do not embed credentials in code. Limits are 1000 files, 2 MiB per file and
+8 MiB total. The platform retains at most 100 revisions/64 MiB per project;
+it refuses further distinct snapshots rather than deleting an in-use revision.
+
+## Native App source watch
+
+After `nexia link` and `nexia app register`, run `nexia dev` in the generated
+PHP/React App directory. A `composer.json` selects Native source watch; it never
+serves PHP source through the browser preview. The sandbox operator must enable
+and run Native preparation. The CLI uses public source/runtime-operation APIs;
+it does not receive database passwords or run App scripts locally.
+
+Source changes are serialized behind the previous preparation. `.nexia/runtime.json`
+retains revision and request identities without credentials. Keep it across
+restarts: if a response is lost, rerunning `nexia dev` resolves the same request
+instead of issuing another migration. Failed or uncertain operations require
+operator review. Confirmed shutdown permits a fresh preparation; shutdown still
+pending must finish first. Ctrl+C stops watching, preserving data and pending
+requests; it does not log out, delete data, publish or switch to a catalog release.
+The watcher stays bound to its starting platform, project and App. Changing a
+binding in another terminal stops it before syncing source to a different App.
+Restore the original binding before resuming its retained runtime request.
+
+When the platform returns HTTP 429, the watcher keeps its pending request and
+waits for `Retry-After` before trying again. Ctrl+C still stops the wait. Status
+polling uses a separate bounded server quota so watching several Apps does not
+consume the source-upload and registration quota.
+
+Keep the watcher running and use another terminal in the same linked App directory
+to select `nexia app runtime off` or `nexia app runtime development`. These commands
+persist the choice for this App in its sandbox. Off stops new preparation and
+requests operator-confirmed shutdown; it preserves source, migrations and data.
+Resume after shutdown is confirmed. The running watcher observes the new choice,
+including a queued preparation cancelled by off. Concurrent stale changes are
+rejected: inspect the current response before retrying. These commands do not
+install or select a published release.
+
+The same bounded source polling works on local files and Docker bind mounts.
+Preparation completion only confirms the operator's preparation result. React
+workspace routing, authenticated business requests and release installation have
+separate integration requirements; a preparation message does not establish them.
+
+Native `nexia dev` also serves the App's compiled `dist/frontend` files, includes
+its public `resources/lang/{en,ko,zh}.json` catalogs in the workspace manifest, and prints
+the workspace launch address. Use `--port` for another App's listener, and
+`--container` with a matching loopback Docker port mapping. For generated Apps,
+the CLI starts the installed Vite build watcher after connection validation.
+It does not invoke `package.json` scripts; Vite loads the App's config and plugins.
+It never serves PHP, `.env`, source maps,
+hidden files or linked files. The workspace reads a connection manifest; the
+opaque App frame reads compiled assets through a per-process capability URL.
+Keep that URL local. Restarting the CLI rotates it. The manifest is unavailable
+until both the frontend build and a completed runtime preparation exist.
+
+
+## Native version submission
+
+On a platform with artifact builds configured, run `nexia deploy --version 1.0.0`
+from the registered PHP/React App directory. It saves an immutable private source
+snapshot and requests a build; it never packages only the browser files or runs
+local App scripts. Keep the build's dependency locks, including package-lock.json.
+Use `nexia submissions status <build-id> [--json]` to inspect the recorded result.
+Docker uses `docker compose run --rm dev deploy --version 1.0.0` and
+`docker compose run --rm dev submissions status <build-id>`.
+
+A `built` result records verified archive storage, not review approval, publication
+or installation. Repeating identical source/version returns the existing build;
+changed source requires a new version. Accepted submissions survive development
+Sandbox expiry and CLI disconnection. Browser-only Apps continue to use the version
+in nexia.json without `--version`.
+
+Submission status separates the build state from the required review checks.
+A missing check remains pending; a changed source, artifact or policy cannot reuse
+an earlier pass. Internal evidence and policy data are not exposed in CLI status.
+
+Use `nexia submissions cancel <build-id> [--json]` to withdraw a queued or completed
+Native submission. A running build must finish or be reconciled by the operator
+first. Withdrawal preserves source, artifacts and App data, and releases the
+active-submission slot. The old version remains reserved; submit a new version.
+Retrying cancellation is safe. Docker: `docker compose run --rm dev submissions
+cancel <build-id>`. Sandbox expiry does not prevent withdrawal with a valid
+project connection.
+
+Business pages include related read/edit routes sharing one lazy RecordSurface by default. Use `--without-record` to omit them and `--without-navigation` to omit the menu entry. No model or Resource is inferred; implement the generated business controller methods before using them.
+
+## Explicit signature document sources
+
+In a PHP App directory after running `nexia setup --devtools`:
+
+```sh
+nexia make:signature-data-source NoteFields . --subject-resource-key workshop.note --source-resource-key workshop.note
+```
+
+The default previews the descriptor and provider paths without writing. Add
+`--write` to create them; replacing existing files additionally requires
+`--force`. The provider fails closed until the App implements authorization
+and provenance. Field contracts are explicit; no database columns are inferred.
+For bounded collections use `--cardinality many --min-items 0 --max-items 12`.
+
+Resource generation creates the PHP/React application screens by default. Add `--with-filament` only when you also need Filament administration screens. Omitting that option, including during `--force` regeneration, preserves existing administration files and their manifest registration.

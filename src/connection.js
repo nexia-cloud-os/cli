@@ -1,4 +1,6 @@
-import { mkdir, readFile, writeFile, chmod, rename } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile, chmod, rename } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +11,7 @@ const defaultEndpoint = 'https://developers.nexia.to';
 
 export function validateEndpoint(value) {
   const url = new URL(value);
-  const local = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'].includes(url.hostname) || url.hostname.endsWith('.test');
+  const local = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'].includes(url.hostname) || url.hostname.endsWith('.localhost') || url.hostname.endsWith('.test');
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash || !(url.protocol === 'https:' || (local && url.protocol === 'http:'))) {
     throw new Error('Use an HTTPS origin. HTTP is allowed only for an explicit local endpoint.');
   }
@@ -44,17 +46,40 @@ export async function request(config, route, { method = 'GET', body, authenticat
   });
   if (response.status === 204) return null;
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Platform HTTP ${response.status}: ${Object.values(payload.errors || {}).flat().join(' ') || payload.message || response.statusText}`);
+  if (!response.ok) {
+    const error = new Error(`Platform HTTP ${response.status}: ${Object.values(payload.errors || {}).flat().join(' ') || payload.message || response.statusText}`);
+    error.status = response.status;
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('retry-after');
+      const wait = /^\d+$/.test(retryAfter ?? '') ? Number(retryAfter) * 1000 : Date.parse(retryAfter ?? '') - Date.now();
+      error.retryAfterMs = Number.isFinite(wait) ? Math.max(1000, Math.min(wait, 86_400_000)) : 60_000;
+    }
+    throw error;
+  }
   return payload;
 }
 
-export async function login(projectId, { log = console.log, pollMs = 2000 } = {}) {
+async function openLoginBrowser(url) {
+  if (!process.stdin.isTTY || process.env.SSH_CONNECTION || process.env.SSH_TTY
+      || await access('/.dockerenv').then(() => true, () => false)
+      || await access('/run/.containerenv').then(() => true, () => false)) return false;
+  const launcher = process.platform === 'darwin' ? ['open', [url]]
+    : process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
+      : ['xdg-open', [url]];
+  try {
+    await promisify(execFile)(launcher[0], launcher[1], { timeout: 5000, maxBuffer: 1024 });
+    return true;
+  } catch { return false; }
+}
+
+export async function login(projectId, { log = console.log, pollMs = 2000, openBrowser = openLoginBrowser } = {}) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId || '')) throw new Error('Use nexia login <project-id> from your project page.');
   const current = await readConnection();
   const pairing = await request(current, 'pair', { method: 'POST', body: { project_id: projectId }, authenticated: false });
   const verification = new URL(pairing.verification_url);
   if (verification.origin !== new URL(current.endpoint).origin || !/^[a-f0-9]{64}$/.test(pairing.token)) throw new Error('Invalid pairing response.');
   log(`Open ${verification.href}\nEnter code: ${pairing.user_code}\nApprove only the project you intended. Waiting for browser approval (10 minutes)…`);
+  if (openBrowser) await openBrowser(verification.href).catch(() => false);
   const pending = { endpoint: current.endpoint, token: pairing.token };
   const deadline = Date.now() + Math.min(pairing.expires_in, 600) * 1000;
   while (Date.now() < deadline) {

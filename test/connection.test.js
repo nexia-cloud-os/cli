@@ -16,6 +16,7 @@ test('endpoint changes clear credentials and private config is outside the proje
   assert.equal((await stat(path.join(root, 'connection.json'))).mode & 0o777, 0o600);
   await setEndpoint('http://developers.nexia.test:8080');
   assert.equal((await readConnection()).token, undefined);
+  assert.equal(validateEndpoint('http://sbx-example.localhost:8081'), 'http://sbx-example.localhost:8081');
   for (const value of ['http://public.example', 'https://user:pass@example.com', 'https://example.com/path', 'https://example.com/?token=x']) assert.throws(() => validateEndpoint(value));
 });
 
@@ -34,7 +35,13 @@ test('browser pairing stores a token only after matching project approval, never
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); delete process.env.NEXIA_CONFIG_HOME; await rm(root, { recursive: true, force: true }); });
   await setEndpoint(`http://127.0.0.1:${server.address().port}`);
   const lines = [];
-  await login(projectId, { log: line => lines.push(line), pollMs: 1 });
+  let opened;
+  await login(projectId, { log: line => lines.push(line), pollMs: 1, openBrowser: async url => {
+    opened = url;
+    throw new Error('Browser opener unavailable');
+  } });
+  assert.match(opened, /\/projects\/12345678-1234-1234-1234-123456789abc\/connect$/);
+  assert.ok(lines.some(line => line.includes(opened)), 'The approval URL remains available after browser opening fails.');
   assert.equal((await readConnection()).project.id, projectId);
   assert.ok(!lines.join('\n').includes(token));
   assert.equal(poll, 2);

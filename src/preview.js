@@ -1,13 +1,14 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { watch } from 'node:fs';
 import path from 'node:path';
-import { resolvePublicFile, validateProject } from './project.js';
+import { assertStaticProject, resolvePublicFile, validateProject } from './project.js';
 import { validateEndpoint } from './connection.js';
+import { watchPublic } from './watch-public.js';
 
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2' };
 
 export async function startPreview(directory, port = 4310, { container = false, workspaceOrigin = null } = {}) {
+  await assertStaticProject(directory);
   if (workspaceOrigin !== null) workspaceOrigin = validateEndpoint(workspaceOrigin);
   const manifest = await validateProject(directory);
   const root = path.join(path.resolve(directory), 'public');
@@ -56,22 +57,18 @@ export async function startPreview(directory, port = 4310, { container = false, 
       res.end(req.method === 'HEAD' ? undefined : content);
     } catch { res.writeHead(404).end('Asset not found. Keep browser files inside public/.'); }
   });
-  let watcher;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
   });
-  try {
-    watcher = watch(root, { recursive: true }, () => {
-      for (const stream of streams) stream.write('data: reload\n\n');
-    });
-    watcher.on('error', () => { for (const stream of streams) stream.end(); streams.clear(); watcher.close(); });
-  } catch { /* Preview still works when file watching is unavailable. */ }
+  const stopWatching = await watchPublic(root, () => {
+    for (const stream of streams) stream.write('data: reload\n\n');
+  }, { polling: container });
   return {
     url: `http://127.0.0.1:${server.address().port}`,
-    reload: Boolean(watcher),
+    reload: true,
     close: async () => {
-      watcher?.close();
+      await stopWatching();
       for (const stream of streams) stream.end();
       await new Promise((resolve) => server.close(resolve));
     },
