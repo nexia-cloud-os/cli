@@ -48,7 +48,7 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   const operations = new Map(), revisions = new Map(), submissions = [];
   let mode = 'development', selectionRevision = 1, raceOff = false, offPolls = 0;
   let loseResponse = true, sequence = 0, polls = 0;
-  let throttledAt = null, retriedAt = null;
+  let throttledAt = null, retriedAt = null, unavailableReads = 0;
   const server = createServer(async (req, res) => {
     assert.equal(req.headers.authorization, 'Bearer disposable-token');
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -85,6 +85,10 @@ test('native dev resumes an ambiguous request and serializes changed source afte
     } else {
       const operation = [...operations.values()].find(op => req.url.endsWith(op.id));
       assert.ok(operation);
+      if (unavailableReads++ === 0) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'Restarting' })); return;
+      }
       polls++;
       operation.status = 'completed';
       payload = { operation };
@@ -123,6 +127,7 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   assert.equal(operations.size, 2);
   assert.equal(revisions.size, 2);
   assert.equal(polls, 2);
+  assert.equal(unavailableReads, 3, "temporary status failure is retried without another preparation");
   assert.doesNotMatch(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8'), /disposable-token|secret-must-not-leave/);
   const stopped = [...operations.values()].at(-1);
   stopped.stop_requested_at = new Date().toISOString();

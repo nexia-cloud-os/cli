@@ -45,6 +45,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   let preview, build, browserRuntime = null;
   try {
     while (!signal?.aborted) {
+      let readPhase = true;
       try {
         build?.check();
         const selected = await readConnection();
@@ -85,6 +86,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         let cancelled = false;
         if (state) {
           let result;
+          readPhase = Boolean(state.operation_id);
           try {
             result = state.operation_id
               ? await request(config, `v2/runtime-operations/${state.operation_id}`)
@@ -118,6 +120,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           // ponytail: hash the bounded 8 MiB source tree; add incremental hashing only if measured watch cost warrants it.
           const snapshot = await sourceSnapshot(directory);
           if (!state || snapshot.digest !== state.digest || operation?.stopped_at) {
+            readPhase = false;
             const { revision } = await syncSource(directory, { log: () => {}, config, scope });
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.
             browserRuntime = null;
@@ -127,6 +130,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         }
         await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
       } catch (error) {
+        if (readPhase && (error.name === 'TimeoutError' || [502, 503, 504].includes(error.status)
+          || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(error.cause?.code))) {
+          browserRuntime = null;
+          log('Platform temporarily unavailable; retrying the status read. Source and pending requests retained.');
+          await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
         if (error.status !== 429) throw error;
         browserRuntime = null;
         log(`Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)} seconds. Source, data and pending request retained.`);
