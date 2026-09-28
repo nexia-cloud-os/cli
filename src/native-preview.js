@@ -8,14 +8,15 @@ import { validateEndpoint } from './connection.js';
 const types = { '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff': 'font/woff', '.woff2': 'font/woff2' };
 
 // Serves only the developer's compiled frontend. Never executes a build or project script.
-export async function startNativePreview(directory, { workspaceOrigin, state, port = 4310, container = false }) {
+export async function startNativePreview(directory, { workspaceOrigin, state, port = 4310, container = false, apps = null }) {
   workspaceOrigin = validateEndpoint(workspaceOrigin);
   const token = randomBytes(32).toString('hex');
-  const root = path.join(path.resolve(directory), 'dist', 'frontend');
+  const registrations = apps ?? new Map([[token, { directory, state }]]);
   const server = createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     if (req.headers.host !== new URL(origin).host) { res.writeHead(403).end(); return; }
-    const manifest = req.url === '/__nexia_native';
+    const url = new URL(req.url, origin);
+    const manifest = url.pathname === '/__nexia_native';
     const allowedOrigin = manifest ? workspaceOrigin : 'null';
     if (req.headers.origin !== allowedOrigin) { res.writeHead(403).end(); return; }
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
@@ -26,7 +27,20 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
       res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Private-Network': 'true' }).end(); return;
     }
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
-    const current = manifest ? state() : null;
+    if (manifest && apps && !url.searchParams.has('app_id')) {
+      const ready = [...registrations.values()].map(app => app.state()).filter(app => app?.app_id && app.mode !== 'off');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ schema_version: 'project-1', apps: ready.map(app => ({ app_id: app.app_id, app_key: app.app_key })) }));
+      return;
+    }
+    const selected = manifest
+      ? [...registrations.entries()].find(([, app]) => !apps || app.state()?.app_id === url.searchParams.get('app_id'))
+      : [...registrations.entries()].find(([key]) => url.pathname.startsWith(`/${key}/`));
+    if (!selected) { res.writeHead(404).end(); return; }
+    const [assetToken, app] = selected;
+    const directory = app.directory;
+    const root = path.join(path.resolve(directory), 'dist', 'frontend');
+    const current = manifest ? app.state() : null;
     if (manifest && current?.mode === 'off') { res.writeHead(423).end(); return; }
     try {
       for (const directory of [path.resolve(root, '../..'), path.dirname(root), root]) {
@@ -48,10 +62,10 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ schema_version: 'native-1', ...current,
-          translations, entry: `${origin}/${token}/index.js`, frontend_revision: `${info.size}:${info.mtimeMs}:${info.ctimeMs}` }));
+          translations, entry: `${origin}/${assetToken}/index.js`, frontend_revision: `${info.size}:${info.mtimeMs}:${info.ctimeMs}` }));
         return;
       }
-      const prefix = `/${token}/`;
+      const prefix = `/${assetToken}/`;
       if (!req.url.startsWith(prefix)) { res.writeHead(404).end(); return; }
       const entry = decodeURIComponent(new URL(req.url, origin).pathname.slice(prefix.length));
       const type = types[path.extname(entry)];
@@ -67,5 +81,11 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     server.once('error', reject);
     server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
   });
-  return { url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };
+  return {
+    attach(directory, state) {
+      const key = randomBytes(32).toString('hex');
+      registrations.set(key, { directory, state });
+      return { url: `http://127.0.0.1:${server.address().port}`, close: async () => { registrations.delete(key); } };
+    },
+    url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };
 }

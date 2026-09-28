@@ -64,3 +64,42 @@ test('deployment includes public assets only and rejects symlinks or server code
   await assert.rejects(() => bundleProject(directory), /symbolic links/);
   assert.match(await readFile(path.join(directory, 'compose.yaml'), 'utf8'), /127\.0\.0\.1:\$\{NEXIA_PORT:-4310\}/);
 });
+
+test('project creation resumes the same approval after a lost response and renews only an unapproved expiry', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-create-recovery-'));
+  process.env.NEXIA_CONFIG_HOME = root;
+  const project = { id: '12345678-1234-1234-1234-123456789abc', name: 'Shared project' };
+  let pairs = 0, phase = 'lost';
+  const server = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url.endsWith('/pair')) {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      assert.deepEqual(JSON.parse(raw), { project_name: project.name });
+      pairs++;
+      res.end(JSON.stringify({ token: 'b'.repeat(64), user_code: 'CODE', verification_url: `${endpoint}/connect-project`, expires_in: 600 }));
+    } else if (phase === 'lost') { res.writeHead(503); res.end('{}'); }
+    else if (phase === 'expired') { res.writeHead(410); res.end(JSON.stringify({ status: 'pairing_expired' })); }
+    else if (phase === 'revoked') { res.writeHead(401); res.end('{}'); }
+    else res.end(JSON.stringify({ status: 'connected', project }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); delete process.env.NEXIA_CONFIG_HOME; await rm(root, { recursive: true, force: true }); });
+  await setEndpoint(endpoint);
+  const options = { projectName: project.name, recoveryKey: '/local/project', openBrowser: null, log: () => {} };
+  await assert.rejects(login(undefined, options), /503/);
+  phase = 'approved';
+  const connected = await login(undefined, options);
+  assert.equal(connected.project.id, project.id);
+  assert.equal(pairs, 1, 'an approved request is recovered, never duplicated');
+  assert.equal((await stat(connected.recoveryFile)).mode & 0o777, 0o600);
+  phase = 'revoked';
+  await assert.rejects(login(undefined, options), /401/);
+  await stat(connected.recoveryFile);
+  phase = 'expired';
+  await assert.rejects(login(undefined, options), /410/);
+  await assert.rejects(stat(connected.recoveryFile), { code: 'ENOENT' });
+  phase = 'approved';
+  await login(undefined, options);
+  assert.equal(pairs, 2);
+});

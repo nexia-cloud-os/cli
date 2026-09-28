@@ -29,3 +29,18 @@ test('native snapshot is deterministic, bounded and excludes local secrets and d
     await assert.rejects(sourceSnapshot(root), /exceeds/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('native snapshot waits through Git merge and worktree locks without executing Git', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-source-git-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  const git = path.join(root, 'git-metadata');
+  await mkdir(git);
+  await writeFile(path.join(root, '.git'), 'gitdir: git-metadata\n');
+  for (const marker of ['index.lock', 'MERGE_HEAD', 'rebase-merge']) {
+    await writeFile(path.join(git, marker), 'pending');
+    await assert.rejects(sourceSnapshot(root), { code: 'SOURCE_BUSY' });
+    await rm(path.join(git, marker));
+  }
+  assert.equal((await sourceSnapshot(root)).files.length, 1);
+});

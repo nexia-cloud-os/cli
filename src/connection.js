@@ -1,7 +1,7 @@
-import { access, mkdir, readFile, writeFile, chmod, rename } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile, chmod, rename, rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -49,6 +49,7 @@ export async function request(config, route, { method = 'GET', body, authenticat
   if (!response.ok) {
     const error = new Error(`Platform HTTP ${response.status}: ${Object.values(payload.errors || {}).flat().join(' ') || payload.message || response.statusText}`);
     error.status = response.status;
+    error.platformStatus = payload.status;
     if (response.status === 429) {
       const retryAfter = response.headers.get('retry-after');
       const wait = /^\d+$/.test(retryAfter ?? '') ? Number(retryAfter) * 1000 : Date.parse(retryAfter ?? '') - Date.now();
@@ -72,10 +73,27 @@ async function openLoginBrowser(url) {
   } catch { return false; }
 }
 
-export async function login(projectId, { log = console.log, pollMs = 2000, openBrowser = openLoginBrowser } = {}) {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId || '')) throw new Error('Use nexia login <project-id> from your project page.');
+export async function login(projectId, { log = console.log, pollMs = 2000, openBrowser = openLoginBrowser, projectName, recoveryKey } = {}) {
+  if (projectName !== undefined && (typeof projectName !== 'string' || !projectName.trim() || projectName.length > 100)) throw new Error('Project name must contain 1 to 100 characters.');
+  if (projectName === undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId || '')) throw new Error('Use nexia login <project-id> from your project page.');
+  if (projectName !== undefined) projectName = projectName.trim();
   const current = await readConnection();
-  const pairing = await request(current, 'pair', { method: 'POST', body: { project_id: projectId }, authenticated: false });
+  const recoveryFile = recoveryKey ? path.join(root(), `pairing-${createHash('sha256').update(`${current.endpoint}:${recoveryKey}`).digest('hex')}.json`) : null;
+  let pairing;
+  if (recoveryFile) {
+    try {
+      const saved = JSON.parse(await readFile(recoveryFile, 'utf8'));
+      if (saved.project_name !== projectName || saved.project_id !== projectId) throw new Error('An earlier project approval is pending for this folder. Resume with the same project name.');
+      pairing = saved.pairing;
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  if (!pairing) {
+    pairing = await request(current, 'pair', { method: 'POST', body: projectName === undefined ? { project_id: projectId } : { project_name: projectName }, authenticated: false });
+    if (recoveryFile) {
+      await mkdir(root(), { recursive: true, mode: 0o700 });
+      await writeFile(recoveryFile, JSON.stringify({ project_name: projectName, project_id: projectId, pairing }), { mode: 0o600, flag: 'wx' });
+    }
+  }
   const verification = new URL(pairing.verification_url);
   if (verification.origin !== new URL(current.endpoint).origin || !/^[a-f0-9]{64}$/.test(pairing.token)) throw new Error('Invalid pairing response.');
   log(`Open ${verification.href}\nEnter code: ${pairing.user_code}\nApprove only the project you intended. Waiting for browser approval (10 minutes)…`);
@@ -83,12 +101,23 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
   const pending = { endpoint: current.endpoint, token: pairing.token };
   const deadline = Date.now() + Math.min(pairing.expires_in, 600) * 1000;
   while (Date.now() < deadline) {
-    const result = await request(pending, 'connection');
+    let result;
+    try { result = await request(pending, 'connection'); }
+    catch (error) {
+      // Only an explicitly expired, unapproved pairing is safe to replace.
+      // Revoked or inaccessible approved projects must never create a duplicate.
+      if (recoveryFile && error.status === 410 && error.platformStatus === 'pairing_expired') {
+        await rm(recoveryFile);
+        log('Unapproved pairing expired. Run the same create-project command to request a new approval.');
+      }
+      throw error;
+    }
     if (result.status === 'connected') {
-      if (result.project.id !== projectId) throw new Error('The approved project does not match.');
+      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(result.project?.id ?? '')) throw new Error('Platform returned an invalid project.');
+      if ((projectName === undefined && result.project.id !== projectId) || (projectName !== undefined && result.project.name !== projectName)) throw new Error('The approved project does not match.');
       await saveConnection({ ...pending, project: result.project });
       log(`Connected: ${result.project.name}\nCLI credentials are stored privately and are never copied into the app.`);
-      return;
+      return { ...pending, project: result.project, recoveryFile };
     }
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }

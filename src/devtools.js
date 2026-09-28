@@ -1,7 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile, lstat, mkdtemp, rename, rm } from 'node:fs/promises';
 import { onPath } from './setup.js';
 
 const toolDirectory = () => path.resolve(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'tools', 'devtools');
@@ -40,7 +40,8 @@ export async function runDevtools(args, directory) {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
-  const executable = managed || await onPath('nexia-app');
+  const executable = process.env.NEXIA_DEVTOOLS_PATH
+    ? await realpath(process.env.NEXIA_DEVTOOLS_PATH) : managed || await onPath('nexia-app');
   if (!executable) throw new Error('Run nexia setup --devtools to install the PHP generators, then retry this command.');
   const root = await realpath(directory).catch(error => {
     if (error.code === 'ENOENT') return path.resolve(directory);
@@ -57,14 +58,31 @@ export async function runDevtools(args, directory) {
   });
 }
 
-export async function initLaravelApp(directory, options) {
-  if (!options.vendor || !options.family) throw new Error('Laravel Apps require --vendor <vendor> and --family <family-key>.');
+export async function initLaravelApp(directory, options, { generate = runDevtools } = {}) {
+  if ((!options.vendor || !options.family) && !process.stdin.isTTY) throw new Error('Laravel Apps require --vendor <vendor> and --family <family-key>.');
+  directory = path.resolve(directory);
+  if (!options.dryRun && await lstat(directory).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) {
+    throw new Error('Choose a new App directory. Existing files were not changed.');
+  }
   const args = ['make:app', options.name || path.basename(directory), '--directory', directory];
   for (const key of ['vendor', 'family', 'key', 'table-prefix', 'display-name']) {
     if (options[key] !== undefined) args.push(`--${key}`, options[key]);
   }
   for (const key of options.prerequisite || []) args.push('--prerequisite', key);
   if (options.dryRun) args.push('--dry-run');
-  await runDevtools(args, directory);
-  return directory;
+  if (options.dryRun) { await generate(args, directory); return directory; }
+  const staging = await mkdtemp(path.join(path.dirname(directory), '.nexia-init-'));
+  const generated = path.join(staging, 'app');
+  args[3] = generated;
+  try {
+    await generate(args, generated);
+    // Cancellation may exit successfully. Publish only a complete scaffold.
+    for (const file of ['nexia.json', 'composer.json', 'package.json', 'resources/js/index.ts']) {
+      const stat = await lstat(path.join(generated, file));
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('App generation did not complete.');
+    }
+    if (await lstat(directory).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) throw new Error('App destination appeared during generation; it was preserved.');
+    await rename(generated, directory);
+    return directory;
+  } finally { await rm(staging, { recursive: true, force: true }); }
 }

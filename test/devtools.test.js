@@ -34,8 +34,8 @@ test('CLI delegates native generation as arguments and rejects an App-owned tool
   const expired = JSON.stringify({ endpoint: 'http://localhost:1', token: 'expired-fixture-token' });
   await writeFile(path.join(root, 'config', 'connection.json'), expired);
   result = await invoke(['init', directory, '--vendor', 'acme', '--family', 'people', '--name', 'LeaveManager']);
-  assert.equal(result.code, 0, result.output);
-  assert.match(result.output, /nexia link/);
+  assert.equal(result.code, 1, result.output);
+  assert.match(result.output, /Existing files were not changed/);
   assert.equal(await readFile(path.join(root, 'config', 'connection.json'), 'utf8'), expired);
   await assert.rejects(readFile(path.join(directory, '.nexia', 'project.json')), { code: 'ENOENT' });
   result = await invoke(['make:resource', 'Request', directory, '--label-ko', '휴가 신청']);

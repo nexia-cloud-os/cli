@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { constants } from 'node:fs';
-import { lstat, readdir, open, realpath } from 'node:fs/promises';
+import { lstat, readdir, open, realpath, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 const roots = new Set(['src', 'database', 'resources', 'routes', 'config', 'tests', 'public']);
@@ -8,9 +8,36 @@ const files = new Set(['composer.json', 'composer.lock', 'package.json', 'packag
 const extensions = new Set(['.php', '.json', '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.html', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff', '.woff2', '.yaml', '.yml', '.xml']);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
+// Git worktrees use a gitdir file; no Git hooks or project commands are executed.
+export async function sourceIsChanging(directory) {
+  let git = path.join(directory, '.git');
+  const info = await lstat(git).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  if (!info) return false;
+  if (info.isSymbolicLink()) throw new Error('Git metadata must not be a symbolic link.');
+  if (info.isFile()) {
+    if (info.size > 4096) throw new Error('Invalid Git worktree metadata.');
+    const pointer = (await readFile(git, 'utf8')).trim();
+    if (!pointer.startsWith('gitdir: ')) throw new Error('Invalid Git worktree metadata.');
+    git = path.resolve(directory, pointer.slice(8));
+  }
+  for (const marker of ['index.lock', 'HEAD.lock', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-apply', 'rebase-merge']) {
+    if (await lstat(path.join(git, marker)).then(() => true, error => { if (error.code !== 'ENOENT') throw error; return false; })) return true;
+  }
+  return false;
+}
+
+async function requireStableGit(directory) {
+  if (await sourceIsChanging(directory)) {
+    const error = new Error('Waiting for Git to finish cloning, merging or rebasing this App.');
+    error.code = 'SOURCE_BUSY';
+    throw error;
+  }
+}
+
 /** Explicit development snapshot; no scripts, credentials, dependencies or symlinks. */
 export async function sourceSnapshot(directory) {
   const root = path.resolve(directory);
+  await requireStableGit(root);
   if (!(await lstat(root)).isDirectory() || (await lstat(root)).isSymbolicLink()) throw new Error('App source must be a real directory.');
   const result = [];
   let total = 0;
@@ -49,6 +76,7 @@ export async function sourceSnapshot(directory) {
   }
   for (const name of (await readdir(root)).sort()) if (roots.has(name) || files.has(name)) await visit(name);
   if (!result.some(file => file.path === 'composer.json')) throw new Error('Native source requires composer.json.');
+  await requireStableGit(root);
   result.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   return { schema_version: 1, digest: sha256(result.map(file => `${file.path}\0${file.sha256}\n`).join('')), files: result };
 }

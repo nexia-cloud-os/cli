@@ -42,3 +42,37 @@ test('native preview exposes only compiled assets through a workspace-issued cap
     assert.equal((await (await get(`${server.url}/__nexia_native`, workspaceOrigin)).json()).operation_id, 'resumed');
   } finally { await server.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('one project port routes multiple Apps without mixing their assets and supports hot attachment', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-project-preview-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspaceOrigin = 'http://workspace.localhost:8081';
+  const server = await startNativePreview(null, { port: 0, workspaceOrigin, apps: new Map() });
+  t.after(() => server.close());
+  const get = (url, origin = workspaceOrigin) => fetch(url, { headers: { Origin: origin } });
+  assert.deepEqual((await (await get(`${server.url}/__nexia_native`)).json()).apps, []);
+  const handles = [];
+  for (const name of ['people', 'payroll']) {
+    const directory = path.join(root, name);
+    await mkdir(path.join(directory, 'dist/frontend'), { recursive: true });
+    await writeFile(path.join(directory, 'dist/frontend/index.js'), `export const name = '${name}';`);
+    handles.push(server.attach(directory, () => ({ app_id: name, app_key: name, operation_id: name })));
+  }
+  const project = await (await get(`${server.url}/__nexia_native`)).json();
+  assert.equal(project.schema_version, 'project-1');
+  assert.equal(project.apps.length, 2);
+  const entries = [];
+  for (const { app_id } of project.apps) {
+    const manifest = await (await get(`${server.url}/__nexia_native?app_id=${app_id}`)).json();
+    assert.equal(manifest.app_id, app_id);
+    assert.equal(new URL(manifest.entry).origin, server.url);
+    assert.match(await (await get(manifest.entry, 'null')).text(), new RegExp(app_id));
+    entries.push(manifest.entry);
+  }
+  assert.notEqual(entries[0], entries[1]);
+  await handles[0].close();
+  assert.equal((await get(entries[0], 'null')).status, 404);
+  assert.equal((await get(entries[1], 'null')).status, 200);
+  assert.equal((await get(`${server.url}/__nexia_native?app_id=missing`)).status, 404);
+  assert.equal((await get(`${server.url}/__nexia_native`, 'null')).status, 403);
+});

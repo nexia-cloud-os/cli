@@ -151,3 +151,46 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /requires operator review/);
   assert.equal(operations.size, 3);
 });
+
+test('new writer recovers an ambiguous old terminal request before preparing its own generation', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-writer-recovery-'));
+  process.env.NEXIA_CONFIG_HOME = root;
+  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID(), revision = randomUUID(), requestId = randomUUID();
+  const abort = new AbortController(), submissions = [];
+  let session;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const input = raw ? JSON.parse(raw) : null;
+    let payload;
+    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { runtime_writers: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (req.url.endsWith('/writer')) {
+      session ??= input.session_id;
+      assert.equal(input.session_id, session);
+      payload = { writer: { app_id: app, sandbox_id: sandbox, generation: 2 } };
+    } else if (req.url.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+    else {
+      assert.equal(req.method, 'POST');
+      assert.equal(input.writer_session, session);
+      submissions.push(input.request_id);
+      payload = { operation: { id: randomUUID(), request_id: input.request_id, source_revision_id: revision, developer_project_id: project, developer_sandbox_id: sandbox,
+        writer_generation: input.request_id === requestId ? 1 : 2, status: input.request_id === requestId ? 'completed' : 'queued' } };
+    }
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(payload));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); delete process.env.NEXIA_CONFIG_HOME; await rm(root, { recursive: true, force: true }); });
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+  await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox, request_id: requestId, revision_id: revision, digest: 'a'.repeat(64), writer_generation: 1 }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  const timeout = setTimeout(() => abort.abort(), 3000);
+  try { await nativeDev(root, { port: 0, interval: 1, signal: abort.signal, log: message => { if (message.includes('preparation queued')) abort.abort(); } }); }
+  finally { clearTimeout(timeout); }
+  assert.equal(submissions.length, 2);
+  assert.equal(submissions[0], requestId);
+  assert.notEqual(submissions[1], requestId);
+  assert.equal(JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8')).writer_generation, 2);
+});

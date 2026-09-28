@@ -3,56 +3,120 @@
 Experimental `@nexia/cli` alpha package for Node.js 22 or newer. It contains
 plain ESM JavaScript and requires no transpilation.
 
-## First PHP/React App
+## Project workspace (PHP/React Apps)
 
-Create a developer account and project at https://developers.nexia.to, then
-prepare its sandbox. Install Node.js 22.12+, npm 11.6.2 (11.x), PHP 8.4+ and
-Composer. Install the CLI and let it manage the PHP generators:
+Use Node.js 22.12+, npm 11.x, PHP 8.4+ (including 8.5) and Composer.
+Install the CLI and its generators once. Create an account in Developers;
+project creation is confirmed by that account in the browser.
 
 ```sh
 npm install -g @nexia/cli@alpha
 nexia setup --devtools
-nexia login <project-id>
-nexia init my-app --vendor acme --family other --name MyApp
-cd my-app
-nexia link
-nexia make:resource Note --label-ko '메모'
-nexia app register
+nexia create-project my-project
+cd my-project
+nexia init people --vendor acme --family people --name People
+cd people
 composer install --no-scripts
 npm install
+nexia make:resource Note --label-ko '메모'
+cd ..
 nexia dev
 ```
 
-Replace `acme`, the App name, and the project ID with your own values. Each
-command is one complete line. Login opens the approval page on a local
-interactive terminal and always prints its URL. In Docker, SSH, or if opening
-fails, open that URL yourself. `--no-browser` disables automatic opening.
+The project folder is a local workspace, not a Git repository. Each App is an
+independent repository in an immediate child folder. `init` generates files
+only; `dev` registers their identities, prepares your personal sandbox if
+needed, watches all Apps and serves them on **one port** (default 4310).
+Create or clone more Apps while it runs; install their frontend dependencies
+and they join automatically. Hidden, duplicate-key and symlink folders are not
+run. A Git merge/rebase must finish before source is synchronized.
 
-After preparation, open **Development → Project Apps → Test permissions** in the console. Grant Note read, create and update permissions. Select a legal entity only when the App declares legal-entity-scoped permissions. Grants are explicit and expire with the sandbox. Refresh an already open App tab.
+Open the printed workspace URL and connect the one local address. New Apps
+appear automatically without changing your active work tab. The generated
+Vite watcher runs with `dev`; a failed compile waits for repair. A dirty form
+still requires confirmation before refreshing. In Developers, grant the App's
+test permissions explicitly, then create, save and reopen a record to verify
+its behavior. Local preview never grants API authority.
 
-Keep `nexia dev` running, open its workspace URL, and connect the App address
-when prompted. Open Notes in a work tab, create a record, save, and reopen it to
-verify persistence. `nexia dev` starts the generated App's Vite build watcher
-and serves completed bundles; PHP changes are synchronized to the sandbox.
-Install npm dependencies once before starting. Frontend changes refresh the
-App frame after a successful rebuild unless a form has unsaved changes.
+### Join an existing project
 
-`init` creates files, `link` selects a project for an existing App directory,
-`app register` reserves its identity and links it to the project, and `dev`
-starts this App's development session. Run `link` after `init`, even when
-already logged in. Registration alone does not run, publish, or install an App. Existing directories are never overwritten or converted.
+Ask a project owner/admin to invite your developer account, accept the invite,
+then connect your own local folder:
 
-For multiple Apps, repeat registration in each App directory and run one
-`nexia dev` per App, choosing different ports (`--port 4311` for the second).
-`nexia apps list` lists the project's Apps. Running all child directories from
-a parent project folder is not supported.
+```sh
+mkdir my-project
+cd my-project
+nexia link-project <project-id>
+git clone <people-repository> people
+cd people
+composer install --no-scripts
+npm install
+cd ..
+nexia dev
+```
 
-The official platform is the default. For a local or separately operated
-platform only, run `nexia config endpoint <URL>` before login. Changing the
-endpoint clears the saved CLI connection. Do not use a local test launcher as
-a production installation method.
+Clone only the Apps you need. `dev` reconnects a registered App to its existing
+identity; an unregistered App is registered if the current project can own it.
+An identity owned by a different account cannot be claimed by changing a local
+ID or manifest. Project members share App identity and submitted versions;
+each developer gets separate sandbox data. Existing shared sandboxes remain
+with their project owner after the Core migration. Current quota permits one
+active sandbox per developer across projects.
 
-`nexia setup --devtools` installs the PHP generators into the CLI-owned tools directory. It does not modify global Composer packages or require another executable on PATH. Existing independent generator installations remain supported.
+### Command locations and recovery
+
+- `create-project`: parent folder; `link-project`: project root.
+- `init`: project root. Existing destinations are never overwritten. Native
+  generation publishes the folder only when complete.
+- `dev`: project root or anywhere inside an App; both watch the entire project.
+  Use `--app people` to watch only that App, or `--port 4311` for a second
+  independent project. One App/sandbox permits one active dev writer.
+- `make:resource`, `make:page`, `validate`, `sync`, `app register`, `app runtime`
+  and `deploy`: App folder, or project root with `--app people`.
+- `deploy --app people --version 1.0.0` submits an immutable shared version for
+  review. It does not replace another developer's sandbox or publish/install
+  a release. The existing version reservation/review rules apply to all members;
+  coordinate versions instead of overwriting another submission.
+
+`nexia app register` remains available explicitly but is not needed before
+project `dev`. Standalone Apps retain `login`, `link`, `app register`, `dev`.
+Changing the global CLI login/endpoint while watching stops the old run; restart
+in the intended project. Do not edit bindings during a run. On a lost creation
+response, rerun the **same** `create-project` path/name: its private pending
+approval is recovered. An expired unapproved pairing is discarded with a retry
+instruction; a revoked approved pairing never creates a second project.
+
+Stopping `dev` retains source, databases and pending operations. A second writer
+must wait for the first to stop or its two-minute lease to expire. Pending or
+uncertain database preparation must finish or receive operator review before a
+new writer can proceed. Resolve a per-App terminal error and restart `dev` (or
+remove and restore that folder); other Apps keep running. Use the console to
+renew/recover an expired or failed sandbox. No automatic data reset occurs.
+
+Commit `nexia.json` and App code. Keep `.nexia/` ignored: it contains local
+project/App bindings and recovery state, never CLI bearer credentials. Pushing
+those bindings grants no authority; the server rechecks current membership,
+ownership and sandbox on every authorized operation.
+
+The official platform is the default. Only for a local/alternate Developers
+host, use `nexia config endpoint <URL>` before `link-project`, or pass
+`create-project --endpoint <URL>`. This selects the API destination; it does
+not start or configure the production server.
+
+### Working on Nexia itself
+
+Use the local CLI and generator checkout explicitly (no global alias required):
+
+```sh
+export NEXIA_DEVTOOLS_PATH=/absolute/path/app-sdk/packages/devtools/bin/nexia-app
+node /absolute/path/cli/src/cli.js create-project my-project --endpoint http://developers.example.localhost:8081
+```
+
+Install the devtools checkout's Composer dependencies first. With
+`NEXIA_DEVTOOLS_PATH` set, `setup --devtools` is unnecessary. That setup command
+installs generators into the CLI-owned tools directory for ordinary consumers;
+it is not an installation step for the Core production host. It neither changes
+global Composer packages nor installs Apps into Core.
 
 ## Install or update PHP and Composer
 
