@@ -48,6 +48,11 @@ export async function bindWorkspace(directory, { endpoint, project }) {
   const ignore = path.join(root, '.gitignore');
   try { await writeFile(ignore, '.nexia/\n', { flag: 'wx' }); }
   catch (error) { if (error.code !== 'EEXIST') throw error; }
+  const template = await readFile(new URL('./templates/project-agents.md', import.meta.url), 'utf8');
+  const values = { projectName: JSON.stringify(project.name ?? ''), projectId: project.id, endpoint };
+  const instructions = template.replace(/{{ (projectName|projectId|endpoint) }}/g, (_, key) => values[key]);
+  try { await writeFile(path.join(root, 'AGENTS.md'), instructions, { flag: 'wx' }); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
   return findWorkspace(root);
 }
 

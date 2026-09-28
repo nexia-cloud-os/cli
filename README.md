@@ -31,6 +31,11 @@ Create or clone more Apps while it runs; install their frontend dependencies
 and they join automatically. Hidden, duplicate-key and symlink folders are not
 run. A Git merge/rebase must finish before source is synchronized.
 
+`create-project` and `link-project` add a project-level `AGENTS.md` without
+overwriting an existing file. Native App generation keeps its own App-level
+`AGENTS.md`. Console's AI instructions page offers both original templates for
+copying; App templates replace `{{ appKey }}` with the generated App key.
+
 Open the printed workspace URL and connect the one local address. New Apps
 appear automatically without changing your active work tab. The generated
 Vite watcher runs with `dev`; a failed compile waits for repair. A dirty form
