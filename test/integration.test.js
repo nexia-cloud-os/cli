@@ -29,7 +29,7 @@ async function temporary(t) {
   return directory;
 }
 
-test('CLI explicitly creates and validates a static app, rejects overwrite, and requires a connection for deploy', async (t) => {
+test('CLI explicitly creates and validates a static app, rejects overwrite, and rejects retired deploy', async (t) => {
   const root = await temporary(t);
   const directory = path.join(root, 'sample');
   assert.equal((await invoke(['init', directory, '--template', 'browser'])).code, 0);
@@ -37,7 +37,7 @@ test('CLI explicitly creates and validates a static app, rejects overwrite, and 
   assert.equal((await invoke(['init', directory, '--template', 'browser'])).code, 1);
   const deploy = await invoke(['deploy']);
   assert.equal(deploy.code, 1);
-  assert.match(deploy.stderr, /Connect a project first/);
+  assert.match(deploy.stderr, /deploy is retired/);
   if (process.platform === 'darwin') {
     const setup = await invoke(['setup', '--dry-run']);
     assert.equal(setup.code, 0);

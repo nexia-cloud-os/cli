@@ -60,7 +60,7 @@ export async function request(config, route, { method = 'GET', body, authenticat
   return payload;
 }
 
-async function openLoginBrowser(url) {
+export async function openLoginBrowser(url) {
   if (!process.stdin.isTTY || process.env.SSH_CONNECTION || process.env.SSH_TTY
       || await access('/.dockerenv').then(() => true, () => false)
       || await access('/run/.containerenv').then(() => true, () => false)) return false;

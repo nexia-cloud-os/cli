@@ -6,7 +6,7 @@ import { validateManifest } from '@nexia/dev-protocol';
 export async function assertStaticProject(directory) {
   try { await lstat(path.join(directory, 'composer.json')); }
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
-  throw new Error('This directory contains a PHP package. the static path cannot run or submit its server code. Keep composer.json; use Native nexia dev and nexia deploy --version <version> on a configured platform.');
+  throw new Error('This directory contains a PHP package. the static path cannot run or submit its server code. Keep composer.json; use Native nexia dev and nexia submit --tag v1.0.0 --version <version> on a configured platform.');
 }
 
 export async function readManifest(directory) {
@@ -64,7 +64,7 @@ export async function initProject(directory) {
   };
   const files = {
     'nexia.json': JSON.stringify(manifest, null, 2) + '\n',
-    'public/index.html': '<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nexia development app</title><style>body{font:18px system-ui;max-width:48rem;margin:10vh auto;padding:24px;line-height:1.6}small{color:#555}</style><main><small>Local preview</small><h1>Your Nexia app starts here</h1><p>Edit public/index.html and save to refresh this page.</p><p>This app runs inside your remote Nexia workspace. Run nexia deploy when it is ready for review.</p></main></html>\n',
+    'public/index.html': '<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nexia development app</title><style>body{font:18px system-ui;max-width:48rem;margin:10vh auto;padding:24px;line-height:1.6}small{color:#555}</style><main><small>Local preview</small><h1>Your Nexia app starts here</h1><p>Edit public/index.html and save to refresh this page.</p><p>This app runs inside your remote Nexia workspace. Run nexia submit --tag v1.0.0 when it is ready for review.</p></main></html>\n',
     'README.md': `# Nexia App development
 
 Choose local or Docker development for this same App directory. Neither requires
@@ -84,7 +84,7 @@ nexia dev
 \`\`\`
 
 Approve login in your browser. Keep dev running; in another terminal use
-\`nexia validate\`, \`nexia resources list --json\` or \`nexia deploy\`.
+\`nexia validate\`, \`nexia resources list --json\` or \`nexia submit --tag v1.0.0\`.
 Open the printed workspace address, connect the preview and edit public/.
 
 ## Docker
@@ -123,7 +123,7 @@ Keep browser files in public/ and secrets/server files outside it. Before
 submission validate the App and verify tab switching and save/reload in Nexia.
 Deploy submits an immutable version for administrator review; it is not installation.
 `,
-    'AGENTS.md': '# App development\n\nWork only on this App using the installed public CLI/SDK; platform repositories are administrator-owned. Choose local nexia commands or docker compose run --rm dev commands as documented in README.md. Keep the preview running in one terminal and use another for commands. Do not copy CLI credentials when switching modes.\nKeep public browser assets inside public/. Never put secrets there.\nUse public Nexia contracts and advertised capabilities only. Open the remote Nexia workspace URL from nexia dev and verify tabs, sidebar, settings, and live app refresh. Never clone, copy, mount, or distribute Nexia Core. Local apps have no tenant data authority.\nRun nexia validate and inspect browser behavior before submission. nexia deploy uploads an immutable version for review, not customer installation. Never read or copy CLI credentials.\nFor setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.\n',
+    'AGENTS.md': '# App development\n\nWork only on this App using the installed public CLI/SDK; platform repositories are administrator-owned. Choose local nexia commands or docker compose run --rm dev commands as documented in README.md. Keep the preview running in one terminal and use another for commands. Do not copy CLI credentials when switching modes.\nKeep public browser assets inside public/. Never put secrets there.\nUse public Nexia contracts and advertised capabilities only. Open the remote Nexia workspace URL from nexia dev and verify tabs, sidebar, settings, and live app refresh. Never clone, copy, mount, or distribute Nexia Core. Local apps have no tenant data authority.\nRun nexia validate and inspect browser behavior before submission. Run nexia repository connect, then nexia submit --tag v1.0.0 to submit committed GitHub source for review. Never read or copy CLI credentials.\nFor setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.\n',
     'SUPPORT.md': "# Developer support\n\nFor setup, SDK, CLI, Docker, AI-tool or sandbox problems, search and report at https://github.com/nexia-cloud-os/developer-support/issues. Include package versions, development mode, sanitized reproduction steps and the incident time. Never attach credentials, Core source or customer data. Prepare the report for the developer to review before submission.\n",
     '.gitignore': 'node_modules/\n.nexia/\n.env*\n',
     'Dockerfile': `FROM node:22-bookworm-slim

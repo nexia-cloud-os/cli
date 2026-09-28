@@ -287,7 +287,7 @@ terminal in the App directory, validate and submit the version for review:
 
 ```sh
 nexia validate
-nexia deploy --version 1.0.0
+nexia submit --tag v1.0.0
 ```
 
 For a local or separately operated platform only, use
@@ -511,7 +511,7 @@ until both the frontend build and a completed runtime preparation exist.
 
 ## Native version submission
 
-On a platform with artifact builds configured, run `nexia deploy --version 1.0.0`
+On a platform with artifact builds configured, run `nexia submit --tag v1.0.0`
 from the registered PHP/React App directory. It saves an immutable private source
 snapshot and requests a build; it never packages only the browser files or runs
 local App scripts. Keep the build's dependency locks, including package-lock.json.
