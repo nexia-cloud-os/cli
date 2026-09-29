@@ -8,7 +8,7 @@ import { serveMcp } from './mcp.js';
 import { setup } from './setup.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
-import { deploy } from './deploy.js';
+import { repository, submitTag } from './repository.js';
 import { registerApp, selectExecution } from './apps.js';
 import { syncSource } from './sync.js';
 import { workspaceDev } from './workspace-dev.js';
@@ -51,10 +51,11 @@ const help = `Nexia developer tools
                                    Request a sandbox fixture job
   nexia fixtures status <run-id> [--json]
                                    Check its recorded result
-  nexia deploy [directory] [--version 1.0.0]
+  nexia repository connect|status [directory] [--app <folder-or-key>]
+  nexia submit [directory] --tag v1.2.0 [--request-id <uuid>] [--app <folder-or-key>]
                                    Submit an immutable App version
-  nexia submissions status <build-id> [--json]
-  nexia submissions cancel <build-id> [--json]
+  nexia submissions status <submission-id> [--json]
+  nexia submissions cancel|retry <submission-id> [--json]
                                    Inspect PHP/React build processing
   nexia setup --devtools [--dry-run] Install PHP generators for this CLI
   nexia setup [--dry-run]           Install/upgrade PHP and Composer (macOS)
@@ -96,7 +97,7 @@ try {
       (options.prerequisite ??= []).push(args[++i]);
     }
     else if (arg === '--force' || arg === '--with-filament' || arg === '--without-navigation' || arg === '--without-record' || arg === '--write' || arg === '--devtools') options[arg.slice(2)] = true;
-    else if (['--app', '--version', '--request-id', '--port', '--endpoint', '--template', '--vendor', '--family', '--name', '--key', '--table-prefix', '--display-name', '--label-ko', '--label-ko-plural', '--label-zh', '--label-zh-plural', '--record-owner', '--navigation-group', '--navigation-subgroup', '--icon', '--sort'].includes(arg) || signatureSourceOptions.some(key => arg === `--${key}`)) {
+    else if (['--app', '--tag', '--version', '--request-id', '--port', '--endpoint', '--template', '--vendor', '--family', '--name', '--key', '--table-prefix', '--display-name', '--label-ko', '--label-ko-plural', '--label-zh', '--label-zh-plural', '--record-owner', '--navigation-group', '--navigation-subgroup', '--icon', '--sort'].includes(arg) || signatureSourceOptions.some(key => arg === `--${key}`)) {
       if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`${arg} needs a value.`);
       options[arg.slice(2)] = args[++i];
     } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -142,17 +143,19 @@ try {
     } else throw new Error('Use nexia fixtures list, run <app> <key>, or status <run-id>.');
     process.exit(0);
   }
-  if (command === 'submissions' && ['status', 'cancel'].includes(positions[0])) {
-    if (positions.length !== 2 || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(positions[1]) || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia submissions status|cancel <build-id> [--json].');
-    const cancelling = positions[0] === 'cancel';
-    const result = await request(await readConnection(), `v2/artifact-builds/${positions[1]}${cancelling ? '/cancel' : ''}`, cancelling ? { method: 'POST', body: {} } : undefined);
-    if (result.build?.id !== positions[1] || (cancelling && result.build.status !== 'cancelled')) throw new Error('Platform returned a different submission.');
-    if (cancelling) {
-      console.log(options.json ? JSON.stringify(result) : `Cancelled: ${result.build.id}\nVersion ${result.build.version} stays reserved. Submit a new version; source, artifacts and App data are preserved.`);
-      process.exit(0);
-    }
-    const checks = Array.isArray(result.review?.checks) ? result.review.checks.map(check => `${check.key}: ${check.status}`).join('\n') : 'Check results are not recorded.';
-    console.log(options.json ? JSON.stringify(result) : `Version: ${result.build.version}\nBuild: ${result.build.status}\nReview: ${result.review?.status ?? 'unassessed'}\n${checks}\nA built artifact still requires all mandatory checks and human review approval.`);
+  if (command === 'deploy') throw new Error('nexia deploy is retired. Connect a GitHub repository, then use nexia submit --tag v1.2.0. No submission was made.');
+  if (command === 'repository') {
+    const [action, directory = '.'] = positions;
+    if (!['connect', 'status'].includes(action) || positions.length > 2 || Object.keys(options).some(key => key !== 'app')) throw new Error('Use nexia repository connect|status [directory] [--app <folder-or-key>].');
+    await repository(await resolveAppDirectory(directory, options.app), action);
+    process.exit(0);
+  }
+  if (command === 'submissions' && ['status', 'cancel', 'retry'].includes(positions[0])) {
+    if (positions.length !== 2 || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(positions[1]) || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia submissions status|cancel|retry <submission-id> [--json].');
+    const action = positions[0] === 'status' ? '' : positions[0];
+    const result = await request(await readConnection(), `v2/submissions/${positions[1]}${action ? `/${action}` : ''}`, action ? { method: 'POST', body: {} } : undefined);
+    if (result.submission?.id !== positions[1]) throw new Error('Platform returned a different submission.');
+    console.log(options.json ? JSON.stringify(result) : `${result.submission.tag}: ${result.submission.status}\n${result.submission.failure ?? ''}\n${result.submission.retryable ? 'Retry available: nexia submissions retry ' + result.submission.id : 'Code changes require a new version tag.'}`);
     process.exit(0);
   }
   if (command === 'resources' && positions[0] === 'list') {
@@ -182,9 +185,9 @@ try {
     process.exit(0);
   }
   if (positions.length > 1) throw new Error('Supply at most one project directory.');
-  const allowed = command === 'create-project' ? ['name', 'endpoint', 'noBrowser'] : command === 'init' ? ['template', 'vendor', 'family', 'name', 'key', 'table-prefix', 'display-name', 'prerequisite', 'dryRun'] : ['login', 'link-project'].includes(command) ? ['noBrowser'] : command === 'setup' ? ['dryRun', 'devtools'] : command === 'doctor' ? ['endpoint', 'allowInsecureLoopback'] : command === 'dev' ? ['port', 'container', 'app'] : command === 'deploy' ? ['version', 'app'] : ['sync', 'validate'].includes(command) ? ['app'] : [];
+  const allowed = command === 'create-project' ? ['name', 'endpoint', 'noBrowser'] : command === 'init' ? ['template', 'vendor', 'family', 'name', 'key', 'table-prefix', 'display-name', 'prerequisite', 'dryRun'] : ['login', 'link-project'].includes(command) ? ['noBrowser'] : command === 'setup' ? ['dryRun', 'devtools'] : command === 'doctor' ? ['endpoint', 'allowInsecureLoopback'] : command === 'dev' ? ['port', 'container', 'app'] : command === 'submit' ? ['tag', 'request-id', 'app'] : ['sync', 'validate'].includes(command) ? ['app'] : [];
   for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new Error(`Option ${key} is not supported by ${command}.`);
-  const directory = ['deploy', 'sync', 'validate'].includes(command)
+  const directory = ['submit', 'sync', 'validate'].includes(command)
     ? await resolveAppDirectory(positions[0] || '.', options.app) : path.resolve(positions[0] || '.');
   if (!command || ['help', '--help', '-h'].includes(command)) console.log(help);
   else if (command === 'create-project') {
@@ -216,7 +219,7 @@ try {
   }
   else if (command === 'link') await linkProject(directory);
   else if (command === 'sync') await syncSource(directory);
-  else if (command === 'deploy') await deploy(directory, { version: options.version });
+  else if (command === 'submit') await submitTag(directory, options.tag, options['request-id']);
   else if (command === 'status') console.log(JSON.stringify(await request(await readConnection(), 'connection'), null, 2));
   else if (command === 'logout') { const config = await readConnection(); await request(config, 'connection', { method: 'DELETE' }); await saveConnection({ endpoint: config.endpoint }); console.log('CLI connection revoked.'); }
   else if (command === 'setup') {
