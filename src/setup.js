@@ -29,7 +29,7 @@ async function executableAt(filename) {
   catch (error) { if (['ENOENT', 'EACCES', 'ENOTDIR'].includes(error.code)) return null; throw error; }
 }
 
-async function onPath(name) {
+export async function onPath(name) {
   for (const directory of (process.env.PATH || '').split(path.delimiter)) {
     if (!directory) continue;
     const executable = await executableAt(path.join(directory, name));
