@@ -7,6 +7,7 @@ import { startPreview } from './preview.js';
 import { serveMcp } from './mcp.js';
 import { setup } from './setup.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
+import { validateInRuntime } from './runtime-validate.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag } from './repository.js';
 import { registerApp, selectExecution } from './apps.js';
@@ -69,7 +70,7 @@ const help = `Nexia developer tools
                                    Add a business page without a model or migration
   nexia make:signature-data-source <name> [dir] --subject-resource-key <key> --source-resource-key <key>
                                    Preview an explicit signature source; --write creates it
-  nexia validate [directory]        Check PHP App metadata and browser entries
+  nexia validate [directory] [--runtime-image sha256:...]  Check source or isolated Runtime/Catalog
   nexia dev [directory] [--port N]   Open in the remote Nexia workspace
   nexia doctor --endpoint URL       Inspect Core development capabilities
   nexia mcp [directory]             Read-only local MCP server on stdio
@@ -97,7 +98,7 @@ try {
       (options.prerequisite ??= []).push(args[++i]);
     }
     else if (arg === '--force' || arg === '--with-filament' || arg === '--without-navigation' || arg === '--without-record' || arg === '--write' || arg === '--devtools') options[arg.slice(2)] = true;
-    else if (['--app', '--tag', '--version', '--request-id', '--port', '--endpoint', '--template', '--vendor', '--family', '--name', '--key', '--table-prefix', '--display-name', '--label-ko', '--label-ko-plural', '--label-zh', '--label-zh-plural', '--record-owner', '--navigation-group', '--navigation-subgroup', '--icon', '--sort'].includes(arg) || signatureSourceOptions.some(key => arg === `--${key}`)) {
+    else if (['--runtime-image', '--app', '--tag', '--version', '--request-id', '--port', '--endpoint', '--template', '--vendor', '--family', '--name', '--key', '--table-prefix', '--display-name', '--label-ko', '--label-ko-plural', '--label-zh', '--label-zh-plural', '--record-owner', '--navigation-group', '--navigation-subgroup', '--icon', '--sort'].includes(arg) || signatureSourceOptions.some(key => arg === `--${key}`)) {
       if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`${arg} needs a value.`);
       options[arg.slice(2)] = args[++i];
     } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -185,7 +186,7 @@ try {
     process.exit(0);
   }
   if (positions.length > 1) throw new Error('Supply at most one project directory.');
-  const allowed = command === 'create-project' ? ['name', 'endpoint', 'noBrowser'] : command === 'init' ? ['template', 'vendor', 'family', 'name', 'key', 'table-prefix', 'display-name', 'prerequisite', 'dryRun'] : ['login', 'link-project'].includes(command) ? ['noBrowser'] : command === 'setup' ? ['dryRun', 'devtools'] : command === 'doctor' ? ['endpoint', 'allowInsecureLoopback'] : command === 'dev' ? ['port', 'container', 'app'] : command === 'submit' ? ['tag', 'request-id', 'app'] : ['sync', 'validate'].includes(command) ? ['app'] : [];
+  const allowed = command === 'create-project' ? ['name', 'endpoint', 'noBrowser'] : command === 'init' ? ['template', 'vendor', 'family', 'name', 'key', 'table-prefix', 'display-name', 'prerequisite', 'dryRun'] : ['login', 'link-project'].includes(command) ? ['noBrowser'] : command === 'setup' ? ['dryRun', 'devtools'] : command === 'doctor' ? ['endpoint', 'allowInsecureLoopback'] : command === 'dev' ? ['port', 'container', 'app'] : command === 'submit' ? ['tag', 'request-id', 'app'] : command === 'validate' ? ['app', 'runtime-image'] : command === 'sync' ? ['app'] : [];
   for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new Error(`Option ${key} is not supported by ${command}.`);
   const directory = ['submit', 'sync', 'validate'].includes(command)
     ? await resolveAppDirectory(positions[0] || '.', options.app) : path.resolve(positions[0] || '.');
@@ -236,6 +237,10 @@ try {
     if (options.dryRun) process.exit(0);
     console.log(`Created ${target}\nNext: ${template === 'laravel' ? (parentWorkspace ? 'install App dependencies, then run nexia dev from the project; registration is automatic' : 'review nexia.json, select a project with nexia link, then register with nexia app register') : `nexia dev ${JSON.stringify(target)}`}`);
   } else if (command === 'validate') {
+    if (options['runtime-image']) {
+      await validateInRuntime(directory, options['runtime-image']);
+      process.exit(0);
+    }
     const exists = async name => access(path.join(directory, name)).then(() => true, error => {
       if (error.code === 'ENOENT') return false;
       throw error;
