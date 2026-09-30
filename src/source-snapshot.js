@@ -55,7 +55,7 @@ export async function sourceSnapshot(directory) {
       return;
     }
     if (!stat.isFile() || (!files.has(relative) && !extensions.has(path.extname(relative)))) throw new Error(`Unsupported source file: ${relative}`);
-    if (stat.size > 2 * 1024 * 1024 || total + stat.size > 8 * 1024 * 1024 || result.length >= 1000) throw new Error('Source snapshot exceeds 1000 files, 2 MiB per file, or 8 MiB total.');
+    if (stat.size > 2 * 1024 * 1024 || total + stat.size > 16 * 1024 * 1024 || result.length >= 2000) throw new Error('Source snapshot exceeds 2000 files, 2 MiB per file, or 16 MiB total.');
     const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     let bytes;
     try {

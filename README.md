@@ -94,7 +94,9 @@ instruction; a revoked approved pairing never creates a second project.
 Stopping `dev` retains source, databases and pending operations. A second writer
 must wait for the first to stop or its two-minute lease to expire. Pending or
 uncertain database preparation must finish or receive operator review before a
-new writer can proceed. Resolve a per-App terminal error and restart `dev` (or
+new writer can proceed. Core exposes only `retry_allowed` after an operator has
+reviewed a stopped failure; review details remain private. Restart `dev` to use
+that result and submit the current source. Resolve a per-App terminal error and restart `dev` (or
 remove and restore that folder); other Apps keep running. Use the console to
 renew/recover an expired or failed sandbox. No automatic data reset occurs.
 
@@ -459,8 +461,8 @@ The snapshot includes supported code/assets under `src`, `database`, `resources`
 `routes`, `config`, `tests`, `public`, and the supported root manifests/lockfiles.
 It excludes dotfiles, `.nexia`, `vendor` and `node_modules`, rejects symlinks,
 Composer `auth.json` and PHP files under `public`, and runs no App scripts.
-Do not embed credentials in code. Limits are 1000 files, 2 MiB per file and
-8 MiB total. The platform retains at most 100 revisions/64 MiB per project;
+Do not embed credentials in code. Limits are 2000 files, 2 MiB per file and
+16 MiB total. The platform retains at most 100 revisions/512 MiB per sandbox;
 it refuses further distinct snapshots rather than deleting an in-use revision.
 
 ## Native App source watch

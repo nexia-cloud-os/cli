@@ -40,9 +40,12 @@ export async function setEndpoint(endpoint) {
 export async function request(config, route, { method = 'GET', body, authenticated = true } = {}) {
   if (authenticated && !config.token) throw new Error('Connect a project first: nexia login <project-id>');
   const endpoint = validateEndpoint(config.endpoint);
+  // Immutable source snapshots can carry 24 MiB of JSON over local container
+  // forwarding. This upload deadline does not extend runtime authority leases.
+  const timeout = method === 'POST' && route === 'v2/sources' ? 120_000 : 30_000;
   const response = await fetch(`${endpoint}/developer-api/${route}`, {
     method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...(authenticated ? { Authorization: `Bearer ${config.token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(30_000),
+    body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(timeout),
   });
   if (response.status === 204) return null;
   const payload = await response.json().catch(() => ({}));

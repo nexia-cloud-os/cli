@@ -44,3 +44,17 @@ test('native snapshot waits through Git merge and worktree locks without executi
   }
   assert.equal((await sourceSnapshot(root)).files.length, 1);
 });
+
+test('native snapshot supports a complete App and retains file and byte ceilings', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-source-capacity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'src'));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  for (let i = 0; i < 1999; i++) await writeFile(path.join(root, 'src', `${i}.php`), Buffer.alloc(5000, 32));
+  assert.equal((await sourceSnapshot(root)).files.length, 2000);
+  await writeFile(path.join(root, 'src', 'extra.php'), '');
+  await assert.rejects(sourceSnapshot(root), /2000 files/);
+  await rm(path.join(root, 'src', 'extra.php'));
+  for (let i = 0; i < 4; i++) await writeFile(path.join(root, 'src', `${i}.php`), Buffer.alloc(2 * 1024 * 1024, 32));
+  await assert.rejects(sourceSnapshot(root), /16 MiB total/);
+});
