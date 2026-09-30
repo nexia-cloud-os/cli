@@ -119,3 +119,12 @@ test('remote workspace can read only the manifest from its exact allowed origin'
   assert.equal(preflight.headers.get('Access-Control-Allow-Private-Network'), 'true');
   await assert.rejects(startPreview(directory, 0, { workspaceOrigin: 'http://untrusted.example' }));
 });
+
+
+test('Runtime validation reaches image policy and rejects mutable tags', async (t) => {
+  const root = await temporary(t);
+  const result = await invoke(['validate', root, '--runtime-image', 'runtime:latest']);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Use the exact operator Runtime image ID/);
+  assert.doesNotMatch(result.stderr, /Unknown option/);
+});
