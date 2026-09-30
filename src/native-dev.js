@@ -111,6 +111,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         let candidateRuntime = null;
         let operation;
         let cancelled = false;
+        let renewWriter = false;
         if (state) {
           let result;
           readPhase = Boolean(state.operation_id);
@@ -129,11 +130,14 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             || (scope.sandbox_id && operation.developer_sandbox_id !== scope.sandbox_id)
             || operation.developer_project_id !== scope.project_id || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(operation.status)
             || (state.operation_id && operation.id !== state.operation_id)) throw new Error('Platform returned a conflicting runtime operation.');
+          cancelled = operation.status === 'failed' && operation.stopped_at && selection.revision > (state.selection_revision ?? 0);
           if (writer && (operation.writer_generation ?? state.writer_generation) !== writer.generation) {
-            if (operation.status !== 'completed' && !(operation.status === 'failed' && !operation.started_at)) throw new Error('Previous preparation requires review before this new dev session can submit changes.');
-            await persist({ ...state, operation_id: undefined, request_id: randomUUID(), writer_generation: writer.generation });
+            const reviewed = operation.status === 'failed' && operation.stopped_at && operation.retry_allowed === true;
+            if (operation.status !== 'completed' && !cancelled && !reviewed && !(operation.status === 'failed' && !operation.started_at)) throw new Error('Previous preparation requires review before this new dev session can submit changes.');
+            // Recover the old outcome first, then pin current source for this writer.
+            // Resubmitting the previous revision can repeat an already repaired failure.
+            renewWriter = true;
             browserRuntime = null;
-            continue;
           }
           if (!state.operation_id) await persist({ ...state, operation_id: operation.id });
           candidateRuntime = operation.status === 'completed' && !operation.stop_requested_at && !operation.stopped_at
@@ -146,15 +150,14 @@ export async function nativeDev(directory, { signal, log = console.log, interval
               : `App preparation ${phase}: ${operation.id}${phase === 'completed' ? '\nRuntime preparation confirmed; this does not publish or install a release.' : ''}`);
             lastStatus = status;
           }
-          cancelled = operation.status === 'failed' && operation.stopped_at && selection.revision > (state.selection_revision ?? 0);
-          if (['failed', 'needs_review'].includes(operation.status) && !cancelled) throw new Error('App preparation failed or requires operator review. The request and data are retained; no automatic retry was started.');
+          if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw new Error('App preparation failed or requires operator review. The request and data are retained; no automatic retry was started.');
           if (operation.stop_requested_at && !operation.stopped_at) throw new Error('Runtime shutdown is still pending. Retry nexia dev after the operator confirms shutdown; data was retained.');
         }
-        if (!operation || operation.status === 'completed' || cancelled) {
-          // ponytail: hash the bounded 8 MiB source tree; add incremental hashing only if measured watch cost warrants it.
+        if (!operation || operation.status === 'completed' || cancelled || renewWriter) {
+          // ponytail: hash the bounded 16 MiB source tree; add incremental hashing only if measured watch cost warrants it.
           const snapshot = await sourceSnapshot(directory);
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { browserRuntime = null; continue; }
-          if (!state || snapshot.digest !== state.digest || operation?.stopped_at) {
+          if (!state || snapshot.digest !== state.digest || operation?.stopped_at || renewWriter) {
             readPhase = false;
             const { revision } = await syncSource(directory, { log: () => {}, config, scope });
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.

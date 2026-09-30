@@ -103,3 +103,17 @@ test('project creation resumes the same approval after a lost response and renew
   await login(undefined, options);
   assert.equal(pairs, 2);
 });
+
+test('source uploads survive a slow response without extending runtime request deadlines', async t => {
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', milliseconds => realTimeout(milliseconds / 1000));
+  const server = createServer(async (req, res) => {
+    for await (const chunk of req) void chunk;
+    setTimeout(() => { res.setHeader('Content-Type', 'application/json'); res.end('{"accepted":true}'); }, 60);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const config = { endpoint: `http://127.0.0.1:${server.address().port}`, token: 'test-only' };
+  assert.deepEqual(await request(config, 'v2/sources', { method: 'POST', body: {} }), { accepted: true });
+  await assert.rejects(request(config, 'v2/runtime-operations', { method: 'POST', body: {} }), { name: 'TimeoutError' });
+});

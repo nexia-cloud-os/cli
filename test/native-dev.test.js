@@ -157,10 +157,11 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   assert.equal(operations.size, 3);
 });
 
-test('new writer recovers an ambiguous old terminal request before preparing its own generation', async t => {
+for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`new writer recovers an ambiguous ${oldState} terminal request before preparing its own generation`, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-writer-recovery-'));
   process.env.NEXIA_CONFIG_HOME = root;
-  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID(), revision = randomUUID(), requestId = randomUUID();
+  const oldStatus = ['reviewed', 'unreviewed'].includes(oldState) ? 'failed' : oldState;
+  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID(), revision = randomUUID(), currentRevision = randomUUID(), requestId = randomUUID();
   const abort = new AbortController(), submissions = [];
   let session;
   const server = createServer(async (req, res) => {
@@ -168,6 +169,10 @@ test('new writer recovers an ambiguous old terminal request before preparing its
     const input = raw ? JSON.parse(raw) : null;
     let payload;
     if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { runtime_writers: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (req.url.endsWith('/v2/sources')) {
+      assert.equal(submissions.length, 1, 'recover the old request before uploading current source');
+      payload = { revision: { id: currentRevision, digest: input.source.digest, file_count: input.source.files.length } };
+    }
     else if (req.url.endsWith('/writer')) {
       session ??= input.session_id;
       assert.equal(input.session_id, session);
@@ -176,9 +181,11 @@ test('new writer recovers an ambiguous old terminal request before preparing its
     else {
       assert.equal(req.method, 'POST');
       assert.equal(input.writer_session, session);
+      assert.equal(input.source_revision_id, input.request_id === requestId ? revision : currentRevision);
       submissions.push(input.request_id);
-      payload = { operation: { id: randomUUID(), request_id: input.request_id, source_revision_id: revision, developer_project_id: project, developer_sandbox_id: sandbox,
-        writer_generation: input.request_id === requestId ? 1 : 2, status: input.request_id === requestId ? 'completed' : 'queued' } };
+      payload = { operation: { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id, developer_project_id: project, developer_sandbox_id: sandbox,
+        writer_generation: input.request_id === requestId ? 1 : 2, status: input.request_id === requestId ? oldStatus : 'queued',
+        ...(input.request_id === requestId && ['reviewed', 'unreviewed'].includes(oldState) ? { started_at: '2026-09-29T00:00:00Z', stopped_at: '2026-09-29T00:00:01Z', retry_allowed: oldState === 'reviewed' } : {}) } };
     }
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(payload));
   });
@@ -189,8 +196,13 @@ test('new writer recovers an ambiguous old terminal request before preparing its
   await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
   await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
   await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
-  await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox, request_id: requestId, revision_id: revision, digest: 'a'.repeat(64), writer_generation: 1 }));
+  await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox, request_id: requestId, revision_id: revision, digest: 'a'.repeat(64), writer_generation: 1, selection_revision: 1 }));
   await writeFile(path.join(root, 'composer.json'), '{}');
+  if (oldState === 'unreviewed') {
+    await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /Previous preparation requires review/);
+    assert.deepEqual(submissions, [requestId]);
+    return;
+  }
   const timeout = setTimeout(() => abort.abort(), 3000);
   try { await nativeDev(root, { port: 0, interval: 1, signal: abort.signal, log: message => { if (message.includes('preparation queued')) abort.abort(); } }); }
   finally { clearTimeout(timeout); }
