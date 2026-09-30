@@ -561,3 +561,7 @@ and provenance. Field contracts are explicit; no database columns are inferred.
 For bounded collections use `--cardinality many --min-items 0 --max-items 12`.
 
 Resource generation creates the PHP/React application screens by default. Add `--with-filament` only when you also need Filament administration screens. Omitting that option, including during `--force` regeneration, preserves existing administration files and their manifest registration.
+
+### Inspect an App in the standard Runtime
+
+`nexia validate ./my-app --runtime-image sha256:<operator-image-id>` snapshots the same allowed source files as development sync, excludes `.env`, credentials and local dependencies, and runs the operator inspection entry point without network or host services. The image must contain the matching SDK/Runtime source. It prints the Runtime revision and the validated Catalog; it does not activate the App. Plain `nexia validate` remains a local metadata/syntax check.
