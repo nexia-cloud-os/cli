@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startFrontendBuild } from '../src/frontend-build.js';
@@ -11,7 +11,11 @@ test('generated App build starts, rebuilds and stops with one dev watcher', asyn
   const viteDir = path.join(root, 'node_modules', 'vite', 'dist', 'node');
   await mkdir(viteDir, { recursive: true });
   await writeFile(path.join(root, 'vite.config.mjs'), 'export default {}');
-  await writeFile(path.join(root, 'source.txt'), 'first');
+  const saveSource = async content => {
+    await writeFile(path.join(root, 'source.tmp'), content);
+    await rename(path.join(root, 'source.tmp'), path.join(root, 'source.txt'));
+  };
+  await saveSource('first');
   await writeFile(path.join(viteDir, 'index.js'), `
     const fs = require('node:fs');
     const path = require('node:path');
@@ -39,15 +43,15 @@ test('generated App build starts, rebuilds and stops with one dev watcher', asyn
   try {
     assert.equal(await readFile(manifest, 'utf8'), 'first');
     assert.equal(await readFile(path.join(root, 'dist/frontend/index.js'), 'utf8'), 'first');
-    await writeFile(path.join(root, 'source.txt'), 'second');
+    await saveSource('second');
     for (let i = 0; i < 50 && (await readFile(manifest, 'utf8')) !== 'second'; i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(await readFile(manifest, 'utf8'), 'second');
     for (let i = 0; i < 50 && !build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(build.ready(), true);
-    await writeFile(path.join(root, 'source.txt'), 'broken');
+    await saveSource('broken');
     for (let i = 0; i < 50 && build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(build.ready(), false, 'a failed compile cannot expose the previous frontend as ready');
-    await writeFile(path.join(root, 'source.txt'), 'fixed');
+    await saveSource('fixed');
     for (let i = 0; i < 50 && !build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(build.ready(), true);
     assert.equal(await readFile(path.join(root, 'dist/frontend/index.js'), 'utf8'), 'fixed');
