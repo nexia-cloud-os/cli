@@ -9,6 +9,7 @@ import { get } from 'node:http';
 import { Readable, Writable } from 'node:stream';
 import { initProject } from '../src/project.js';
 import { startPreview } from '../src/preview.js';
+import { bundleProject } from '../src/deploy.js';
 import { serveMcp } from '../src/mcp.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
@@ -28,15 +29,15 @@ async function temporary(t) {
   return directory;
 }
 
-test('CLI creates and validates an app, rejects overwrite, and requires a connection for deploy', async (t) => {
+test('CLI explicitly creates and validates a static app, rejects overwrite, and rejects retired deploy', async (t) => {
   const root = await temporary(t);
   const directory = path.join(root, 'sample');
-  assert.equal((await invoke(['init', directory])).code, 0);
+  assert.equal((await invoke(['init', directory, '--template', 'browser'])).code, 0);
   assert.equal((await invoke(['validate', directory])).code, 0);
-  assert.equal((await invoke(['init', directory])).code, 1);
+  assert.equal((await invoke(['init', directory, '--template', 'browser'])).code, 1);
   const deploy = await invoke(['deploy']);
   assert.equal(deploy.code, 1);
-  assert.match(deploy.stderr, /Connect a project first/);
+  assert.match(deploy.stderr, /deploy is retired/);
   if (process.platform === 'darwin') {
     const setup = await invoke(['setup', '--dry-run']);
     assert.equal(setup.code, 0);
@@ -61,6 +62,17 @@ test('preview serves public HTML and rejects private paths, bad hosts, origins a
   assert.equal(badHostStatus, 403);
   assert.equal((await fetch(preview.url, { headers: { Origin: 'https://attacker.example' } })).status, 403);
   assert.equal((await fetch(preview.url, { method: 'POST' })).status, 405);
+});
+
+test('static preview and submission reject PHP packages instead of dropping their server code', async (t) => {
+  const root = await temporary(t);
+  const directory = path.join(root, 'hybrid');
+  await initProject(directory);
+  await writeFile(path.join(directory, 'composer.json'), JSON.stringify({
+    name: 'example/hybrid', extra: { nexia: { app: { app_key: 'hybrid' } } },
+  }));
+  await assert.rejects(startPreview(directory, 0), /static path cannot run or submit its server code/);
+  await assert.rejects(bundleProject(directory), /static path cannot run or submit its server code/);
 });
 
 test('MCP validates local app and strips credentials from local binding output', async (t) => {
@@ -106,4 +118,13 @@ test('remote workspace can read only the manifest from its exact allowed origin'
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('Access-Control-Allow-Private-Network'), 'true');
   await assert.rejects(startPreview(directory, 0, { workspaceOrigin: 'http://untrusted.example' }));
+});
+
+
+test('Runtime validation reaches image policy and rejects mutable tags', async (t) => {
+  const root = await temporary(t);
+  const result = await invoke(['validate', root, '--runtime-image', 'runtime:latest']);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Use the exact operator Runtime image ID/);
+  assert.doesNotMatch(result.stderr, /Unknown option/);
 });

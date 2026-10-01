@@ -1,10 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { validateProject, resolvePublicFile } from './project.js';
-import { readConnection, request } from './connection.js';
+import { assertStaticProject, validateProject, resolvePublicFile } from './project.js';
 
 const extensions = new Set(['.html', '.js', '.css', '.json', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.ico', '.woff2']);
 export async function bundleProject(directory) {
+  await assertStaticProject(directory);
   const manifest = await validateProject(directory);
   if (manifest.permissions?.required.length) throw new Error('Static deployments cannot request tenant permissions.');
   const root = path.join(path.resolve(directory), 'public');
@@ -28,18 +28,6 @@ export async function bundleProject(directory) {
   return { manifest, files };
 }
 
-export async function deploy(directory) {
-  const config = await readConnection();
-  const connection = await request(config, 'connection');
-  if (connection.status !== 'connected') throw new Error('Approve your CLI connection first.');
-  // Bind a starter to the project that created it. A directory never silently changes target.
-  let binding;
-  try { binding = JSON.parse(await readFile(path.join(directory, '.nexia', 'project.json'), 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  if (!binding || binding.project_id !== connection.project.id || binding.endpoint !== config.endpoint) {
-    throw new Error('This directory is not bound to the connected project. Run nexia link in this directory and confirm the printed target.');
-  }
-  const result = await request(config, 'deployments', { method: 'POST', body: await bundleProject(directory) });
-  console.log(`Project: ${connection.project.name}\nVersion: ${result.deployment.version}\nStatus: ${result.deployment.status}\n${result.project_url}\nSubmission is awaiting review; this does not publish or install the app.`);
-  return result;
+export async function deploy() {
+  throw new Error('nexia deploy is retired. Use nexia repository connect, then nexia submit --tag v1.2.0.');
 }
