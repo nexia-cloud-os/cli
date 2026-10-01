@@ -100,6 +100,7 @@ const fs = require('node:fs');
 fs.writeFileSync(process.env.INSTALL_LOG, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), home: process.env.COMPOSER_HOME }));
 fs.mkdirSync('vendor/bin', { recursive: true });
 fs.writeFileSync('vendor/bin/nexia-app', '<?php // installed generator');
+fs.writeFileSync('composer.lock', JSON.stringify({ packages: [{ name: 'nexia-cloud-os/devtools', version: '0.1.0' }] }));
 `, { mode: 0o755 });
   const invoke = args => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd: root, env: { ...process.env, PATH: bin, NEXIA_CONFIG_HOME: config, INSTALL_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -120,12 +121,34 @@ fs.writeFileSync('vendor/bin/nexia-app', '<?php // installed generator');
   assert.equal(installed.home, path.join(config, 'tools/devtools/composer-home'));
   assert.deepEqual(JSON.parse(await readFile(path.join(installed.cwd, 'composer.json'), 'utf8')).config, { 'allow-plugins': false });
   const manifestPath = path.join(installed.cwd, 'composer.json');
-  assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).require['nexia/devtools'], '*');
+  assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).require['nexia-cloud-os/devtools'], '^0.1');
   await writeFile(manifestPath, JSON.stringify({ require: { 'nexia/app-devtools': '*', 'example/keep': '^1' }, config: { 'allow-plugins': false } }));
   result = await invoke(['setup', '--devtools']);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia/devtools': '*', 'example/keep': '^1' });
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).args.slice(0, 3), ['update', 'nexia/devtools', '--minimal-changes']);
+  assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.1', 'example/keep': '^1' });
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).args.slice(0, 4), ['update', 'nexia-cloud-os/devtools', '--with-all-dependencies', '--minimal-changes']);
+  // A second setup updates the existing lock; it does not silently reinstall the old version.
+  result = await invoke(['setup', '--devtools']);
+  assert.equal(result.code, 0, result.output);
+  assert.equal(JSON.parse(await readFile(log, 'utf8')).args[0], 'update');
+  for (const oldName of ['nexia/devtools', 'nexia/app-devtools']) {
+    await writeFile(manifestPath, JSON.stringify({ require: { [oldName]: '*', 'example/keep': '^1' }, config: { 'allow-plugins': false } }));
+    await writeFile(path.join(installed.cwd, 'composer.lock'), JSON.stringify({ packages: [{ name: oldName, version: '0.1.0' }] }));
+    result = await invoke(['setup', '--devtools']);
+    assert.equal(result.code, 0, result.output);
+    assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.1', 'example/keep': '^1' });
+    assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).args.slice(0, 5), ['update', 'nexia-cloud-os/devtools', oldName, '--with-all-dependencies', '--minimal-changes']);
+  }
+  // An explicit supported pin is preserved during name migration.
+  await writeFile(manifestPath, JSON.stringify({ require: { 'nexia/devtools': '0.1.0' } }));
+  result = await invoke(['setup', '--devtools']);
+  assert.equal(result.code, 0, result.output);
+  assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).require['nexia-cloud-os/devtools'], '0.1.0');
+  await writeFile(path.join(installed.cwd, 'composer.lock'), '{broken');
+  const lastInstall = await readFile(log, 'utf8');
+  result = await invoke(['setup', '--devtools']);
+  assert.equal(result.code, 1);
+  assert.equal(await readFile(log, 'utf8'), lastInstall, 'Invalid locks must not be ignored');
   result = await invoke(['make:page', 'Summary', root, '--label-ko', '요약']);
   assert.equal(result.code, 1, 'A tool located inside the App is rejected even when its path is managed');
   const app = await mkdtemp(path.join(tmpdir(), 'nexia-managed-app-'));

@@ -5,6 +5,9 @@ import { mkdir, readFile, realpath, writeFile, lstat, mkdtemp, rename, rm } from
 import { onPath } from './setup.js';
 
 const toolDirectory = () => path.resolve(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'tools', 'devtools');
+const devtoolsPackage = 'nexia-cloud-os/devtools';
+const devtoolsVersion = '^0.1';
+const previousPackages = ['nexia/devtools', 'nexia/app-devtools'];
 
 export async function installDevtools({ dryRun = false, log = console.log } = {}) {
   const directory = toolDirectory();
@@ -14,20 +17,30 @@ export async function installDevtools({ dryRun = false, log = console.log } = {}
   if (!composer || !await onPath('php')) throw new Error('Install PHP 8.4+ and Composer first, then run nexia setup --devtools.');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   try {
-    await writeFile(path.join(directory, 'composer.json'), JSON.stringify({ require: { 'nexia/devtools': '*' }, config: { 'allow-plugins': false } }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    await writeFile(path.join(directory, 'composer.json'), JSON.stringify({ require: { [devtoolsPackage]: devtoolsVersion }, config: { 'allow-plugins': false } }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   } catch (error) { if (error.code !== 'EEXIST') throw error; }
   const manifestPath = path.join(directory, 'composer.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  const renamed = Object.hasOwn(manifest.require ?? {}, 'nexia/app-devtools');
-  if (renamed) {
-    manifest.require['nexia/devtools'] ??= manifest.require['nexia/app-devtools'];
-    delete manifest.require['nexia/app-devtools'];
+  const previousManifest = JSON.stringify(manifest);
+  manifest.require ??= {};
+  const previousVersion = previousPackages.map(name => manifest.require[name]).find(version => version !== undefined);
+  manifest.require[devtoolsPackage] ??= previousVersion && previousVersion !== '*' ? previousVersion : devtoolsVersion;
+  for (const name of previousPackages) delete manifest.require[name];
+  if (JSON.stringify(manifest) !== previousManifest) {
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
   }
+  const lock = await readFile(path.join(directory, 'composer.lock'), 'utf8').then(JSON.parse).catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  const previousLocked = previousPackages.filter(name => lock?.packages?.some(pkg => pkg.name === name));
+  const operation = lock
+    ? ['update', devtoolsPackage, ...previousLocked, '--with-all-dependencies', '--minimal-changes']
+    : ['install'];
   const env = { ...process.env, COMPOSER_HOME: path.join(directory, 'composer-home') };
   for (const key of ['COMPOSER', 'COMPOSER_VENDOR_DIR', 'COMPOSER_BIN_DIR']) delete env[key];
   await new Promise((resolve, reject) => {
-    const child = spawn(composer, [...(renamed ? ['update', 'nexia/devtools', '--minimal-changes'] : ['install']), '--no-interaction', '--no-scripts', '--no-plugins', '--prefer-dist'], { cwd: directory, env, shell: false, stdio: 'inherit' });
+    const child = spawn(composer, [...operation, '--no-interaction', '--no-scripts', '--no-plugins', '--prefer-dist'], { cwd: directory, env, shell: false, stdio: 'inherit' });
     child.once('error', reject);
     child.once('close', code => code === 0 ? resolve() : reject(new Error('PHP generator installation failed. Resolve the Composer error above and rerun nexia setup --devtools.')));
   });
