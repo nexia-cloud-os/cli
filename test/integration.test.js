@@ -69,7 +69,7 @@ test('static preview and submission reject PHP packages instead of dropping thei
   const directory = path.join(root, 'hybrid');
   await initProject(directory);
   await writeFile(path.join(directory, 'composer.json'), JSON.stringify({
-    name: 'example/hybrid', extra: { nexia: { app: { app_key: 'hybrid' } } },
+    name: 'example/hybrid',
   }));
   await assert.rejects(startPreview(directory, 0), /static path cannot run or submit its server code/);
   await assert.rejects(bundleProject(directory), /static path cannot run or submit its server code/);
