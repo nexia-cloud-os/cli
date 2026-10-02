@@ -28,6 +28,20 @@ async function linkProject(directory) {
   console.log(`Linked to ${result.project.name} (${result.project.id}) at ${config.endpoint}`);
 }
 
+async function databaseBinding(directory, selector) {
+  const root = await resolveAppDirectory(directory, selector), config = await readConnection();
+  const local = path.join(root, '.nexia');
+  const [project, app] = await Promise.all(['project.json', 'app.json'].map(async name => {
+    const file = path.join(local, name), stat = await access(file).then(() => null, () => { throw new Error('Register and link this App before requesting database work.'); });
+    return JSON.parse(await readFile(file, 'utf8'));
+  }));
+  const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
+  if (!uuid(project.project_id) || !uuid(app.id)
+      || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint)
+      || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint)) throw new Error('App binding is invalid.');
+  return { config, app_id: app.id };
+}
+
 const signatureSourceOptions = ['source-key', 'source-version', 'subject-resource-key', 'source-resource-key', 'cardinality', 'min-items', 'max-items', 'stable-sort-key', 'lookup-mode', 'subject-anchor', 'source-ref-anchor', 'field-key', 'field-type', 'field-classification', 'field-formatter', 'label-key', 'description-key', 'field-label-key'];
 
 const help = `Nexia developer tools
@@ -47,6 +61,12 @@ const help = `Nexia developer tools
   nexia app runtime development|off [directory]
                                    Select development execution without deleting data
   nexia resources list [--json]    Inspect public resource contracts in the sandbox
+  nexia db references [--json]     List Core keys allowed as App foreign-key targets
+  nexia db status [directory] [--app <folder-or-key>]
+  nexia db migrate [directory] [--request-id UUID] [--app <folder-or-key>]
+  nexia db reset --yes [directory] [--request-id UUID] [--app <folder-or-key>]
+  nexia db seed <fixture> [directory] [--request-id UUID] [--app <folder-or-key>]
+                                   Run one App-scoped sandbox database operation
   nexia fixtures list [--json]     List installed App development fixtures
   nexia fixtures run <app> <key> [--request-id UUID] [--json]
                                    Request a sandbox fixture job
@@ -97,7 +117,7 @@ try {
       if (!args[i + 1] || args[i + 1].startsWith('-')) throw new Error('--prerequisite needs an App key.');
       (options.prerequisite ??= []).push(args[++i]);
     }
-    else if (arg === '--force' || arg === '--with-filament' || arg === '--without-navigation' || arg === '--without-record' || arg === '--write' || arg === '--devtools') options[arg.slice(2)] = true;
+    else if (arg === '--force' || arg === '--yes' || arg === '--with-filament' || arg === '--without-navigation' || arg === '--without-record' || arg === '--write' || arg === '--devtools') options[arg.slice(2)] = true;
     else if (['--runtime-image', '--app', '--tag', '--version', '--request-id', '--port', '--endpoint', '--template', '--vendor', '--family', '--name', '--key', '--table-prefix', '--display-name', '--label-ko', '--label-ko-plural', '--label-zh', '--label-zh-plural', '--record-owner', '--navigation-group', '--navigation-subgroup', '--icon', '--sort'].includes(arg) || signatureSourceOptions.some(key => arg === `--${key}`)) {
       if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`${arg} needs a value.`);
       options[arg.slice(2)] = args[++i];
@@ -122,6 +142,37 @@ try {
     if (positions.length !== 1 || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia apps list [--json].');
     const result = await request(await readConnection(), 'apps');
     console.log(options.json ? JSON.stringify(result) : result.apps.map(app => `${app.key} · ${app.name} · ${app.id}`).join('\n') || 'No registered Apps are linked to this project.');
+    process.exit(0);
+  }
+  if (command === 'db') {
+    const [action, first, second] = positions;
+    if (action === 'references') {
+      if (positions.length !== 1 || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia db references [--json].');
+      const result = await request(await readConnection(), 'v2/database/references');
+      if (!Array.isArray(result.references) || result.grants_data_access !== false
+          || result.references.some(item => !item || ['schema', 'table', 'column'].some(key => !/^[a-z_][a-z0-9_]{0,62}$/.test(item[key] ?? '')))) throw new Error('Invalid Core database reference catalog.');
+      console.log(options.json ? JSON.stringify(result) : result.references.map(item => `${item.schema}.${item.table}.${item.column}`).join('\n') || 'No Core foreign-key targets are published.');
+      if (!options.json) console.log('Reference declarations do not grant access to Core records.');
+    } else {
+      const seed = action === 'seed', allowed = ['json', 'app', 'request-id', ...(action === 'reset' ? ['yes'] : [])];
+      if (!['status', 'migrate', 'seed', 'reset'].includes(action) || Object.keys(options).some(key => !allowed.includes(key))
+          || (seed ? !first || positions.length > 3 : positions.length > 2) || (action === 'reset' && options.yes !== true)) throw new Error('Use nexia db status|migrate [directory], nexia db reset --yes [directory], or nexia db seed <fixture> [directory].');
+      const directory = seed ? second || '.' : first || '.', binding = await databaseBinding(directory, options.app);
+      if (action === 'status') {
+        const result = await request(binding.config, `v2/apps/${binding.app_id}/database-operations`);
+        console.log(options.json ? JSON.stringify(result) : result.operation ? `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})` : 'No App database operation has been requested.');
+      } else {
+        const id = options['request-id'] || randomUUID();
+        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error('--request-id must be a UUID.');
+        console.error(`Database request: ${id}. Stop nexia dev first if it owns this App writer lease; retry a lost response with the same --request-id.`);
+        // Reuse the idempotency key for this short-lived lease. A lost-response
+        // retry can then release the same writer generation without a new claim.
+        const result = await request(binding.config, `v2/apps/${binding.app_id}/database-operations`, { method: 'POST', body: { command: action, ...(seed ? { fixture_key: first } : {}), request_id: id, writer_session: id } });
+        const released = await request(binding.config, `v2/apps/${binding.app_id}/writer`, { method: 'PUT', body: { session_id: id, release: true } });
+        if (released.writer?.released !== true) throw new Error('The accepted database request did not release its writer lease. Retry with the same --request-id.');
+        console.log(options.json ? JSON.stringify(result) : `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})\nCheck: nexia db status ${JSON.stringify(directory)}`);
+      }
+    }
     process.exit(0);
   }
   if (command === 'fixtures') {

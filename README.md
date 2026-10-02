@@ -429,6 +429,27 @@ previews files. Registration uses `nexia app register <directory>` after login
 and link. The generator never installs the App into a tenant or runs its PHP
 bootstrap. PHP/React is the default. Use `--template browser` only for a legacy static App.
 
+### App sandbox database work
+
+Run `nexia db references` (or `--json`) to list the Core keys published as App
+foreign-key targets. This uses the approved project connection and never returns
+a database login. A published reference permits the platform to grant migration
+REFERENCES privileges; it does not grant reads of Core records. The platform must
+apply a Core catalog update to existing allocations before an App migration can
+use a new target.
+
+Use `nexia db status`, `nexia db migrate`, or `nexia db seed <declared-key>`
+from a registered, linked App directory to request one operation for that App's
+active sandbox. Migration uses the same isolated schema, initializer, and App
+runtime identity as development execution. Seed runs only the App fixture named
+by its declared key; the CLI never sends a shell command or database credential.
+
+`nexia db reset --yes` stops the selected App preparation, revokes its previous
+sandbox credentials, and recreates only that App's deterministic sandbox schema
+before migration and initialization. It does not reset the tenant or another
+App. Stop `nexia dev` for the same App first when it owns the writer lease, then
+retry with the same `--request-id` if a response is lost.
+
 ### Development fixtures
 
 Use the connected project's active sandbox to inspect installed Apps' declared
