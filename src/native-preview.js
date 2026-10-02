@@ -17,7 +17,7 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     if (req.headers.host !== new URL(origin).host) { res.writeHead(403).end(); return; }
     const url = new URL(req.url, origin);
     const manifest = url.pathname === '/__nexia_native';
-    const allowedOrigin = manifest ? workspaceOrigin : 'null';
+    const allowedOrigin = workspaceOrigin;
     if (req.headers.origin !== allowedOrigin) { res.writeHead(403).end(); return; }
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Vary', 'Origin');
