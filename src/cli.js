@@ -39,6 +39,10 @@ async function databaseBinding(directory, selector) {
   if (!uuid(project.project_id) || !uuid(app.id)
       || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint)
       || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint)) throw new Error('App binding is invalid.');
+  const connection = await request(config, 'connection');
+  if (connection.status !== 'connected' || connection.project?.id !== project.project_id) {
+    throw new Error('This directory is linked to another project or the connection is no longer approved. Run nexia link to confirm the current target first.');
+  }
   return { config, app_id: app.id };
 }
 
