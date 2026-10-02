@@ -91,7 +91,11 @@ response, rerun the **same** `create-project` path/name: its private pending
 approval is recovered. An expired unapproved pairing is discarded with a retry
 instruction; a revoked approved pairing never creates a second project.
 
-Stopping `dev` retains source, databases and pending operations. A second writer
+Stopping `dev` retains source, databases and pending operations. While an operator
+stops a previously completed runtime, `dev` keeps the preview unavailable and
+waits for shutdown acknowledgment before preparing its replacement. Failed or
+review-required preparations remain blocked; they are not automatically retried.
+A second writer
 must wait for the first to stop or its two-minute lease to expire. Pending or
 uncertain database preparation must finish or receive operator review before a
 new writer can proceed. Core exposes only `retry_allowed` after an operator has
@@ -289,6 +293,14 @@ npm run build
 nexia dev
 ```
 
+When standard input is not a terminal, generators run without prompts. Supply
+required labels such as `--label-ko`; missing labels produce an option hint.
+Use `--label-zh` to provide the Chinese label explicitly.
+
+If port 4310 is occupied by an existing `nexia dev`, use that process's workspace
+link. To run another preview, choose an unused port with `nexia dev --port 4311`
+and use the new workspace link printed by that process.
+
 Keep `dev` running and confirm a saved record in the workspace. In another
 terminal in the App directory, validate and submit the version for review:
 
@@ -444,8 +456,8 @@ Composer retains dependencies and autoload declarations; remove duplicate
 `extra.nexia` fields when adopting the native declaration. `nexia validate`
 delegates native metadata and PHP checks to the independently installed public
 PHP tool. Native manifests do not require preview screens or public/index.html.
-For legacy PHP/browser hybrids with preview schema_version "1", validation also
-checks the browser entries. The public preview and submission reject symbolic
+PHP package registration requires the native v2 manifest. Browser-only preview
+remains a separate workflow. The public preview and submission reject symbolic
 links, including a linked public/ directory; copy intended browser assets into
 that directory. Native source validation does not submit or execute an App.
 
@@ -508,6 +520,9 @@ its public `resources/lang/{en,ko,zh}.json` catalogs in the workspace manifest, 
 the workspace launch address. Use `--port` for another App's listener, and
 `--container` with a matching loopback Docker port mapping. For generated Apps,
 the CLI starts the installed Vite build watcher after connection validation.
+Adding, renaming or removing files under `resources` refreshes the build graph,
+including automatically discovered Resource screens. A compile error keeps the
+preview unavailable until the build succeeds again; no Core rebuild is required.
 It does not invoke `package.json` scripts; Vite loads the App's config and plugins.
 It never serves PHP, `.env`, source maps,
 hidden files or linked files. The workspace reads a connection manifest; the

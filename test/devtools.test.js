@@ -28,7 +28,7 @@ test('CLI delegates native generation as arguments and rejects an App-owned tool
   });
   let result = await invoke(['init', directory, '--vendor', 'acme', '--family', 'people', '--name', 'LeaveManager', '--dry-run']);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')), [await realpath(path.join(bin, 'nexia-app')), 'make:app', 'LeaveManager', '--directory', directory, '--vendor', 'acme', '--family', 'people', '--dry-run']);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')), [await realpath(path.join(bin, 'nexia-app')), 'make:app', 'LeaveManager', '--directory', directory, '--vendor', 'acme', '--family', 'people', '--dry-run', '--no-interaction']);
   // Creating source must not contact an old platform session or implicitly link it.
   await mkdir(path.join(root, 'config'));
   const expired = JSON.stringify({ endpoint: 'http://localhost:1', token: 'expired-fixture-token' });
@@ -40,18 +40,18 @@ test('CLI delegates native generation as arguments and rejects an App-owned tool
   await assert.rejects(readFile(path.join(directory, '.nexia', 'project.json')), { code: 'ENOENT' });
   result = await invoke(['make:resource', 'Request', directory, '--label-ko', '휴가 신청']);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:resource', directory, 'Request', '--label-ko', '휴가 신청']);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:resource', directory, 'Request', '--label-ko', '휴가 신청', '--no-interaction']);
   result = await invoke(['make:resource', 'Request', directory, '--label-ko', '휴가 신청', '--with-filament']);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:resource', directory, 'Request', '--label-ko', '휴가 신청', '--with-filament']);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:resource', directory, 'Request', '--label-ko', '휴가 신청', '--with-filament', '--no-interaction']);
   result = await invoke(['make:page', 'LeaveCalendar', directory, '--label-ko', '휴가 달력', '--without-record', '--without-navigation', '--dry-run']);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:page', directory, 'LeaveCalendar', '--label-ko', '휴가 달력', '--without-record', '--without-navigation', '--dry-run']);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:page', directory, 'LeaveCalendar', '--label-ko', '휴가 달력', '--without-record', '--without-navigation', '--dry-run', '--no-interaction']);
   const sourceOptions = ['--subject-resource-key', 'leave.request', '--source-resource-key', 'leave.request', '--cardinality', 'many', '--min-items', '0', '--max-items', '12'];
   for (const writeOptions of [[], ['--write'], ['--write', '--force']]) {
     result = await invoke(['make:signature-data-source', 'SelectedRequests', directory, ...sourceOptions, ...writeOptions]);
     assert.equal(result.code, 0, result.output);
-    assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:signature-data-source', directory, 'SelectedRequests', ...sourceOptions, ...writeOptions]);
+    assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['make:signature-data-source', directory, 'SelectedRequests', ...sourceOptions, ...writeOptions, '--no-interaction']);
   }
   const lastInvocation = await readFile(log, 'utf8');
   result = await invoke(['make:signature-data-source', 'SelectedRequests', directory, '--without-navigation']);
@@ -60,11 +60,11 @@ test('CLI delegates native generation as arguments and rejects an App-owned tool
   await writeFile(path.join(directory, 'composer.json'), '{}');
   result = await invoke(['validate', directory]);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['validate', directory]);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['validate', directory, '--no-interaction']);
   await writeFile(path.join(directory, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'native-proof' } }));
   result = await invoke(['validate', directory]);
   assert.equal(result.code, 0, 'Native validation must not require preview screens or public/index.html');
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['validate', directory]);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['validate', directory, '--no-interaction']);
   await writeFile(path.join(bin, 'php'), `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o755 });
   result = await invoke(['validate', directory]);
   assert.equal(result.code, 1, 'Native validation must preserve PHP validator failures');
@@ -74,7 +74,7 @@ test('CLI delegates native generation as arguments and rejects an App-owned tool
   await writeFile(path.join(hybrid, 'composer.json'), '{}');
   result = await invoke(['validate', hybrid]);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['validate', hybrid]);
+  assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).slice(1), ['validate', hybrid, '--no-interaction']);
   await rm(path.join(hybrid, 'public/index.html'));
   result = await invoke(['validate', hybrid]);
   assert.equal(result.code, 1, 'PHP validation must not skip broken browser entries');

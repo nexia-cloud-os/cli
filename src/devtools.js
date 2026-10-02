@@ -65,7 +65,7 @@ export async function runDevtools(args, directory) {
     throw new Error('Use an independently installed nexia-app executable, not a script inside the App directory.');
   }
   await new Promise((resolve, reject) => {
-    const child = spawn('php', [executable, ...args], { shell: false, stdio: 'inherit' });
+    const child = spawn('php', [executable, ...args, ...(!process.stdin.isTTY ? ['--no-interaction'] : [])], { shell: false, stdio: 'inherit' });
     child.once('error', error => reject(new Error(`Cannot start PHP App generators: ${error.message}`)));
     child.once('close', code => code === 0 ? resolve() : reject(new Error(`App generator failed (exit ${code}). Review its output; existing files were not reset.`)));
   });
