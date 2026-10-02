@@ -394,7 +394,7 @@ command; resources without a public ResourceDescriptor are not auto-generated ye
 
 ## PHP/React App generation
 
-Install the PHP generators with `nexia setup --devtools`. PHP 8.4+
+Install or update the PHP generators with `nexia setup --devtools`. It installs the public Composer package `nexia-cloud-os/devtools` within `^0.1`, migrates previous managed package names, and updates its dependencies when a lock already exists. Explicit version pins and unrelated requirements are preserved. PHP 8.4+
 is required. Create an App and add a resource without a Core checkout. `init` only creates
 local source and does not contact the platform or reuse a saved login to link it.
 Select the project explicitly with `nexia link`, then use `nexia app register`:
