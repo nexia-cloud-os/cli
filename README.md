@@ -444,8 +444,8 @@ Composer retains dependencies and autoload declarations; remove duplicate
 `extra.nexia` fields when adopting the native declaration. `nexia validate`
 delegates native metadata and PHP checks to the independently installed public
 PHP tool. Native manifests do not require preview screens or public/index.html.
-For legacy PHP/browser hybrids with preview schema_version "1", validation also
-checks the browser entries. The public preview and submission reject symbolic
+PHP package registration requires the native v2 manifest. Browser-only preview
+remains a separate workflow. The public preview and submission reject symbolic
 links, including a linked public/ directory; copy intended browser assets into
 that directory. Native source validation does not submit or execute an App.
 
