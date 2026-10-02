@@ -5,6 +5,15 @@ import path from 'node:path';
 import os from 'node:os';
 import { startNativePreview } from '../src/native-preview.js';
 
+test('occupied preview port explains how to reuse or restart development', async () => {
+  const first = await startNativePreview(null, { port: 0, workspaceOrigin: 'http://workspace.localhost:8081', apps: new Map() });
+  try {
+    await assert.rejects(startNativePreview(null, {
+      port: Number(new URL(first.url).port), workspaceOrigin: 'http://workspace.localhost:8081', apps: new Map(),
+    }), /already in use.*workspace link.*--port/);
+  } finally { await first.close(); }
+});
+
 test('native preview exposes only compiled assets through a workspace-issued capability', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-native-preview-'));
   await mkdir(path.join(root, 'dist/frontend'), { recursive: true });
