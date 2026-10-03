@@ -19,19 +19,13 @@ export async function registerApp(directory, { log = console.log } = {}) {
     manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error('nexia.json must contain an object.');
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  let metadata = composer.extra?.nexia?.app;
-  if (manifest?.schema_version === '2') {
-    if (manifest.runtime !== 'laravel') throw new Error('Package nexia.json version 2 requires runtime laravel.');
-    if (Object.hasOwn(composer.extra?.nexia ?? {}, 'app')) throw new Error('Declare App metadata only in nexia.json; remove extra.nexia.app.');
-    metadata = manifest.app;
-  } else if (manifest && manifest.schema_version !== '1') {
-    throw new Error('Unsupported nexia.json schema_version.');
-  }
+  if (manifest?.schema_version !== '2') throw new Error('Package registration requires nexia.json version 2.');
+  if (manifest.runtime !== 'laravel') throw new Error('Package nexia.json version 2 requires runtime laravel.');
+  if (Object.keys(composer.extra?.nexia ?? {}).length) throw new Error('Declare App metadata only in nexia.json; extra.nexia is unsupported.');
+  const metadata = manifest.app;
   if (!composer.name || !metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    throw new Error('Declare a Composer package name and App metadata in native nexia.json or legacy extra.nexia.app.');
+    throw new Error('Declare a Composer package name and App metadata in nexia.json.');
   }
-  const browser = manifest?.schema_version === '1' ? { browser_app_id: manifest.app?.id } : {};
-  if (manifest?.schema_version === '1' && typeof browser.browser_app_id !== 'string') throw new Error('nexia.json must declare app.id before its browser identity can be bound.');
   const config = await readConnection();
   const connection = await request(config, 'connection');
   if (connection.status !== 'connected') throw new Error('Approve CLI login first.');
@@ -50,7 +44,7 @@ export async function registerApp(directory, { log = console.log } = {}) {
   if (identity && (identity.endpoint !== config.endpoint || identity.key !== metadata.app_key)) {
     throw new Error('This directory already has a different App identity. Its existing binding was preserved.');
   }
-  const result = await request(config, 'apps', { method: 'POST', body: { package_name: composer.name, metadata, ...browser } });
+  const result = await request(config, 'apps', { method: 'POST', body: { package_name: composer.name, metadata } });
   const app = result.app;
   if (!app || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(app.id || '')
       || app.key !== metadata.app_key || app.package_name !== composer.name || app.table_prefix !== metadata.app_table_prefix

@@ -17,7 +17,7 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     if (req.headers.host !== new URL(origin).host) { res.writeHead(403).end(); return; }
     const url = new URL(req.url, origin);
     const manifest = url.pathname === '/__nexia_native';
-    const allowedOrigin = manifest ? workspaceOrigin : 'null';
+    const allowedOrigin = workspaceOrigin;
     if (req.headers.origin !== allowedOrigin) { res.writeHead(403).end(); return; }
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Vary', 'Origin');
@@ -78,8 +78,11 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     } catch { res.writeHead(404).end(); }
   });
   await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+    const onError = error => reject(error.code === 'EADDRINUSE'
+      ? new Error(`Port ${port} is already in use. If nexia dev is already running, open its workspace link. Otherwise stop the other process or retry with --port <unused-port>.`)
+      : error);
+    server.once('error', onError);
+    server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', onError); resolve(); });
   });
   return {
     attach(directory, state) {
