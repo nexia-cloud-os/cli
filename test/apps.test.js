@@ -64,11 +64,12 @@ test('native registration sends metadata only and preserves identity across retr
   process.env.NEXIA_CONFIG_HOME = path.join(root, 'config');
   const id = '12345678-1234-4123-8123-123456789abc';
   const metadata = { app_key: 'test-app', app_name: 'Test', app_table_prefix: 'test_app' };
-  await writeFile(path.join(root, 'composer.json'), JSON.stringify({ name: 'example/test', extra: { nexia: { app: metadata } }, scripts: { 'post-install-cmd': 'must-never-run' }, config: { 'private-setting': 'do-not-send' } }));
+  await writeFile(path.join(root, 'composer.json'), JSON.stringify({ name: 'example/test', scripts: { 'post-install-cmd': 'must-never-run' }, config: { 'private-setting': 'do-not-send' } }));
+  const native = { schema_version: '2', runtime: 'laravel', app: metadata };
+  await writeFile(path.join(root, 'nexia.json'), JSON.stringify(native));
   await writeFile(path.join(root, '.env'), 'SECRET=do-not-send');
   let registrations = 0;
   let requests = 0;
-  let browserId;
   const server = createServer(async (req, res) => {
     requests++;
     res.setHeader('Content-Type', 'application/json');
@@ -80,7 +81,7 @@ test('native registration sends metadata only and preserves identity across retr
     assert.equal(req.method, 'POST');
     let body = '';
     for await (const chunk of req) body += chunk;
-    assert.deepEqual(JSON.parse(body), { package_name: 'example/test', metadata, ...(browserId ? { browser_app_id: browserId } : {}) });
+    assert.deepEqual(JSON.parse(body), { package_name: 'example/test', metadata });
     registrations++;
     res.end(JSON.stringify({ app: { id, key: 'test-app', name: 'Test', package_name: 'example/test', table_prefix: 'test_app' } }));
   });
@@ -97,25 +98,23 @@ test('native registration sends metadata only and preserves identity across retr
   await registerApp(root, { log: line => lines.push(line) });
   await registerApp(root, { log: line => lines.push(line) });
   assert.equal(registrations, 2);
-  browserId = 'com.example.test';
-  await writeFile(path.join(root, 'nexia.json'), JSON.stringify({ schema_version: '1', app: { id: browserId } }));
-  await registerApp(root, { log: line => lines.push(line) });
-  assert.equal(registrations, 3);
+  await writeFile(path.join(root, 'nexia.json'), JSON.stringify({ schema_version: '1', app: { id: 'com.example.test' } }));
+  await assert.rejects(registerApp(root), /requires nexia.json version 2/);
+  await writeFile(path.join(root, 'nexia.json'), JSON.stringify(native));
   assert.deepEqual(JSON.parse(await readFile(path.join(root, '.nexia/app.json'), 'utf8')), { endpoint, id, key: 'test-app' });
   assert.doesNotMatch(lines.join('\n'), /test-token|do-not-send/);
-  await writeFile(path.join(root, 'composer.json'), JSON.stringify({ name: 'example/test', extra: { nexia: { app: { ...metadata, app_key: 'changed' } } } }));
+  await writeFile(path.join(root, 'nexia.json'), JSON.stringify({ ...native, app: { ...metadata, app_key: 'changed' } }));
   await assert.rejects(() => registerApp(root), /different App identity/);
-  assert.equal(registrations, 3);
+  assert.equal(registrations, 2);
   assert.equal(JSON.parse(await readFile(path.join(root, '.nexia/app.json'), 'utf8')).key, 'test-app');
 
-  browserId = undefined;
-  const native = { schema_version: '2', runtime: 'laravel', app: metadata };
   await writeFile(path.join(root, 'nexia.json'), JSON.stringify(native));
-  await assert.rejects(registerApp(root), /remove extra.nexia.app/);
-  assert.equal(registrations, 3);
+  await writeFile(path.join(root, 'composer.json'), JSON.stringify({ name: 'example/test', extra: { nexia: { app: metadata } } }));
+  await assert.rejects(registerApp(root), /extra.nexia is unsupported/);
+  assert.equal(registrations, 2);
   await writeFile(path.join(root, 'composer.json'), JSON.stringify({ name: 'example/test' }));
   await registerApp(root, { log: line => lines.push(line) });
-  assert.equal(registrations, 4);
+  assert.equal(registrations, 3);
   const binding = await readFile(path.join(root, '.nexia/app.json'), 'utf8');
   const requestsBeforeInvalid = requests;
   for (const invalid of [
@@ -124,7 +123,7 @@ test('native registration sends metadata only and preserves identity across retr
   ]) {
     await writeFile(path.join(root, 'nexia.json'), typeof invalid === 'string' ? invalid : JSON.stringify(invalid));
     await assert.rejects(registerApp(root));
-    assert.equal(registrations, 4);
+    assert.equal(registrations, 3);
     assert.equal(requests, requestsBeforeInvalid);
     assert.equal(await readFile(path.join(root, '.nexia/app.json'), 'utf8'), binding);
   }
@@ -136,5 +135,5 @@ test('native registration sends metadata only and preserves identity across retr
   await rename(path.join(root, 'composer.json'), path.join(root, 'composer-retained.json'));
   await symlink(path.join(root, '.env'), path.join(root, 'composer.json'));
   await assert.rejects(() => registerApp(root), /composer.json must not be a symbolic link/);
-  assert.equal(registrations, 4);
+  assert.equal(registrations, 3);
 });

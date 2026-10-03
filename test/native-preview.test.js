@@ -5,6 +5,15 @@ import path from 'node:path';
 import os from 'node:os';
 import { startNativePreview } from '../src/native-preview.js';
 
+test('occupied preview port explains how to reuse or restart development', async () => {
+  const first = await startNativePreview(null, { port: 0, workspaceOrigin: 'http://workspace.localhost:8081', apps: new Map() });
+  try {
+    await assert.rejects(startNativePreview(null, {
+      port: Number(new URL(first.url).port), workspaceOrigin: 'http://workspace.localhost:8081', apps: new Map(),
+    }), /already in use.*workspace link.*--port/);
+  } finally { await first.close(); }
+});
+
 test('native preview exposes only compiled assets through a workspace-issued capability', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-native-preview-'));
   await mkdir(path.join(root, 'dist/frontend'), { recursive: true });
@@ -24,14 +33,15 @@ test('native preview exposes only compiled assets through a workspace-issued cap
     const data = await manifest.json();
     assert.equal(data.operation_id, 'operation');
     assert.deepEqual(data.translations.en, { 'trial.title': 'Trial' });
-    assert.equal((await get(data.entry, workspaceOrigin)).status, 403);
-    assert.equal((await get(`${server.url}/index.js`, 'null')).status, 404);
-    const asset = await get(data.entry, 'null');
-    assert.equal(asset.headers.get('access-control-allow-origin'), 'null');
+    assert.equal((await get(data.entry, 'null')).status, 403);
+    assert.equal((await get(data.entry, 'https://foreign.example')).status, 403);
+    assert.equal((await get(`${server.url}/index.js`, workspaceOrigin)).status, 404);
+    const asset = await get(data.entry, workspaceOrigin);
+    assert.equal(asset.headers.get('access-control-allow-origin'), workspaceOrigin);
     assert.equal(asset.headers.get('access-control-allow-credentials'), null);
     assert.match(await asset.text(), /export const App/);
     for (const name of ['linked.js', '.env', 'index.js.map', '../.env']) {
-      assert.equal((await get(data.entry.replace('index.js', name), 'null')).status, 404);
+      assert.equal((await get(data.entry.replace('index.js', name), workspaceOrigin)).status, 404);
     }
     current = { mode: 'off' };
     assert.equal((await get(`${server.url}/__nexia_native`, 'null')).status, 403);
@@ -66,13 +76,13 @@ test('one project port routes multiple Apps without mixing their assets and supp
     const manifest = await (await get(`${server.url}/__nexia_native?app_id=${app_id}`)).json();
     assert.equal(manifest.app_id, app_id);
     assert.equal(new URL(manifest.entry).origin, server.url);
-    assert.match(await (await get(manifest.entry, 'null')).text(), new RegExp(app_id));
+    assert.match(await (await get(manifest.entry, workspaceOrigin)).text(), new RegExp(app_id));
     entries.push(manifest.entry);
   }
   assert.notEqual(entries[0], entries[1]);
   await handles[0].close();
-  assert.equal((await get(entries[0], 'null')).status, 404);
-  assert.equal((await get(entries[1], 'null')).status, 200);
+  assert.equal((await get(entries[0], workspaceOrigin)).status, 404);
+  assert.equal((await get(entries[1], workspaceOrigin)).status, 200);
   assert.equal((await get(`${server.url}/__nexia_native?app_id=missing`)).status, 404);
   assert.equal((await get(`${server.url}/__nexia_native`, 'null')).status, 403);
 });

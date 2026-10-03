@@ -151,7 +151,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             lastStatus = status;
           }
           if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw new Error('App preparation failed or requires operator review. The request and data are retained; no automatic retry was started.');
-          if (operation.stop_requested_at && !operation.stopped_at) throw new Error('Runtime shutdown is still pending. Retry nexia dev after the operator confirms shutdown; data was retained.');
+          if (operation.stop_requested_at && !operation.stopped_at) {
+            // Keep the same operation until the operator acknowledges shutdown.
+            // Do not expose stopped authority or submit replacement work early.
+            browserRuntime = null;
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
+          }
         }
         if (!operation || operation.status === 'completed' || cancelled || renewWriter) {
           // ponytail: hash the bounded 16 MiB source tree; add incremental hashing only if measured watch cost warrants it.

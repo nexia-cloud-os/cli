@@ -91,7 +91,11 @@ response, rerun the **same** `create-project` path/name: its private pending
 approval is recovered. An expired unapproved pairing is discarded with a retry
 instruction; a revoked approved pairing never creates a second project.
 
-Stopping `dev` retains source, databases and pending operations. A second writer
+Stopping `dev` retains source, databases and pending operations. While an operator
+stops a previously completed runtime, `dev` keeps the preview unavailable and
+waits for shutdown acknowledgment before preparing its replacement. Failed or
+review-required preparations remain blocked; they are not automatically retried.
+A second writer
 must wait for the first to stop or its two-minute lease to expire. Pending or
 uncertain database preparation must finish or receive operator review before a
 new writer can proceed. Core exposes only `retry_allowed` after an operator has
@@ -289,6 +293,14 @@ npm run build
 nexia dev
 ```
 
+When standard input is not a terminal, generators run without prompts. Supply
+required labels such as `--label-ko`; missing labels produce an option hint.
+Use `--label-zh` to provide the Chinese label explicitly.
+
+If port 4310 is occupied by an existing `nexia dev`, use that process's workspace
+link. To run another preview, choose an unused port with `nexia dev --port 4311`
+and use the new workspace link printed by that process.
+
 Keep `dev` running and confirm a saved record in the workspace. In another
 terminal in the App directory, validate and submit the version for review:
 
@@ -394,7 +406,7 @@ command; resources without a public ResourceDescriptor are not auto-generated ye
 
 ## PHP/React App generation
 
-Install or update the PHP generators with `nexia setup --devtools`. It installs the public Composer package `nexia-cloud-os/devtools` within `^0.1`, migrates previous managed package names, and updates its dependencies when a lock already exists. Explicit version pins and unrelated requirements are preserved. PHP 8.4+
+Install or update the PHP generators with `nexia setup --devtools`. It installs the public Composer package `nexia-cloud-os/devtools` within `^0.2`, upgrades the prior managed `^0.1` default, migrates previous managed package names, and updates its dependencies when a lock already exists. Explicit version pins and unrelated requirements are preserved. PHP 8.4+
 is required. Create an App and add a resource without a Core checkout. `init` only creates
 local source and does not contact the platform or reuse a saved login to link it.
 Select the project explicitly with `nexia link`, then use `nexia app register`:
@@ -416,6 +428,27 @@ database prefix; `--display-name` changes only the displayed title. `--dry-run`
 previews files. Registration uses `nexia app register <directory>` after login
 and link. The generator never installs the App into a tenant or runs its PHP
 bootstrap. PHP/React is the default. Use `--template browser` only for a legacy static App.
+
+### App sandbox database work
+
+Run `nexia db references` (or `--json`) to list the Core keys published as App
+foreign-key targets. This uses the approved project connection and never returns
+a database login. A published reference permits the platform to grant migration
+REFERENCES privileges; it does not grant reads of Core records. The platform must
+apply a Core catalog update to existing allocations before an App migration can
+use a new target.
+
+Use `nexia db status`, `nexia db migrate`, or `nexia db seed <declared-key>`
+from a registered, linked App directory to request one operation for that App's
+active sandbox. Migration uses the same isolated schema, initializer, and App
+runtime identity as development execution. Seed runs only the App fixture named
+by its declared key; the CLI never sends a shell command or database credential.
+
+`nexia db reset --yes` stops the selected App preparation, revokes its previous
+sandbox credentials, and recreates only that App's deterministic sandbox schema
+before migration and initialization. It does not reset the tenant or another
+App. Stop `nexia dev` for the same App first when it owns the writer lease, then
+retry with the same `--request-id` if a response is lost.
 
 ### Development fixtures
 
@@ -444,8 +477,8 @@ Composer retains dependencies and autoload declarations; remove duplicate
 `extra.nexia` fields when adopting the native declaration. `nexia validate`
 delegates native metadata and PHP checks to the independently installed public
 PHP tool. Native manifests do not require preview screens or public/index.html.
-For legacy PHP/browser hybrids with preview schema_version "1", validation also
-checks the browser entries. The public preview and submission reject symbolic
+PHP package registration requires the native v2 manifest. Browser-only preview
+remains a separate workflow. The public preview and submission reject symbolic
 links, including a linked public/ directory; copy intended browser assets into
 that directory. Native source validation does not submit or execute an App.
 
@@ -508,10 +541,16 @@ its public `resources/lang/{en,ko,zh}.json` catalogs in the workspace manifest, 
 the workspace launch address. Use `--port` for another App's listener, and
 `--container` with a matching loopback Docker port mapping. For generated Apps,
 the CLI starts the installed Vite build watcher after connection validation.
+Adding, renaming or removing files under `resources` refreshes the build graph,
+including automatically discovered Resource screens. A compile error keeps the
+preview unavailable until the build succeeds again; no Core rebuild is required.
 It does not invoke `package.json` scripts; Vite loads the App's config and plugins.
 It never serves PHP, `.env`, source maps,
 hidden files or linked files. The workspace reads a connection manifest; the
-opaque App frame reads compiled assets through a per-process capability URL.
+shared Core React host reads compiled assets through a per-process capability URL.
+Both discovery and asset CORS permit only the paired workspace origin; opaque
+frame origins are rejected. Adopt this CLI together with the shared-host Core
+and SDK, and rebuild App frontends with the SDK Vite plugin.
 Keep that URL local. Restarting the CLI rotates it. The manifest is unavailable
 until both the frontend build and a completed runtime preparation exist.
 
