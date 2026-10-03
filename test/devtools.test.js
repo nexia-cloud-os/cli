@@ -121,12 +121,17 @@ fs.writeFileSync('composer.lock', JSON.stringify({ packages: [{ name: 'nexia-clo
   assert.equal(installed.home, path.join(config, 'tools/devtools/composer-home'));
   assert.deepEqual(JSON.parse(await readFile(path.join(installed.cwd, 'composer.json'), 'utf8')).config, { 'allow-plugins': false });
   const manifestPath = path.join(installed.cwd, 'composer.json');
-  assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).require['nexia-cloud-os/devtools'], '^0.1');
+  assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).require['nexia-cloud-os/devtools'], '^0.2');
   await writeFile(manifestPath, JSON.stringify({ require: { 'nexia/app-devtools': '*', 'example/keep': '^1' }, config: { 'allow-plugins': false } }));
   result = await invoke(['setup', '--devtools']);
   assert.equal(result.code, 0, result.output);
-  assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.1', 'example/keep': '^1' });
+  assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.2', 'example/keep': '^1' });
   assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).args.slice(0, 4), ['update', 'nexia-cloud-os/devtools', '--with-all-dependencies', '--minimal-changes']);
+  // Upgrade the CLI-managed default from the previous generator line.
+  await writeFile(manifestPath, JSON.stringify({ require: { 'nexia-cloud-os/devtools': '^0.1', 'example/keep': '^1' } }));
+  result = await invoke(['setup', '--devtools']);
+  assert.equal(result.code, 0, result.output);
+  assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.2', 'example/keep': '^1' });
   // A second setup updates the existing lock; it does not silently reinstall the old version.
   result = await invoke(['setup', '--devtools']);
   assert.equal(result.code, 0, result.output);
@@ -136,7 +141,7 @@ fs.writeFileSync('composer.lock', JSON.stringify({ packages: [{ name: 'nexia-clo
     await writeFile(path.join(installed.cwd, 'composer.lock'), JSON.stringify({ packages: [{ name: oldName, version: '0.1.0' }] }));
     result = await invoke(['setup', '--devtools']);
     assert.equal(result.code, 0, result.output);
-    assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.1', 'example/keep': '^1' });
+    assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).require, { 'nexia-cloud-os/devtools': '^0.2', 'example/keep': '^1' });
     assert.deepEqual(JSON.parse(await readFile(log, 'utf8')).args.slice(0, 5), ['update', 'nexia-cloud-os/devtools', oldName, '--with-all-dependencies', '--minimal-changes']);
   }
   // An explicit supported pin is preserved during name migration.

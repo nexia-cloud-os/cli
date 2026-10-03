@@ -6,7 +6,7 @@ import { onPath } from './setup.js';
 
 const toolDirectory = () => path.resolve(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'tools', 'devtools');
 const devtoolsPackage = 'nexia-cloud-os/devtools';
-const devtoolsVersion = '^0.1';
+const devtoolsVersion = '^0.2';
 const previousPackages = ['nexia/devtools', 'nexia/app-devtools'];
 
 export async function installDevtools({ dryRun = false, log = console.log } = {}) {
@@ -24,7 +24,8 @@ export async function installDevtools({ dryRun = false, log = console.log } = {}
   const previousManifest = JSON.stringify(manifest);
   manifest.require ??= {};
   const previousVersion = previousPackages.map(name => manifest.require[name]).find(version => version !== undefined);
-  manifest.require[devtoolsPackage] ??= previousVersion && previousVersion !== '*' ? previousVersion : devtoolsVersion;
+  const selectedVersion = manifest.require[devtoolsPackage] ?? previousVersion;
+  manifest.require[devtoolsPackage] = !selectedVersion || selectedVersion === '*' || selectedVersion === '^0.1' ? devtoolsVersion : selectedVersion;
   for (const name of previousPackages) delete manifest.require[name];
   if (JSON.stringify(manifest) !== previousManifest) {
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
