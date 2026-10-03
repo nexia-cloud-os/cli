@@ -28,7 +28,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   const binding = await readLocal('project.json');
   const identity = await readLocal('app.json');
   const scope = { endpoint: config.endpoint, project_id: binding.project_id, app_id: identity.id };
-  if (!uuid(scope.project_id) || !uuid(scope.app_id) || binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint) throw new Error('App bindings do not match this platform. Run nexia link and nexia app register.');
+  if (!uuid(scope.project_id) || !uuid(scope.app_id) || binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint) throw new Error('App bindings do not match this platform. Run nexia login and project nexia dev.');
   const initialConnection = await request(config, 'connection');
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
   if (initialConnection.sandbox?.id) scope.sandbox_id = initialConnection.sandbox.id;

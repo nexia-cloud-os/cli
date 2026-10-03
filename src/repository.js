@@ -15,7 +15,7 @@ async function scope(directory) {
   const project = JSON.parse(await readFile(path.join(root, 'project.json'), 'utf8'));
   const app = JSON.parse(await readFile(path.join(root, 'app.json'), 'utf8'));
   if (connection.status !== 'connected' || project.endpoint !== config.endpoint || app.endpoint !== config.endpoint
-    || project.project_id !== connection.project.id || !uuid(app.id)) throw new Error('Run nexia link and nexia app register for the intended project.');
+    || project.project_id !== connection.project.id || !uuid(app.id)) throw new Error('Run nexia login, then nexia dev in the intended project.');
   return { config, app, project };
 }
 
@@ -24,10 +24,10 @@ export async function repository(directory, action, { openBrowser = openLoginBro
   const route = `v2/apps/${app.id}/repository`;
   let result = await request(config, route);
   if (action === 'status') {
-    log(result.repository ? `${result.repository.full_name}: ${result.repository.status}\nAutomatic submission: ${result.repository.automatic ? 'on' : 'off'}` : 'No repository connected. Run nexia repository connect.');
+    log(result.repository ? `${result.repository.full_name}: ${result.repository.status}\nAutomatic submission: ${result.repository.automatic ? 'on' : 'off'}` : 'No repository connected. Run nexia submit.');
     return result;
   }
-  if (action !== 'connect') throw new Error('Use nexia repository connect|status.');
+  if (action !== 'connect') throw new Error('Repository operation must be connect or status.');
   const url = new URL(result.console_url);
   if (url.origin !== new URL(config.endpoint).origin || url.username || url.password || url.search || url.hash
     || url.pathname !== `/projects/${project.project_id}/apps/${app.id}/repository`) throw new Error('Invalid Console connection URL.');
@@ -43,16 +43,20 @@ export async function repository(directory, action, { openBrowser = openLoginBro
       return result;
     }
   }
-  throw new Error('Connection confirmation timed out. Check nexia repository status; no submission was made.');
+  throw new Error('Connection confirmation timed out. Check nexia status and the Developers repository page; no submission was made.');
+}
+
+export function isVersionTag(tag) {
+  return !(typeof tag !== 'string' || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/.test(tag) || tag.length > 101);
 }
 
 export async function submitTag(directory, tag, requestId = randomUUID(), { log = console.log } = {}) {
-  if (typeof tag !== 'string' || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/.test(tag) || tag.length > 101 || !uuid(requestId)) throw new Error('Use nexia submit --tag v1.2.0 [--request-id <uuid>].');
+  if (!isVersionTag(tag) || !uuid(requestId)) throw new Error('Use nexia submit --tag v1.2.0 [--request-id <uuid>].');
   const { config, app } = await scope(directory);
   log(`Request: ${requestId}. If the response is lost, repeat with --request-id ${requestId}.`);
   const result = await request(config, 'v2/submissions', { method: 'POST', body: { app_id: app.id, tag, request_id: requestId } });
   if (!uuid(result.submission?.id) || result.submission.tag !== tag || result.submission.version !== tag.slice(1)
     || !/^[a-f0-9]{40}$/.test(result.submission.commit_sha)) throw new Error('Invalid submission acknowledgement. Check Console before retrying.');
-  log(`${tag}: ${result.submission.status}\nSubmission: ${result.submission.id}\nCommit: ${result.submission.commit_sha}\nCheck: nexia submissions status ${result.submission.id}\nReview requested; publication and installation are separate.`);
+  log(`${tag}: ${result.submission.status}\nSubmission: ${result.submission.id}\nCommit: ${result.submission.commit_sha}\nCheck: nexia submit status ${result.submission.id}\nReview requested; publication and installation are separate.`);
   return result;
 }

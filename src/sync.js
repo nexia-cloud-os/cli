@@ -17,7 +17,7 @@ export async function syncSource(directory, { log = console.log, config = null, 
   }
   const connection = await request(config, 'connection');
   if (connection.status !== 'connected' || connection.sandbox?.status !== 'active') throw new Error('Prepare the project sandbox before syncing.');
-  if (binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint || binding.project_id !== connection.project.id) throw new Error('App is linked to another project. Run nexia link and nexia app register for the intended project.');
+  if (binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint || binding.project_id !== connection.project.id) throw new Error('App is linked to another project. Run nexia login, then nexia dev in the intended project.');
   const source = await sourceSnapshot(directory);
   const result = await request(config, 'v2/sources', { method: 'POST', body: { app_id: identity.id, source } });
   if (result.revision?.digest !== source.digest || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(result.revision?.id || '')) throw new Error('Platform returned a conflicting source revision.');
