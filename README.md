@@ -547,7 +547,10 @@ preview unavailable until the build succeeds again; no Core rebuild is required.
 It does not invoke `package.json` scripts; Vite loads the App's config and plugins.
 It never serves PHP, `.env`, source maps,
 hidden files or linked files. The workspace reads a connection manifest; the
-opaque App frame reads compiled assets through a per-process capability URL.
+shared Core React host reads compiled assets through a per-process capability URL.
+Both discovery and asset CORS permit only the paired workspace origin; opaque
+frame origins are rejected. Adopt this CLI together with the shared-host Core
+and SDK, and rebuild App frontends with the SDK Vite plugin.
 Keep that URL local. Restarting the CLI rotates it. The manifest is unavailable
 until both the frontend build and a completed runtime preparation exist.
 
