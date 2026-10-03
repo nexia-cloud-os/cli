@@ -29,19 +29,16 @@ async function temporary(t) {
   return directory;
 }
 
-test('CLI explicitly creates and validates a static app, rejects overwrite, and rejects retired deploy', async (t) => {
+test('retired public commands reject without creating files', async (t) => {
   const root = await temporary(t);
-  const directory = path.join(root, 'sample');
-  assert.equal((await invoke(['init', directory, '--template', 'browser'])).code, 0);
-  assert.equal((await invoke(['validate', directory])).code, 0);
-  assert.equal((await invoke(['init', directory, '--template', 'browser'])).code, 1);
-  const deploy = await invoke(['deploy']);
-  assert.equal(deploy.code, 1);
-  assert.match(deploy.stderr, /deploy is retired/);
+  for (const args of [['init', root, '--template', 'browser'], ['validate', root], ['deploy'], ['mcp', root], ['db', 'reset', '--yes']]) {
+    const result = await invoke(args);
+    assert.equal(result.code, 2);
+  }
   if (process.platform === 'darwin') {
-    const setup = await invoke(['setup', '--dry-run']);
-    assert.equal(setup.code, 0);
-    assert.match(setup.stdout, /No commands were run/);
+    const result = await invoke(['setup', '--dry-run']);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /No commands were run/);
   }
 });
 
@@ -121,10 +118,8 @@ test('remote workspace can read only the manifest from its exact allowed origin'
 });
 
 
-test('Runtime validation reaches image policy and rejects mutable tags', async (t) => {
-  const root = await temporary(t);
-  const result = await invoke(['validate', root, '--runtime-image', 'runtime:latest']);
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /Use the exact operator Runtime image ID/);
-  assert.doesNotMatch(result.stderr, /Unknown option/);
+test('public source check does not expose runtime-image execution', async () => {
+  const result = await invoke(['check', '--runtime-image', 'runtime:latest']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /Unknown option|not supported/);
 });

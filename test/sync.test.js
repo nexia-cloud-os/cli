@@ -9,7 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const execute = promisify(execFile);
-const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+const syncModule = new URL('../src/sync.js', import.meta.url).href;
+const syncArgs = root => ['--input-type=module', '-e', `const { syncSource } = await import(${JSON.stringify(syncModule)}); await syncSource(process.argv[1]);`, root];
 test('sync uses the bound project and sends private source without credentials', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-sync-'));
   const id = '11111111-1111-4111-8111-111111111111';
@@ -32,11 +33,11 @@ test('sync uses the bound project and sends private source without credentials',
   await writeFile(path.join(root, 'composer.json'), '{}');
   await writeFile(path.join(root, '.env'), 'secret-must-not-leave');
   const options = { env: { ...process.env, NEXIA_CONFIG_HOME: root } };
-  assert.match((await execute(process.execPath, [cli, 'sync', root], options)).stdout, /does not activate/);
+  assert.match((await execute(process.execPath, syncArgs(root), options)).stdout, /does not activate/);
   assert.equal(calls[1][0], '/developer-api/v2/sources');
   assert.deepEqual(calls[1][1].source.files.map(file => file.path), ['composer.json']);
   assert.doesNotMatch(JSON.stringify(calls[1][1]), /disposable-token|secret-must-not-leave/);
   await writeFile(path.join(root, '.nexia', 'project.json'), JSON.stringify({ endpoint, project_id: 'another' }));
-  await assert.rejects(execute(process.execPath, [cli, 'sync', root], options), /linked to another project/);
+  await assert.rejects(execute(process.execPath, syncArgs(root), options), /linked to another project/);
   assert.equal(calls.length, 3);
 });

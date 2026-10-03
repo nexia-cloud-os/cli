@@ -46,7 +46,7 @@ export async function installDevtools({ dryRun = false, log = console.log } = {}
     child.once('close', code => code === 0 ? resolve() : reject(new Error('PHP generator installation failed. Resolve the Composer error above and rerun nexia setup --devtools.')));
   });
   await realpath(path.join(directory, 'vendor/bin/nexia-app'));
-  log('PHP generators are ready. Use nexia init, nexia make:resource and nexia make:page.');
+  log('PHP generators are ready. Use nexia create app, nexia make resource and nexia make page.');
 }
 
 export async function runDevtools(args, directory) {
@@ -66,7 +66,7 @@ export async function runDevtools(args, directory) {
     throw new Error('Use an independently installed nexia-app executable, not a script inside the App directory.');
   }
   await new Promise((resolve, reject) => {
-    const child = spawn('php', [executable, ...args, ...(!process.stdin.isTTY ? ['--no-interaction'] : [])], { shell: false, stdio: 'inherit' });
+    const child = spawn('php', [executable, ...args, '--no-interaction'], { shell: false, stdio: 'inherit' });
     child.once('error', error => reject(new Error(`Cannot start PHP App generators: ${error.message}`)));
     child.once('close', code => code === 0 ? resolve() : reject(new Error(`App generator failed (exit ${code}). Review its output; existing files were not reset.`)));
   });

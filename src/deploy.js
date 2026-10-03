@@ -29,5 +29,5 @@ export async function bundleProject(directory) {
 }
 
 export async function deploy() {
-  throw new Error('nexia deploy is retired. Use nexia repository connect, then nexia submit --tag v1.2.0.');
+  throw new Error('nexia deploy is retired. Use nexia submit --tag v1.2.0.');
 }

@@ -35,7 +35,7 @@ export async function bindWorkspace(directory, { endpoint, project }) {
   endpoint = validateEndpoint(endpoint);
   if (!uuid(project?.id)) throw new Error('Platform returned an invalid project.');
   if ((await lstat(root)).isSymbolicLink()) throw new Error('Use a real project directory.');
-  if (await json(path.join(root, 'nexia.json'))) throw new Error('Run link-project from the parent project directory, outside an App.');
+  if (await json(path.join(root, 'nexia.json'))) throw new Error('Run nexia connect from the parent project directory, outside an App.');
   const parent = await findWorkspace(path.dirname(root));
   if (parent) throw new Error(`Do not nest projects. Existing project: ${parent.root}`);
   const local = path.join(root, '.nexia');

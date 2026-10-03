@@ -22,6 +22,7 @@ test('tag submission uses only remote source and retired deploy never sends a re
     const input = raw ? JSON.parse(raw) : null;
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/developer-api/connection') res.end(JSON.stringify({ status: 'connected', project: { id: project }, sandbox: null }));
+    else if (req.url === `/developer-api/v2/apps/${app}/repository`) res.end(JSON.stringify({ repository: { full_name: 'example/app', status: 'connected' } }));
     else if (req.url === '/developer-api/v2/submissions') { submitted = input; res.end(JSON.stringify({ submission })); }
     else if (req.url === `/developer-api/v2/submissions/${id}`) res.end(JSON.stringify({ submission }));
     else if (req.url === `/developer-api/v2/submissions/${id}/cancel`) res.end(JSON.stringify({ submission: { ...submission, status: 'cancelled' } }));
@@ -37,15 +38,16 @@ test('tag submission uses only remote source and retired deploy never sends a re
   await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app }));
   await writeFile(path.join(root, 'composer.json'), 'uncommitted invalid source must never be uploaded');
   const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
-  const run = args => execute(process.execPath, [cli, ...args], { env: { ...process.env, NEXIA_CONFIG_HOME: root } });
-  await assert.rejects(run(['deploy', root]), /deploy is retired/);
+  await writeFile(path.join(root, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'sample' } }));
+  const run = args => execute(process.execPath, [cli, ...args], { cwd: root, env: { ...process.env, NEXIA_CONFIG_HOME: root } });
+  await assert.rejects(run(['deploy', root]), /no longer a command/);
   assert.equal(calls.length, 0);
-  await assert.rejects(run(['submit', root, '--tag', 'latest']), /version|v1.2.0/);
+  await assert.rejects(run(['submit', '--yes', '--tag', 'latest']), /version|v1.0.0/);
   assert.equal(calls.length, 0);
-  assert.match((await run(['submit', root, '--tag', 'v1.2.0', '--request-id', requestId])).stdout, /v1.2.0: waiting/);
+  assert.match((await run(['submit', '--yes', '--tag', 'v1.2.0', '--request-id', requestId])).stderr, /v1.2.0: waiting/);
   assert.deepEqual(submitted, { app_id: app, tag: 'v1.2.0', request_id: requestId });
-  assert.match((await run(['submissions', 'status', id])).stdout, /waiting/);
-  assert.match((await run(['submissions', 'cancel', id])).stdout, /cancelled/);
-  await assert.rejects(run(['submissions', 'retry', id]), /409/);
+  assert.match((await run(['submit', 'status', id])).stdout, /waiting/);
+  assert.match((await run(['submit', 'cancel', id, '--yes'])).stdout, /cancelled/);
+  await assert.rejects(run(['submit', 'retry', id, '--yes']), /409/);
   assert.equal(calls.some(route => /sources|artifact-builds|deployments/.test(route)), false);
 });

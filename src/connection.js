@@ -111,7 +111,7 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
       // Revoked or inaccessible approved projects must never create a duplicate.
       if (recoveryFile && error.status === 410 && error.platformStatus === 'pairing_expired') {
         await rm(recoveryFile);
-        log('Unapproved pairing expired. Run the same create-project command to request a new approval.');
+        log('Unapproved pairing expired. Run the same create project command to request a new approval.');
       }
       throw error;
     }
