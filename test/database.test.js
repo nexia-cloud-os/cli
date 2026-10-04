@@ -11,37 +11,13 @@ import { fileURLToPath } from 'node:url';
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
-test('db references reads the Core contract without a DB login or mutation', async t => {
-  const root = await mkdtemp(path.join(tmpdir(), 'nexia-db-cli-'));
-  const calls = [];
-  let response = { references: [{ schema: 'public', table: 'users', column: 'id' }], grants_data_access: false };
-  const server = createServer((req, res) => {
-    calls.push([req.method, req.url]);
-    assert.equal(req.headers.authorization, 'Bearer disposable-db-catalog-token');
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify(response));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-    await rm(root, { recursive: true, force: true });
-  });
-  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, token: 'disposable-db-catalog-token' }), { mode: 0o600 });
-  const options = { env: { ...process.env, NEXIA_CONFIG_HOME: root } };
-  const human = await execute(process.execPath, [cli, 'db', 'references'], options);
-  assert.match(human.stdout, /public\.users\.id/);
-  assert.match(human.stdout, /do not grant access/);
-  assert.deepEqual(JSON.parse((await execute(process.execPath, [cli, 'db', 'references', '--json'], options)).stdout), response);
-  await assert.rejects(execute(process.execPath, [cli, 'db', 'references', '--force'], options));
-  await assert.rejects(execute(process.execPath, [cli, 'db', 'references', 'another-tenant'], options));
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], ['GET', '/developer-api/v2/database/references']);
-  response = { references: [{ schema: 'public', table: 'users\u001b[2J', column: 'id' }], grants_data_access: false };
-  await assert.rejects(execute(process.execPath, [cli, 'db', 'references'], options));
+test('database reset and reference catalog are not exposed as public commands', async () => {
+  const { parseCommand } = await import('../src/commands.js');
+  assert.throws(() => parseCommand(['db', 'reset', '--yes']));
+  assert.throws(() => parseCommand(['db', 'references']));
 });
 
-test('db lifecycle requests are App-bound and reset requires an explicit confirmation', async t => {
+test('db migrations preserve App binding, request identity and writer release', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-db-operation-'));
   const app = '11111111-1111-4111-8111-111111111111', project = '33333333-3333-4333-8333-333333333333', requestId = '22222222-2222-4222-8222-222222222222';
   const calls = [];
@@ -52,7 +28,7 @@ test('db lifecycle requests are App-bound and reset requires an explicit confirm
     res.end(JSON.stringify(req.url.endsWith('/connection') ? { status: 'connected', project: { id: project } }
       : req.method === 'GET' ? { operation: null }
         : req.url.endsWith('/writer') ? { writer: { released: true } }
-          : { operation: { id: requestId, database_command: 'reset', status: 'queued' } }));
+          : { operation: { id: requestId, database_command: 'migrate', status: 'queued' } }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); });
@@ -60,14 +36,17 @@ test('db lifecycle requests are App-bound and reset requires an explicit confirm
   await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, token: 'db-operation-token' }), { mode: 0o600 });
   await writeFile(path.join(appRoot, '.nexia', 'project.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, project_id: project }));
   await writeFile(path.join(appRoot, '.nexia', 'app.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, id: app, key: 'sample' }));
-  const options = { env: { ...process.env, NEXIA_CONFIG_HOME: root } };
-  await assert.rejects(execute(process.execPath, [cli, 'db', 'reset', appRoot], options));
-  await execute(process.execPath, [cli, 'db', 'reset', '--yes', appRoot, '--request-id', requestId], options);
+  await writeFile(path.join(appRoot, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'sample' } }));
+  const options = { cwd: appRoot, env: { ...process.env, NEXIA_CONFIG_HOME: root } };
+  await assert.rejects(execute(process.execPath, [cli, 'db', 'migrate'], options));
+  assert.equal(calls.some(call => call[0] !== 'GET'), false);
+  calls.length = 0;
+  await execute(process.execPath, [cli, 'db', 'migrate', '--yes', '--request-id', requestId], options);
   assert.equal(calls.length, 3);
   assert.deepEqual(calls[0], ['GET', '/developer-api/connection', '']);
   assert.equal(calls[1][0], 'POST'); assert.equal(calls[1][1], `/developer-api/v2/apps/${app}/database-operations`);
   assert.deepEqual(Object.keys(calls[1][2]).sort(), ['command', 'request_id', 'writer_session']);
-  assert.equal(calls[1][2].command, 'reset');
+  assert.equal(calls[1][2].command, 'migrate');
   assert.equal(calls[1][2].writer_session, requestId);
   assert.deepEqual(calls[2], ['PUT', `/developer-api/v2/apps/${app}/writer`, { session_id: requestId, release: true }]);
 });
@@ -90,9 +69,10 @@ test('db lifecycle rejects a locally linked project that differs from the approv
   await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, token: 'db-operation-token' }), { mode: 0o600 });
   await writeFile(path.join(appRoot, '.nexia', 'project.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, project_id: localProject }));
   await writeFile(path.join(appRoot, '.nexia', 'app.json'), JSON.stringify({ endpoint: `http://127.0.0.1:${server.address().port}`, id: app, key: 'sample' }));
-  const options = { env: { ...process.env, NEXIA_CONFIG_HOME: root } };
+  await writeFile(path.join(appRoot, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'sample' } }));
+  const options = { cwd: appRoot, env: { ...process.env, NEXIA_CONFIG_HOME: root } };
   for (const args of [
-    ['db', 'status', appRoot], ['db', 'migrate', appRoot], ['db', 'reset', '--yes', appRoot], ['db', 'seed', 'sample', appRoot],
+    ['db', 'status'], ['db', 'migrate', '--yes'], ['db', 'seed', 'sample', '--yes'],
   ]) await assert.rejects(execute(process.execPath, [cli, ...args], options), /linked to another project/);
-  assert.deepEqual(calls, Array.from({ length: 4 }, () => ['GET', '/developer-api/connection', '']));
+  assert.deepEqual(calls, Array.from({ length: 3 }, () => ['GET', '/developer-api/connection', '']));
 });

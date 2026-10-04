@@ -13,7 +13,7 @@ test('project binding writes the original instructions and preserves existing fi
   await bindWorkspace(root, binding);
   const instructions = await readFile(file, 'utf8');
   assert.ok(instructions.includes('Project name: "Timeline $& {{ endpoint }}"'));
-  assert.ok(instructions.includes(`nexia link-project ${binding.project.id}`));
+  assert.ok(instructions.includes(`nexia connect ${binding.project.id}`));
   assert.ok(instructions.includes(`Platform: ${binding.endpoint}`));
   assert.ok(instructions.includes('## Delivery and safety'));
   await writeFile(file, 'Custom project rules\n');
@@ -68,10 +68,10 @@ test('App link cannot erase a project marker and project link rejects an App bef
   await bindWorkspace(root, { endpoint: 'http://127.0.0.1:1', project });
   const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
   const options = { cwd: root, env: { ...process.env, NEXIA_CONFIG_HOME: path.join(root, 'private') } };
-  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'link'], options), /project workspace/);
+  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'link'], options), /no longer a command/);
   assert.equal((await findWorkspace(root)).project_id, project.id);
   const app = path.join(root, 'people');
   await mkdir(app);
-  await writeFile(path.join(app, 'nexia.json'), '{}');
-  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'link-project', project.id], { ...options, cwd: app }), /outside an App/);
+  await writeFile(path.join(app, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel' }));
+  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'connect', project.id], { ...options, cwd: app }), /outside an App/);
 });

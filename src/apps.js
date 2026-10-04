@@ -38,7 +38,7 @@ export async function registerApp(directory, { log = console.log } = {}) {
   }
   const project = await optionalJson(path.join(local, 'project.json'));
   if (project && (project.endpoint !== config.endpoint || project.project_id !== connection.project.id)) {
-    throw new Error('This directory is linked to another project or endpoint. Run nexia link to confirm the current target first.');
+    throw new Error('This directory is linked to another project or endpoint. Run nexia login to confirm the current target first.');
   }
   const identity = await optionalJson(path.join(local, 'app.json'));
   if (identity && (identity.endpoint !== config.endpoint || identity.key !== metadata.app_key)) {

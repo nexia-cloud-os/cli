@@ -1,373 +1,237 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createNexiaClient } from '@nexia/dev-client';
-import { initProject, validateProject } from './project.js';
-import { startPreview } from './preview.js';
-import { serveMcp } from './mcp.js';
+import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
 import { setup } from './setup.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
-import { validateInRuntime } from './runtime-validate.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
-import { repository, submitTag } from './repository.js';
-import { registerApp, selectExecution } from './apps.js';
-import { syncSource } from './sync.js';
+import { repository, submitTag, isVersionTag } from './repository.js';
 import { workspaceDev } from './workspace-dev.js';
 import { nativeDev } from './native-dev.js';
-import { bindWorkspace, findWorkspace, resolveAppDirectory } from './workspace.js';
-import { access, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
+import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
+import { Cancelled, createInput, language, message } from './input.js';
+import { appTargets, appPlan, generatorPlan, generatorArguments, planSummary, findApp, isUuid } from './scaffold.js';
 
-async function linkProject(directory) {
-  const workspace = await findWorkspace(directory);
-  if (workspace?.root === directory) throw new Error('This is a project workspace. Use nexia link-project <project-id>; App link must run inside an App.');
+const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
+const log = value => console.error(value);
+const output = (options, data, text) => console.log(options.json ? JSON.stringify(data) : text);
+
+async function readBinding(directory, name) {
+  const folder = path.join(directory, '.nexia'), file = path.join(folder, name);
+  for (const target of [folder, file]) {
+    const stat = await lstat(target).catch(error => { if (error.code === 'ENOENT') throw new InputError('Run nexia dev in the intended project to register this App first.'); throw error; });
+    if (stat.isSymbolicLink() || (target === file && (!stat.isFile() || stat.size > 8192))) throw new InputError('Invalid App binding.');
+  }
+  return JSON.parse(await readFile(file, 'utf8'));
+}
+async function databaseBinding(directory) {
   const config = await readConnection();
-  const result = await request(config, 'connection');
-  if (result.status !== 'connected') throw new Error('Approve CLI login first.');
-  await mkdir(path.join(directory, '.nexia'), { recursive: true });
-  await writeFile(path.join(directory, '.nexia', 'project.json'), JSON.stringify({ endpoint: config.endpoint, project_id: result.project.id }) + '\n');
-  console.log(`Linked to ${result.project.name} (${result.project.id}) at ${config.endpoint}`);
-}
-
-async function databaseBinding(directory, selector) {
-  const root = await resolveAppDirectory(directory, selector), config = await readConnection();
-  const local = path.join(root, '.nexia');
-  const [project, app] = await Promise.all(['project.json', 'app.json'].map(async name => {
-    const file = path.join(local, name), stat = await access(file).then(() => null, () => { throw new Error('Register and link this App before requesting database work.'); });
-    return JSON.parse(await readFile(file, 'utf8'));
-  }));
-  const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
-  if (!uuid(project.project_id) || !uuid(app.id)
-      || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint)
-      || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint)) throw new Error('App binding is invalid.');
+  const [project, app] = await Promise.all(['project.json', 'app.json'].map(name => readBinding(directory, name)));
+  if (!isUuid(project.project_id || '') || !isUuid(app.id || '') || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint) || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint)) throw new InputError('App binding is invalid.');
   const connection = await request(config, 'connection');
-  if (connection.status !== 'connected' || connection.project?.id !== project.project_id) {
-    throw new Error('This directory is linked to another project or the connection is no longer approved. Run nexia link to confirm the current target first.');
+  if (connection.status !== 'connected' || connection.project?.id !== project.project_id) throw new InputError('This App is linked to another project. Run nexia login from its project folder.');
+  return { config, app };
+}
+async function authenticate(projectId, options, workspace) {
+  const config = await readConnection();
+  const endpoint = workspace?.endpoint || process.env.NEXIA_ENDPOINT || config.endpoint;
+  validateEndpoint(endpoint);
+  if (endpoint !== config.endpoint) await setEndpoint(endpoint);
+  return login(projectId, { log, ...(options['no-browser'] ? { openBrowser: false } : {}) });
+}
+async function review(input, options, title, makePlan) {
+  let plan = await makePlan();
+  if (!input.interactive || options.yes || options['dry-run']) {
+    await input.confirm(planSummary(title, plan));
+    return plan;
   }
-  return { config, app_id: app.id };
+  while (true) {
+    log(planSummary(title, plan));
+    const action = await input.choice('review', message('Review the plan', '내용을 확인하세요'), [
+      { value: 'run', label: message('Create', '생성') }, { value: 'edit', label: message('Edit an answer', '답변 수정') }, { value: 'cancel', label: message('Cancel', '취소') },
+    ], 'cancel');
+    if (action === 'run') return plan;
+    if (action === 'cancel') throw new Cancelled();
+    const fields = Object.entries(plan.values).filter(([key]) => !(key === 'sort' && plan.values.navigation === false));
+    const key = await input.choice('edit-field', message('Which setting?', '수정할 항목'), fields.map(([key, value]) => ({ value: key, label: `${key}: ${value}` })));
+    // Keep all answers except the edited field. Re-run the same validators and dependencies.
+    const editedOptions = { ...options, chinese: Boolean(plan.values['label-zh']), ...plan.values, ...(plan.name ? { name: plan.name } : {}) };
+    delete editedOptions[key];
+    if (key === 'navigation') for (const dependent of ['navigation-group', 'navigation-subgroup', 'icon', 'sort']) delete editedOptions[dependent];
+    input.setOptions(editedOptions);
+    plan = await makePlan(input, editedOptions);
+  }
 }
 
-const signatureSourceOptions = ['source-key', 'source-version', 'subject-resource-key', 'source-resource-key', 'cardinality', 'min-items', 'max-items', 'stable-sort-key', 'lookup-mode', 'subject-anchor', 'source-ref-anchor', 'field-key', 'field-type', 'field-classification', 'field-formatter', 'label-key', 'description-key', 'field-label-key'];
-
-const help = `Nexia developer tools
-
-  nexia create-project <directory> [--name <name>] [--endpoint URL] [--no-browser]
-                                   Create and connect a project after browser approval
-  nexia login <project-id> [--no-browser]
-                                   Connect through browser approval
-  nexia link-project <project-id> [--no-browser]
-                                   Connect this local project folder through browser approval
-  nexia link [directory]            Bind an existing app to the connected project
-  nexia status                     Show the connected project
-  nexia logout                     Revoke this CLI connection
-  nexia app register [directory]   Register PHP/React App identity from nexia.json
-  nexia sync [directory]           Save a private PHP/React source snapshot
-  nexia apps list [--json]         List registered Apps linked to the project
-  nexia app runtime development|off [directory]
-                                   Select development execution without deleting data
-  nexia resources list [--json]    Inspect public resource contracts in the sandbox
-  nexia db references [--json]     List Core keys allowed as App foreign-key targets
-  nexia db status [directory] [--app <folder-or-key>]
-  nexia db migrate [directory] [--request-id UUID] [--app <folder-or-key>]
-  nexia db reset --yes [directory] [--request-id UUID] [--app <folder-or-key>]
-  nexia db seed <fixture> [directory] [--request-id UUID] [--app <folder-or-key>]
-                                   Run one App-scoped sandbox database operation
-  nexia fixtures list [--json]     List installed App development fixtures
-  nexia fixtures run <app> <key> [--request-id UUID] [--json]
-                                   Request a sandbox fixture job
-  nexia fixtures status <run-id> [--json]
-                                   Check its recorded result
-  nexia repository connect|status [directory] [--app <folder-or-key>]
-  nexia submit [directory] --tag v1.2.0 [--request-id <uuid>] [--app <folder-or-key>]
-                                   Submit an immutable App version
-  nexia submissions status <submission-id> [--json]
-  nexia submissions cancel|retry <submission-id> [--json]
-                                   Inspect PHP/React build processing
-  nexia setup --devtools [--dry-run] Install PHP generators for this CLI
-  nexia setup [--dry-run]           Install/upgrade PHP and Composer (macOS)
-  nexia init <dir> [--vendor <vendor>] [--family <key>]
-                                   Create a PHP/React App; missing identity options are prompted interactively
-  nexia init <dir> --template browser
-                                   Create a legacy static browser App explicitly
-  nexia make:resource <name> [dir] --label-ko <label> [--with-filament]
-                                   Add a resource using the App namespace
-  nexia make:page <name> [dir] --label-ko <label> [--without-record] [--without-navigation]
-                                   Add a business page without a model or migration
-  nexia make:signature-data-source <name> [dir] --subject-resource-key <key> --source-resource-key <key>
-                                   Preview an explicit signature source; --write creates it
-  nexia validate [directory] [--runtime-image sha256:...]  Check source or isolated Runtime/Catalog
-  nexia dev [directory] [--port N]   Open in the remote Nexia workspace
-  nexia doctor --endpoint URL       Inspect Core development capabilities
-  nexia mcp [directory]             Read-only local MCP server on stdio
-
-Default platform: https://developers.nexia.to
-Alternate/local platforms: nexia config endpoint <URL> (clears the saved connection).
-doctor accepts --allow-insecure-loopback for a local HTTP Core endpoint.
-Project dev discovers Apps in immediate child folders. App commands accept --app <folder-or-key>. Deployments remain pending until review.
-`;
-
+let input, parsed;
 try {
-  const [command, ...rawArgs] = process.argv.slice(2);
-  const args = rawArgs.flatMap(arg => /^--[^=]+=/.test(arg) ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg]);
-  const positions = [];
-  const options = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--container') options.container = true;
-    else if (arg === '--no-browser') options.noBrowser = true;
-    else if (arg === '--dry-run') options.dryRun = true;
-    else if (arg === '--json') options.json = true;
-    else if (arg === '--allow-insecure-loopback') options.allowInsecureLoopback = true;
-    else if (arg === '--prerequisite') {
-      if (!args[i + 1] || args[i + 1].startsWith('-')) throw new Error('--prerequisite needs an App key.');
-      (options.prerequisite ??= []).push(args[++i]);
+  parsed = parseCommand(process.argv.slice(2));
+  let { name, argument, options } = parsed;
+  if (options.version) { const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')); console.log(pkg.version); }
+  else if (options.help || !name) console.log(helpText(name, language));
+  else {
+    input = createInput(options);
+    if (groups[name]) {
+      const child = await input.choice('command', message('Choose a task', '작업을 선택하세요'), groups[name].map(child => ({ value: child, label: commands[`${name} ${child}`].description[language === 'ko' ? 1 : 0] })), undefined, { hint: `nexia ${name} <${groups[name].join('|')}>` });
+      name += ` ${child}`;
+      validateOptions(name, options);
     }
-    else if (arg === '--force' || arg === '--yes' || arg === '--with-filament' || arg === '--without-navigation' || arg === '--without-record' || arg === '--write' || arg === '--devtools') options[arg.slice(2)] = true;
-    else if (['--runtime-image', '--app', '--tag', '--version', '--request-id', '--port', '--endpoint', '--template', '--vendor', '--family', '--name', '--key', '--table-prefix', '--display-name', '--label-ko', '--label-ko-plural', '--label-zh', '--label-zh-plural', '--record-owner', '--navigation-group', '--navigation-subgroup', '--icon', '--sort'].includes(arg) || signatureSourceOptions.some(key => arg === `--${key}`)) {
-      if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`${arg} needs a value.`);
-      options[arg.slice(2)] = args[++i];
-    } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
-    else positions.push(arg);
-  }
-  if (['config', 'internal'].includes(command) && positions[0] === 'endpoint' && positions.length === 2 && Object.keys(options).length === 0) {
-    console.log(`Platform endpoint: ${await setEndpoint(positions[1])}\nPrevious CLI connection cleared. Run nexia login <project-id>.`);
-    process.exit(0);
-  }
-  if (command === 'app' && positions[0] === 'register') {
-    if (positions.length > 2 || Object.keys(options).some(key => key !== 'app')) throw new Error('Use nexia app register [directory] [--app <folder-or-key>].');
-    await registerApp(await resolveAppDirectory(positions[1] || '.', options.app));
-    process.exit(0);
-  }
-  if (command === 'app' && positions[0] === 'runtime') {
-    if (positions.length < 2 || positions.length > 3 || Object.keys(options).some(key => key !== 'app')) throw new Error('Use nexia app runtime development|off [directory] [--app <folder-or-key>].');
-    await selectExecution(await resolveAppDirectory(positions[2] || '.', options.app), positions[1]);
-    process.exit(0);
-  }
-  if (command === 'apps' && positions[0] === 'list') {
-    if (positions.length !== 1 || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia apps list [--json].');
-    const result = await request(await readConnection(), 'apps');
-    console.log(options.json ? JSON.stringify(result) : result.apps.map(app => `${app.key} · ${app.name} · ${app.id}`).join('\n') || 'No registered Apps are linked to this project.');
-    process.exit(0);
-  }
-  if (command === 'db') {
-    const [action, first, second] = positions;
-    if (action === 'references') {
-      if (positions.length !== 1 || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia db references [--json].');
-      const result = await request(await readConnection(), 'v2/database/references');
-      if (!Array.isArray(result.references) || result.grants_data_access !== false
-          || result.references.some(item => !item || ['schema', 'table', 'column'].some(key => !/^[a-z_][a-z0-9_]{0,62}$/.test(item[key] ?? '')))) throw new Error('Invalid Core database reference catalog.');
-      console.log(options.json ? JSON.stringify(result) : result.references.map(item => `${item.schema}.${item.table}.${item.column}`).join('\n') || 'No Core foreign-key targets are published.');
-      if (!options.json) console.log('Reference declarations do not grant access to Core records.');
-    } else {
-      const seed = action === 'seed', allowed = ['json', 'app', 'request-id', ...(action === 'reset' ? ['yes'] : [])];
-      if (!['status', 'migrate', 'seed', 'reset'].includes(action) || Object.keys(options).some(key => !allowed.includes(key))
-          || (seed ? !first || positions.length > 3 : positions.length > 2) || (action === 'reset' && options.yes !== true)) throw new Error('Use nexia db status|migrate [directory], nexia db reset --yes [directory], or nexia db seed <fixture> [directory].');
-      const directory = seed ? second || '.' : first || '.', binding = await databaseBinding(directory, options.app);
-      if (action === 'status') {
-        const result = await request(binding.config, `v2/apps/${binding.app_id}/database-operations`);
-        console.log(options.json ? JSON.stringify(result) : result.operation ? `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})` : 'No App database operation has been requested.');
-      } else {
-        const id = options['request-id'] || randomUUID();
-        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error('--request-id must be a UUID.');
-        console.error(`Database request: ${id}. Stop nexia dev first if it owns this App writer lease; retry a lost response with the same --request-id.`);
-        // Reuse the idempotency key for this short-lived lease. A lost-response
-        // retry can then release the same writer generation without a new claim.
-        const result = await request(binding.config, `v2/apps/${binding.app_id}/database-operations`, { method: 'POST', body: { command: action, ...(seed ? { fixture_key: first } : {}), request_id: id, writer_session: id } });
-        const released = await request(binding.config, `v2/apps/${binding.app_id}/writer`, { method: 'PUT', body: { session_id: id, release: true } });
-        if (released.writer?.released !== true) throw new Error('The accepted database request did not release its writer lease. Retry with the same --request-id.');
-        console.log(options.json ? JSON.stringify(result) : `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})\nCheck: nexia db status ${JSON.stringify(directory)}`);
+    if (name === 'setup') {
+      const generatorsOnly = await input.boolean('devtools', message('Install App generators only? Choose No to also install/upgrade PHP and Composer (macOS).', '앱 생성 도구만 설치할까요? 아니요를 선택하면 PHP·Composer도 설치/업그레이드합니다 (macOS).'), false);
+      if (!generatorsOnly && process.platform !== 'darwin') throw new InputError('Automatic system installation supports macOS only. Install PHP 8.4+ and Composer, then run nexia setup --devtools.');
+      await input.confirm(generatorsOnly ? 'Install/update managed PHP App generators.' : 'Install/upgrade Homebrew PHP and Composer, then install/update managed App generators. Existing runtime versions may change.');
+      input.close();
+      if (!generatorsOnly) await setup({ dryRun: options['dry-run'] });
+      await installDevtools({ dryRun: options['dry-run'] });
+    } else if (name === 'create app') {
+      let originalArgument = argument;
+      const plan = await review(input, options, message('Create App', '앱 생성'), async (editor = input, edited = options) => {
+        const result = await appPlan(originalArgument, edited, editor);
+        originalArgument = path.basename(result.directory);
+        return result;
+      });
+      input.close();
+      await initLaravelApp(plan.directory, { ...plan.values, dryRun: options['dry-run'] });
+      console.log(`${options['dry-run'] ? 'Plan' : 'Created'}: ${plan.directory}\nNext: install App dependencies (composer install --no-scripts, npm install), then nexia dev.`);
+    } else if (name.startsWith('make ')) {
+      const kind = name.split(' ')[1];
+      let originalArgument = argument, selectedDirectory;
+      const plan = await review(input, options, message(`Create ${kind}`, `${kind} 생성`), async (editor = input, edited = options) => {
+        const result = await generatorPlan(kind, originalArgument, edited, editor, selectedDirectory);
+        selectedDirectory = result.directory;
+        originalArgument = result.name;
+        return result;
+      });
+      input.close();
+      const args = generatorArguments(kind, plan);
+      // Keep the generator's preflight and existing-file policy before any write.
+      await runDevtools([...args, '--dry-run'], plan.directory);
+      if (!options['dry-run']) await runDevtools(args, plan.directory);
+    } else if (name === 'create project') {
+      const folder = await input.text('directory', message('New project folder', '새 프로젝트 폴더'), { value: argument, hint: 'nexia create project <directory>', required: true, validate: value => /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value) });
+      const directory = path.resolve(folder);
+      if (await findWorkspace(path.dirname(directory)) || await findApp(path.dirname(directory))) throw new InputError('Do not create a project inside another project or App.');
+      if (await exists(directory) && ((await lstat(directory)).isSymbolicLink() || (await readdir(directory)).length)) throw new InputError('Use a new or empty project folder.');
+      const projectName = await input.text('name', message('Project display name', '프로젝트 표시 이름'), { defaultValue: path.basename(directory), required: true, validate: value => value.length <= 100 });
+      const current = await readConnection(), endpoint = validateEndpoint(process.env.NEXIA_ENDPOINT || current.endpoint);
+      await input.confirm(`Create project: ${projectName}\nFolder: ${directory}\nPlatform: ${endpoint}\nBrowser approval is required.`);
+      await mkdir(directory, { recursive: true });
+      if (endpoint !== current.endpoint) await setEndpoint(endpoint);
+      const connected = await login(undefined, { projectName, recoveryKey: directory, log, ...(options['no-browser'] ? { openBrowser: false } : {}) });
+      await bindWorkspace(directory, { endpoint: connected.endpoint, project: connected.project });
+      if (connected.recoveryFile) await rm(connected.recoveryFile);
+      console.log(`Project created: ${connected.project.name}\nNext: cd ${JSON.stringify(directory)}, then nexia create app.`);
+    } else if (['connect', 'login'].includes(name)) {
+      const workspace = await findWorkspace(process.cwd());
+      if (name === 'connect' && (workspace && workspace.root !== process.cwd() || await findApp())) throw new InputError('Run nexia connect from the project root, outside an App.');
+      const standalone = !workspace && name === 'login' ? await findApp() : null;
+      const appBinding = standalone && await exists(path.join(standalone, '.nexia/project.json')) ? await readBinding(standalone, 'project.json') : null;
+      const loginScope = workspace || appBinding;
+      const projectId = await input.text('project-id', message('Project ID from Developers', 'Developers의 프로젝트 ID'), { value: argument ?? loginScope?.project_id, hint: `nexia ${name} <project-id>`, required: true, validate: isUuid });
+      if (loginScope && projectId !== loginScope.project_id) throw new InputError('This folder belongs to another project. Use a separate project folder.');
+      if (name === 'connect') await input.confirm(`Connect folder: ${process.cwd()}\nProject: ${projectId}`);
+      const connected = await authenticate(projectId, options, loginScope);
+      if (name === 'connect') {
+        await bindWorkspace(process.cwd(), { endpoint: connected.endpoint, project: connected.project });
+        console.log(`Project connected: ${connected.project.name}\nNext: create or clone Apps directly inside this folder, then nexia dev.`);
       }
-    }
-    process.exit(0);
-  }
-  if (command === 'fixtures') {
-    const [action, appOrRun, key] = positions;
-    const allowed = action === 'run' ? ['json', 'request-id'] : ['json'];
-    if (Object.keys(options).some(option => !allowed.includes(option))) throw new Error('Unsupported fixture option.');
-    if (action === 'list' && positions.length === 1) {
-      const result = await request(await readConnection(), 'fixtures');
-      console.log(options.json ? JSON.stringify(result) : result.apps.flatMap(app => app.fixtures.map(key => `${app.app_key} · ${key}`)).join('\n') || 'No installed App exposes development fixtures.');
-    } else if (action === 'run' && positions.length === 3) {
-      if (!/^[a-z][a-z0-9-]{0,62}$/.test(appOrRun) || !key.trim() || key.length > 160) throw new Error('Use an App key and a declared fixture key.');
-      const id = options['request-id'] || randomUUID();
-      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error('--request-id must be a UUID.');
-      console.error(`Fixture request: ${id}. If the response is lost, retry with the same --request-id.`);
-      const result = await request(await readConnection(), 'fixtures', { method: 'POST', body: { app_key: appOrRun, fixture_key: key, request_id: id } });
-      console.log(options.json ? JSON.stringify(result) : `${result.run.status}: ${result.run.id}\nCheck: nexia fixtures status ${result.run.id}`);
-    } else if (action === 'status' && positions.length === 2 && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(appOrRun)) {
-      const result = await request(await readConnection(), `fixture-runs/${appOrRun}`);
-      console.log(options.json ? JSON.stringify(result) : `${result.run.status}: ${result.run.app_key} · ${result.run.fixture_key}${result.run.status === 'needs_review' ? '\nExecution may have committed. Ask the platform administrator to inspect it before creating another request.' : ''}`);
-    } else throw new Error('Use nexia fixtures list, run <app> <key>, or status <run-id>.');
-    process.exit(0);
-  }
-  if (command === 'deploy') throw new Error('nexia deploy is retired. Connect a GitHub repository, then use nexia submit --tag v1.2.0. No submission was made.');
-  if (command === 'repository') {
-    const [action, directory = '.'] = positions;
-    if (!['connect', 'status'].includes(action) || positions.length > 2 || Object.keys(options).some(key => key !== 'app')) throw new Error('Use nexia repository connect|status [directory] [--app <folder-or-key>].');
-    await repository(await resolveAppDirectory(directory, options.app), action);
-    process.exit(0);
-  }
-  if (command === 'submissions' && ['status', 'cancel', 'retry'].includes(positions[0])) {
-    if (positions.length !== 2 || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(positions[1]) || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia submissions status|cancel|retry <submission-id> [--json].');
-    const action = positions[0] === 'status' ? '' : positions[0];
-    const result = await request(await readConnection(), `v2/submissions/${positions[1]}${action ? `/${action}` : ''}`, action ? { method: 'POST', body: {} } : undefined);
-    if (result.submission?.id !== positions[1]) throw new Error('Platform returned a different submission.');
-    console.log(options.json ? JSON.stringify(result) : `${result.submission.tag}: ${result.submission.status}\n${result.submission.failure ?? ''}\n${result.submission.retryable ? 'Retry available: nexia submissions retry ' + result.submission.id : 'Code changes require a new version tag.'}`);
-    process.exit(0);
-  }
-  if (command === 'resources' && positions[0] === 'list') {
-    if (positions.length !== 1 || Object.keys(options).some(key => key !== 'json')) throw new Error('Use nexia resources list [--json].');
-    const result = await request(await readConnection(), 'resources');
-    console.log(options.json ? JSON.stringify(result) : `${result.resources.map(resource => `${resource.key} · ${resource.version} · ${resource.status}`).join('\n') || 'No public resource contracts are available.'}\nContract metadata only; this does not grant data access. Use --json for fields, declared permissions, actions and public events.`);
-    process.exit(0);
-  }
-  // Keep old scripts readable while exposing one canonical make:* vocabulary.
-  const generator = command?.startsWith('make:') ? command.slice(5) : command === 'make' ? positions.shift() : null;
-  if (['resource', 'page', 'signature-data-source'].includes(generator)) {
-    const allowed = {
-      page: ['label-ko', 'navigation-group', 'sort', 'without-record', 'without-navigation', 'dryRun'],
-      resource: ['label-ko', 'label-ko-plural', 'label-zh', 'label-zh-plural', 'record-owner', 'navigation-group', 'navigation-subgroup', 'icon', 'sort', 'force', 'with-filament', 'without-navigation', 'dryRun'],
-      'signature-data-source': [...signatureSourceOptions, 'write', 'force'],
-    }[generator];
-    const required = generator === 'signature-data-source' ? '--subject-resource-key <key> --source-resource-key <key>' : '--label-ko <label>';
-    if (!positions[0] || positions.length > 2 || Object.keys(options).some(key => !allowed.includes(key) && key !== 'app')) throw new Error(`Use nexia make:${generator} <name> [directory] ${required}.`);
-    const directory = await resolveAppDirectory(positions[1] || '.', options.app);
-    const args = [`make:${generator}`, directory, positions[0]];
-    for (const [key, value] of Object.entries(options)) {
-      if (key === 'app') continue;
-      args.push(`--${key === 'dryRun' ? 'dry-run' : key}`);
-      if (value !== true) args.push(value);
-    }
-    await runDevtools(args, directory);
-    process.exit(0);
-  }
-  if (positions.length > 1) throw new Error('Supply at most one project directory.');
-  const allowed = command === 'create-project' ? ['name', 'endpoint', 'noBrowser'] : command === 'init' ? ['template', 'vendor', 'family', 'name', 'key', 'table-prefix', 'display-name', 'prerequisite', 'dryRun'] : ['login', 'link-project'].includes(command) ? ['noBrowser'] : command === 'setup' ? ['dryRun', 'devtools'] : command === 'doctor' ? ['endpoint', 'allowInsecureLoopback'] : command === 'dev' ? ['port', 'container', 'app'] : command === 'submit' ? ['tag', 'request-id', 'app'] : command === 'validate' ? ['app', 'runtime-image'] : command === 'sync' ? ['app'] : [];
-  for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new Error(`Option ${key} is not supported by ${command}.`);
-  const directory = ['submit', 'sync', 'validate'].includes(command)
-    ? await resolveAppDirectory(positions[0] || '.', options.app) : path.resolve(positions[0] || '.');
-  if (!command || ['help', '--help', '-h'].includes(command)) console.log(help);
-  else if (command === 'create-project') {
-    if (!positions[0]) throw new Error('Use nexia create-project <new-directory>.');
-    const projectName = options.name || path.basename(directory);
-    if (!projectName.trim() || projectName.length > 100) throw new Error('Project name must contain 1 to 100 characters.');
-    if (await findWorkspace(path.dirname(directory))) throw new Error('Do not create a project inside another project.');
-    if (options.endpoint) validateEndpoint(options.endpoint);
-    await mkdir(directory).catch(async error => {
-      if (error.code !== 'EEXIST' || (await readdir(directory)).length) throw new Error('Use a new or empty project folder. Existing files were preserved.');
-    });
-    if (options.endpoint) await setEndpoint(options.endpoint);
-    const connected = await login(undefined, { projectName, recoveryKey: directory, ...(options.noBrowser ? { openBrowser: false } : {}) });
-    await bindWorkspace(directory, { endpoint: connected.endpoint, project: connected.project });
-    if (connected.recoveryFile) await rm(connected.recoveryFile);
-    console.log(`Project created: ${connected.project.name}\nNext: cd ${JSON.stringify(directory)}, then create or clone your Apps.`);
-  }
-  else if (command === 'login') await login(positions[0], options.noBrowser ? { openBrowser: false } : undefined);
-  else if (command === 'link-project') {
-    if (await access(path.join(process.cwd(), 'nexia.json')).then(() => true, error => { if (error.code !== 'ENOENT') throw error; return false; })) throw new Error('Run link-project from the parent project directory, outside an App.');
-    const existing = await findWorkspace(process.cwd());
-    if (existing && (existing.root !== process.cwd() || existing.project_id !== positions[0])) throw new Error('Use a separate folder for another project.');
-    await login(positions[0], options.noBrowser ? { openBrowser: false } : undefined);
-    const config = await readConnection();
-    const connection = await request(config, 'connection');
-    if (connection.status !== 'connected' || connection.project?.id !== positions[0]) throw new Error('Project approval does not match.');
-    await bindWorkspace(process.cwd(), { endpoint: config.endpoint, project: connection.project });
-    console.log(`Project connected: ${connection.project.name}\nCreate or clone Apps directly inside this folder.`);
-  }
-  else if (command === 'link') await linkProject(directory);
-  else if (command === 'sync') await syncSource(directory);
-  else if (command === 'submit') await submitTag(directory, options.tag, options['request-id']);
-  else if (command === 'status') console.log(JSON.stringify(await request(await readConnection(), 'connection'), null, 2));
-  else if (command === 'logout') { const config = await readConnection(); await request(config, 'connection', { method: 'DELETE' }); await saveConnection({ endpoint: config.endpoint }); console.log('CLI connection revoked.'); }
-  else if (command === 'setup') {
-    if (positions.length) throw new Error('Use nexia setup or nexia setup --dry-run without a directory.');
-    await (options.devtools ? installDevtools : setup)({ dryRun: options.dryRun });
-  } else if (command === 'init') {
-    if (!positions[0]) throw new Error('Choose a new directory: nexia init my-app');
-    const template = options.template || 'laravel';
-    if (!['browser', 'laravel'].includes(template)) throw new Error('Template must be browser or laravel.');
-    if (template === 'browser' && Object.keys(options).some(key => key !== 'template')) throw new Error('App identity options require --template laravel.');
-    const parentWorkspace = await findWorkspace(path.dirname(directory));
-    if (parentWorkspace && parentWorkspace.root !== path.dirname(directory)) throw new Error('Create Apps directly inside the project folder.');
-    const target = template === 'laravel' ? await initLaravelApp(directory, options) : await initProject(directory);
-    if (options.dryRun) process.exit(0);
-    console.log(`Created ${target}\nNext: ${template === 'laravel' ? (parentWorkspace ? 'install App dependencies, then run nexia dev from the project; registration is automatic' : 'review nexia.json, select a project with nexia link, then register with nexia app register') : `nexia dev ${JSON.stringify(target)}`}`);
-  } else if (command === 'validate') {
-    if (options['runtime-image']) {
-      await validateInRuntime(directory, options['runtime-image']);
-      process.exit(0);
-    }
-    const exists = async name => access(path.join(directory, name)).then(() => true, error => {
-      if (error.code === 'ENOENT') return false;
-      throw error;
-    });
-    if (await exists('composer.json')) {
-      await runDevtools(['validate', directory], directory);
-      if (!await exists('nexia.json')) process.exit(0);
-      // The public PHP validator owns native metadata; only preview v1 has static entries.
-      const manifest = JSON.parse(await readFile(path.join(directory, 'nexia.json'), 'utf8'));
-      if (manifest?.schema_version === '2') process.exit(0);
-    }
-    const manifest = await validateProject(directory);
-    console.log(`${manifest.app.name}: local manifest and preview entries are valid. Remote compatibility has not been checked.`);
-  } else if (command === 'dev') {
-    const projectWorkspace = await findWorkspace(directory);
-    if (projectWorkspace) {
-      const shutdown = new AbortController();
-      const stop = () => shutdown.abort();
+    } else if (name === 'logout') {
+      await input.confirm(message('Revoke CLI authentication. Project folder bindings and data are retained.', 'CLI 인증을 해제합니다. 프로젝트 폴더 연결과 데이터는 유지합니다.'));
+      const config = await readConnection();
+      if (config.token) await request(config, 'connection', { method: 'DELETE' });
+      await saveConnection({ endpoint: config.endpoint });
+      console.log(message('Logged out.', '로그아웃했습니다.'));
+    } else if (name === 'status') {
+      const workspace = await findWorkspace(process.cwd()), currentApp = await findApp(), config = await readConnection();
+      const connection = config.token ? await request(config, 'connection') : null;
+      const data = { authenticated: connection?.status === 'connected', endpoint: config.endpoint, project: connection?.project || null,
+        folder: workspace ? { root: workspace.root, project_id: workspace.project_id } : null, app: currentApp,
+        matches_folder: workspace ? connection?.project?.id === workspace.project_id && config.endpoint === workspace.endpoint : null,
+        sandbox: connection?.sandbox ? { id: connection.sandbox.id, status: connection.sandbox.status } : null };
+      output(options, data, `${data.authenticated ? 'Authenticated' : 'Not authenticated — run nexia login'}\nPlatform: ${data.endpoint}\nProject: ${data.project?.name || '—'}\nFolder: ${workspace?.root || 'Not connected — run nexia connect'}\nApp: ${currentApp || '—'}\nSandbox: ${data.sandbox?.status || '—'}${data.matches_folder === false ? '\nFolder and login differ. Run nexia login from this project.' : ''}`);
+    } else if (name === 'check') {
+      const targets = await appTargets(options, input, { all: true });
+      input.close();
+      let failed = false;
+      for (const directory of targets) {
+        log(`Check: ${directory}`);
+        try { await runDevtools(['validate', directory], directory); }
+        catch (error) { failed = true; log(error.message); }
+      }
+      if (failed) throw new Error('One or more App checks failed. See the results above.');
+      console.log('Source checks passed. Runtime behavior, review and production deployment were not verified.');
+    } else if (name === 'dev') {
+      const workspace = await findWorkspace(process.cwd());
+      if (options.app && !workspace) throw new InputError('--app requires a connected project.');
       const port = options.port === undefined ? 4310 : Number(options.port);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be an integer from 1 to 65535.');
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new InputError('--port must be an integer from 1 to 65535.');
+      const directory = workspace ? workspace.root : await findApp();
+      if (!directory) throw new InputError('Run nexia connect from your project folder, then nexia dev.');
+      if (workspace) {
+        const { apps, errors } = await discoverApps(workspace.root);
+        if (options.app && apps.filter(app => app.key === options.app || app.name === options.app).length !== 1) throw new InputError(`Choose one App with --app. Available: ${apps.map(app => app.name).join(', ')}`);
+        log(`Project development: ${workspace.root}\nScope: ${options.app || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
+        for (const error of errors) log(`${error.directory}: ${error.message}`);
+      }
+      input.close();
+      const shutdown = new AbortController(), stop = () => shutdown.abort();
       process.once('SIGINT', stop); process.once('SIGTERM', stop);
-      try { await workspaceDev(projectWorkspace, { signal: shutdown.signal, port, container: options.container === true, app: options.app }); }
-      finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
-      process.exit(0);
+      try {
+        const devOptions = { signal: shutdown.signal, port, container: options.container === true, app: options.app };
+        await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
+      } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+    } else if (name.startsWith('db ')) {
+      const action = name.split(' ')[1], [directory] = await appTargets(options, input);
+      const binding = await databaseBinding(directory), route = `v2/apps/${binding.app.id}/database-operations`;
+      if (action === 'status') {
+        const result = await request(binding.config, route);
+        output(options, result, result.operation ? `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})` : 'No App database operation has been requested.');
+      } else {
+        let fixture;
+        if (action === 'seed') {
+          if (argument) fixture = await input.text('key', 'Declared fixture key', { value: argument, hint: 'nexia db seed <key>', required: true, validate: value => value.length <= 160 });
+          else {
+            const result = await request(binding.config, 'fixtures');
+            const fixtures = result.apps.find(app => app.app_key === binding.app.key)?.fixtures || [];
+            if (!fixtures.length) throw new InputError('This App exposes no development fixture keys in the active sandbox.');
+            fixture = await input.choice('key', message('Choose development data', '개발 데이터를 선택하세요'), fixtures, undefined, { hint: 'nexia db seed <key>' });
+          }
+        }
+        const id = options['request-id'] || randomUUID();
+        if (!isUuid(id)) throw new InputError('--request-id must be a UUID.');
+        await input.confirm(`App: ${directory}\nDatabase operation: ${action}${fixture ? ` (${fixture})` : ''}\nRequest: ${id}`);
+        log(`Database request: ${id}. If the response is lost, repeat with --request-id ${id}. Stop nexia dev first if it owns this App writer lease.`);
+        const result = await request(binding.config, route, { method: 'POST', body: { command: action, ...(fixture ? { fixture_key: fixture } : {}), request_id: id, writer_session: id } });
+        const released = await request(binding.config, `v2/apps/${binding.app.id}/writer`, { method: 'PUT', body: { session_id: id, release: true } });
+        if (released.writer?.released !== true) throw new Error('The accepted request did not release its writer lease. Retry with the same --request-id.');
+        output(options, { ...result, request_id: id }, `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})\nCheck: nexia db status\nAccepted does not mean completed.`);
+      }
+    } else if (name === 'submit') {
+      const [directory] = await appTargets(options, input);
+      const tag = await input.text('tag', message('Existing Git version tag (e.g. v1.0.0)', '기존 Git 버전 태그 (예: v1.0.0)'), { required: true, validate: isVersionTag });
+      const requestId = options['request-id'] || randomUUID();
+      if (!isUuid(requestId)) throw new InputError('--request-id must be a UUID.');
+      await input.confirm(`Submit App: ${directory}\nTag: ${tag}\nRequest: ${requestId}\nReview submission only. No Git commit, tag, push or production installation.`);
+      const connected = await repository(directory, 'status', { log });
+      if (connected.repository?.status !== 'connected') {
+        if (!input.interactive) throw new InputError(`Connect the repository in Developers first: ${connected.console_url}`);
+        await repository(directory, 'connect', { log, ...(options['no-browser'] ? { openBrowser: async () => false } : {}) });
+      }
+      const result = await submitTag(directory, tag, requestId, { log });
+      output(options, { ...result, request_id: requestId }, `Check: nexia submit status ${result.submission.id}`);
+    } else if (name.startsWith('submit ')) {
+      const action = name.split(' ')[1];
+      const id = await input.text('submission-id', message('Submission ID from the submission receipt or Developers', '제출 결과 또는 Developers의 제출 ID'), { value: argument, hint: `nexia submit ${action} <submission-id>`, required: true, validate: isUuid });
+      if (action !== 'status') await input.confirm(`${action}: ${id}`);
+      const result = await request(await readConnection(), `v2/submissions/${id}${action === 'status' ? '' : `/${action}`}`, action === 'status' ? undefined : { method: 'POST', body: {} });
+      if (result.submission?.id !== id) throw new Error('Platform returned a different submission.');
+      output(options, result, `${result.submission.tag}: ${result.submission.status}\n${result.submission.failure || ''}\n${result.submission.retryable ? `Retry: nexia submit retry ${id}` : 'Code changes require a new version tag.'}`);
     }
-    if (options.app) throw new Error('--app requires a linked project folder.');
-    const native = await access(path.join(directory, 'composer.json')).then(() => true, error => {
-      if (error.code === 'ENOENT') return false;
-      throw error;
-    });
-    if (native) {
-      const shutdown = new AbortController();
-      const stop = () => shutdown.abort();
-      process.once('SIGINT', stop); process.once('SIGTERM', stop);
-      const port = options.port === undefined ? 4310 : Number(options.port);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be an integer from 1 to 65535.');
-      try { await nativeDev(directory, { signal: shutdown.signal, port, container: options.container === true }); }
-      finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
-      process.exit(0);
-    }
-    const port = options.port === undefined ? 4310 : Number(options.port);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be an integer from 1 to 65535.');
-    const config = await readConnection();
-    const connection = await request(config, 'connection');
-    if (connection.status !== 'connected' || connection.sandbox?.status !== 'active') {
-      throw new Error('A ready project sandbox is required. Open your project in the developer console and prepare its workspace first.');
-    }
-    const binding = JSON.parse(await readFile(path.join(directory, '.nexia', 'project.json'), 'utf8').catch(() => { throw new Error('Link this app first: nexia link'); }));
-    if (binding.project_id !== connection.project.id || binding.endpoint !== config.endpoint) throw new Error('This app belongs to a different project. Run nexia link to select the connected project.');
-    const workspace = new URL(validateEndpoint(connection.sandbox.workspace_url));
-    const platform = new URL(config.endpoint);
-    const launch = new URL(connection.sandbox.launch_url);
-    if (launch.origin !== platform.origin || launch.username || launch.password || workspace.username || workspace.password || !['http:', 'https:'].includes(workspace.protocol)) {
-      throw new Error('The platform returned an invalid workspace connection.');
-    }
-    const preview = await startPreview(directory, port, { container: options.container === true, workspaceOrigin: workspace.origin });
-    launch.searchParams.set('preview', preview.url);
-    console.log(`Nexia workspace: ${launch.href}\nOpen this address to add your app to the remote workspace.\n${preview.reload ? 'Save public files to refresh the app tab.' : 'Automatic refresh unavailable; refresh the app tab after saving.'}\nCore runs on the platform; this machine serves only your app.\nPress Ctrl+C to stop.`);
-    let closing = false;
-    const stop = async () => { if (closing) return; closing = true; await preview.close(); };
-    process.once('SIGINT', stop); process.once('SIGTERM', stop);
-  } else if (command === 'doctor') {
-    if (positions.length || !options.endpoint) throw new Error('Use nexia doctor --endpoint https://your-nexia-host');
-    const discovery = await createNexiaClient({ endpoint: options.endpoint, allowInsecureLoopback: options.allowInsecureLoopback }).discover();
-    console.log(JSON.stringify(discovery, null, 2));
-    console.log('Discovery succeeded. This does not authenticate you or create a remote project.');
-  } else if (command === 'mcp') await serveMcp(directory);
-  else if (['projects'].includes(command)) {
-    throw new Error(`${command} is unavailable: create and manage projects in the developer web console, then run nexia login <project-id>. No remote action was performed.`);
-  } else throw new Error(`Unknown command: ${command}\nRun nexia help for available commands.`);
+  }
 } catch (error) {
-  console.error(`Nexia: ${error.code === 'EEXIST' ? 'The target directory already exists. Choose a new directory; existing files were not overwritten.' : error.message}`);
-  console.error('Developer support: https://github.com/nexia-cloud-os/developer-support/issues/new/choose (remove credentials and private data before reporting).');
-  process.exitCode = 1;
-}
+  const code = error.code || (error.status ? 'PLATFORM_ERROR' : 'OPERATION_FAILED');
+  if (parsed?.options.json || process.argv.includes('--json')) console.log(JSON.stringify({ error: { code, message: error.message } }));
+  else console.error(`Nexia [${code}]: ${error.message}`);
+  process.exitCode = error.exitCode || 1;
+} finally { input?.close(); }

@@ -33,8 +33,9 @@ test('native dev rejects an App rebind during a connection request before upload
   await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
   await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
   await writeFile(path.join(root, 'composer.json'), '{}');
-  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'dev', root], {
-    env: { ...process.env, NEXIA_CONFIG_HOME: root }, timeout: 5000,
+  await writeFile(path.join(root, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel' }));
+  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'dev'], {
+    cwd: root, env: { ...process.env, NEXIA_CONFIG_HOME: root }, timeout: 5000,
   }), /App binding changed/);
   assert.deepEqual(calls, ['/developer-api/connection']);
   await assert.rejects(readFile(path.join(root, '.nexia/runtime.json')), { code: 'ENOENT' });
