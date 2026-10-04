@@ -97,7 +97,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         if (selection.mode === 'off') {
           browserRuntime = { mode: 'off', app_id: scope.app_id, app_key: identity.key };
           const status = `off:${selection.revision}:${selection.stop_pending}`;
-          if (lastStatus !== status) log(`Development execution off${selection.stop_pending ? '; operator shutdown pending' : ''}. Source and data retained. Use nexia app runtime development to resume.`);
+          if (lastStatus !== status) log(`Development execution off${selection.stop_pending ? '; operator shutdown pending' : ''}. Source and data retained. Resume development execution in Developers Console, then keep nexia dev running.`);
           lastStatus = status;
           await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
