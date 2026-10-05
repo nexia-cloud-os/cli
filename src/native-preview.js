@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { resolvePublicFile } from './project.js';
@@ -60,9 +60,14 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
             translations[locale] = JSON.parse(await readFile(langFile, 'utf8'));
           } catch (error) { if (error.code === 'ENOENT') translations[locale] = {}; else throw error; }
         }
+        const body = JSON.stringify({ schema_version: 'native-1', ...current,
+          translations, entry: `${origin}/${assetToken}/index.js`, frontend_revision: `${info.size}:${info.mtimeMs}:${info.ctimeMs}` });
+        const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
+        res.setHeader('Cache-Control', 'private, no-cache');
+        res.setHeader('ETag', etag);
+        if (req.headers['if-none-match'] === etag) { res.writeHead(304).end(); return; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ schema_version: 'native-1', ...current,
-          translations, entry: `${origin}/${assetToken}/index.js`, frontend_revision: `${info.size}:${info.mtimeMs}:${info.ctimeMs}` }));
+        res.end(req.method === 'HEAD' ? undefined : body);
         return;
       }
       const prefix = `/${assetToken}/`;
