@@ -28,6 +28,16 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   const binding = await readLocal('project.json');
   const identity = await readLocal('app.json');
   const scope = { endpoint: config.endpoint, project_id: binding.project_id, app_id: identity.id };
+  function preparationFailure(operation) {
+    const retryable = operation.status === 'failed' && (!operation.started_at || operation.retry_allowed === true);
+    const next = retryable
+      ? 'Fix the reported error, wait for shutdown to finish, then restart nexia dev in the same project folder.'
+      : 'This operation requires operator review before retrying; preparation may have changed data. Share this operation ID with developer support.';
+    const consoleUrl = new URL(`/projects/${scope.project_id}/development#project-apps`, config.endpoint);
+    return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}. ${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
+      code: retryable ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED',
+    });
+  }
   if (!uuid(scope.project_id) || !uuid(scope.app_id) || binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint) throw new Error('App bindings do not match this platform. Run nexia login and project nexia dev.');
   const initialConnection = await request(config, 'connection');
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
@@ -133,7 +143,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           cancelled = operation.status === 'failed' && operation.stopped_at && selection.revision > (state.selection_revision ?? 0);
           if (writer && (operation.writer_generation ?? state.writer_generation) !== writer.generation) {
             const reviewed = operation.status === 'failed' && operation.stopped_at && operation.retry_allowed === true;
-            if (operation.status !== 'completed' && !cancelled && !reviewed && !(operation.status === 'failed' && !operation.started_at)) throw new Error('Previous preparation requires review before this new dev session can submit changes.');
+            if (operation.status !== 'completed' && !cancelled && !reviewed && !(operation.status === 'failed' && !operation.started_at)) throw preparationFailure(operation);
             // Recover the old outcome first, then pin current source for this writer.
             // Resubmitting the previous revision can repeat an already repaired failure.
             renewWriter = true;
@@ -142,7 +152,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           if (!state.operation_id) await persist({ ...state, operation_id: operation.id });
           candidateRuntime = operation.status === 'completed' && !operation.stop_requested_at && !operation.stopped_at
             ? { operation_id: operation.id, source_revision_id: operation.source_revision_id, app_id: scope.app_id, app_key: identity.key } : null;
-          const phase = operation.stopped_at ? 'stopped' : operation.stop_requested_at ? 'stopping' : operation.status;
+          const phase = ['failed', 'needs_review'].includes(operation.status) ? operation.status : operation.stopped_at ? 'stopped' : operation.stop_requested_at ? 'stopping' : operation.status;
           const status = `${operation.id}:${phase}`;
           if (lastStatus !== status) {
             log(['stopping', 'stopped'].includes(phase)
@@ -150,7 +160,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
               : `App preparation ${phase}: ${operation.id}${phase === 'completed' ? '\nRuntime preparation confirmed; this does not publish or install a release.' : ''}`);
             lastStatus = status;
           }
-          if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw new Error('App preparation failed or requires operator review. The request and data are retained; no automatic retry was started.');
+          if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw preparationFailure(operation);
           if (operation.stop_requested_at && !operation.stopped_at) {
             // Keep the same operation until the operator acknowledges shutdown.
             // Do not expose stopped authority or submit replacement work early.

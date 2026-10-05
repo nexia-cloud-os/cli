@@ -204,7 +204,7 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
   await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox, request_id: requestId, revision_id: revision, digest: 'a'.repeat(64), writer_generation: 1, selection_revision: 1 }));
   await writeFile(path.join(root, 'composer.json'), '{}');
   if (oldState === 'unreviewed') {
-    await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /Previous preparation requires review/);
+    await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /requires operator review/);
     assert.deepEqual(submissions, [requestId]);
     return;
   }
@@ -217,8 +217,8 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
   assert.equal(JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8')).writer_generation, 2);
 });
 
-for (const outcome of ['completed', 'failed', 'needs_review']) {
-  test(`native dev waits for acknowledged shutdown and preserves ${outcome} recovery rules`, async t => {
+for (const [outcome, started] of [['completed', true], ['failed', true], ['failed', false], ['needs_review', true]]) {
+  test(`native dev waits for acknowledged shutdown and preserves ${outcome} recovery rules (started: ${started})`, async t => {
     const root = await mkdtemp(path.join(tmpdir(), 'nexia-native-shutdown-'));
     const previousConfig = process.env.NEXIA_CONFIG_HOME;
     process.env.NEXIA_CONFIG_HOME = root;
@@ -246,6 +246,7 @@ for (const outcome of ['completed', 'failed', 'needs_review']) {
         assert.ok(operation);
         polls++;
         operation.status = outcome;
+        operation.started_at = started ? '2026-10-02T02:52:00Z' : null;
         if (operations.length === 1 && (polls >= 2 || outcome !== 'completed')) {
           operation.stop_requested_at = '2026-10-02T02:52:06Z'; pending = true;
           if (polls === 3) assert.equal(readPreview(), null, 'preview becomes unavailable while stopping');
@@ -280,7 +281,13 @@ for (const outcome of ['completed', 'failed', 'needs_review']) {
         assert.ok(operations[0].stopped_at);
         assert.notEqual(operations[0].request_id, operations[1].request_id);
       } else {
-        await assert.rejects(run, /requires operator review/);
+        await assert.rejects(run, error => {
+          assert.equal(error.code, outcome === 'failed' && !started ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED');
+          assert.match(error.message, new RegExp(`App preparation ${outcome}: ${operations[0].id}`));
+          assert.ok(error.message.includes(`/projects/${project}/development#project-apps`));
+          assert.match(error.message, outcome === 'failed' && !started ? /restart nexia dev/ : /requires operator review/);
+          return true;
+        });
         assert.equal(operations.length, 1, 'uncertain failures never retry automatically');
       }
     } finally { clearTimeout(deadline); }

@@ -89,7 +89,7 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
           workers.set(app.directory, worker);
           worker.done = nativeDev(app.directory, { signal: controller.signal, previewHost: preview, interval: 10000,
             log: message => log(`${app.name}: ${message}`),
-          }).catch(error => report(app.directory, `${app.name}: ${error.message} Remove and restore the folder, or restart dev after resolving it.`));
+          }).catch(error => report(app.directory, `${app.name}: [${error.code || 'APP_DEVELOPMENT_FAILED'}] ${error.message}\nKeep the App folder and .nexia state. Resolve the error before restarting dev.\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`));
         } catch (error) {
           report(app.directory, `${app.name}: ${error.message}`);
           if (error.status === 429) nextRegistration = Date.now() + error.retryAfterMs;

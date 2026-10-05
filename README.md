@@ -194,5 +194,14 @@ installer is for CLI consumers, not the Core production host. No global alias or
 global Composer change is required.
 Never point it at a script inside the App being generated/checked.
 
+## Troubleshooting
+
+Find the exact terminal error in the [CLI troubleshooting guide](https://developers.nexia.to/docs/troubleshooting-common-installation-errors).
+It covers setup, project bindings, Vite/source uploads, HTTP errors, preparation,
+database requests, and submissions. `APP_PREPARATION_FAILED` identifies failures
+that never started or have an approved safe retry; `APP_PREPARATION_REVIEW_REQUIRED`
+requires an operator to verify the outcome. Keep the printed operation ID and
+`.nexia` recovery state. Do not remove and restore App folders to bypass a failure.
+
 Developer support: https://github.com/nexia-cloud-os/developer-support/issues.
 Include sanitized reproduction and package versions, never credentials or data.

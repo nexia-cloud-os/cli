@@ -232,6 +232,6 @@ try {
 } catch (error) {
   const code = error.code || (error.status ? 'PLATFORM_ERROR' : 'OPERATION_FAILED');
   if (parsed?.options.json || process.argv.includes('--json')) console.log(JSON.stringify({ error: { code, message: error.message } }));
-  else console.error(`Nexia [${code}]: ${error.message}`);
+  else console.error(`Nexia [${code}]: ${error.message}\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`);
   process.exitCode = error.exitCode || 1;
 } finally { input?.close(); }
