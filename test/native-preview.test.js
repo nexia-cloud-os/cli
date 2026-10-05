@@ -30,6 +30,20 @@ test('native preview exposes only compiled assets through a workspace-issued cap
     assert.equal((await get(`${server.url}/__nexia_native`, 'null')).status, 403);
     const manifest = await get(`${server.url}/__nexia_native`, workspaceOrigin);
     assert.equal(manifest.status, 200);
+    const etag = manifest.headers.get('etag');
+    assert.ok(etag);
+    assert.equal(manifest.headers.get('cache-control'), 'private, no-cache');
+    const revalidate = () => fetch(`${server.url}/__nexia_native`, {
+      headers: { Origin: workspaceOrigin, 'If-None-Match': etag },
+    });
+    const unchanged = await revalidate();
+    assert.equal(unchanged.status, 304);
+    assert.equal(await unchanged.text(), '');
+    await writeFile(path.join(root, 'resources/lang/en.json'), JSON.stringify({ 'trial.title': 'Updated' }));
+    const changed = await revalidate();
+    assert.equal(changed.status, 200);
+    assert.notEqual(changed.headers.get('etag'), etag);
+    assert.equal((await changed.json()).translations.en['trial.title'], 'Updated');
     const data = await manifest.json();
     assert.equal(data.operation_id, 'operation');
     assert.deepEqual(data.translations.en, { 'trial.title': 'Trial' });
@@ -44,6 +58,7 @@ test('native preview exposes only compiled assets through a workspace-issued cap
       assert.equal((await get(data.entry.replace('index.js', name), workspaceOrigin)).status, 404);
     }
     current = { mode: 'off' };
+    assert.equal((await revalidate()).status, 423);
     assert.equal((await get(`${server.url}/__nexia_native`, 'null')).status, 403);
     assert.equal((await get(`${server.url}/__nexia_native`, workspaceOrigin)).status, 423);
     current = null;
