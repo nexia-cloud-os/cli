@@ -168,7 +168,7 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
   const oldStatus = ['reviewed', 'unreviewed'].includes(oldState) ? 'failed' : oldState;
   const project = randomUUID(), app = randomUUID(), sandbox = randomUUID(), revision = randomUUID(), currentRevision = randomUUID(), requestId = randomUUID();
   const abort = new AbortController(), submissions = [];
-  let session;
+  let session, unavailableLease = oldState === 'completed';
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const input = raw ? JSON.parse(raw) : null;
@@ -181,6 +181,11 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
     else if (req.url.endsWith('/writer')) {
       session ??= input.session_id;
       assert.equal(input.session_id, session);
+      if (unavailableLease) {
+        unavailableLease = false;
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'Deployment maintenance' })); return;
+      }
       payload = { writer: { app_id: app, sandbox_id: sandbox, generation: 2 } };
     } else if (req.url.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
     else {
