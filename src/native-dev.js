@@ -76,13 +76,12 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
         }
         if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
-          readPhase = false;
+          // The same session can safely renew its lease after a lost response.
           const response = await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession } });
           if (response.writer?.app_id !== scope.app_id || response.writer.sandbox_id !== scope.sandbox_id
             || !Number.isSafeInteger(response.writer.generation) || response.writer.generation < 1) throw new Error('Invalid development writer lease.');
           writer = response.writer;
           writerCheckedAt = Date.now();
-          readPhase = true;
         }
         if (!connectionChecked) {
           const connection = await request(config, 'connection');
@@ -195,7 +194,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         if (readPhase && (error.name === 'TimeoutError' || [502, 503, 504].includes(error.status)
           || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(error.cause?.code))) {
           browserRuntime = null;
-          log('Platform temporarily unavailable; retrying the status read. Source and pending requests retained.');
+          log('Platform temporarily unavailable; retrying the connection or status check. Source and pending requests retained.');
           await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
