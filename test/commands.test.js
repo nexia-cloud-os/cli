@@ -3,6 +3,24 @@ import assert from 'node:assert/strict';
 import { parseCommand, helpText } from '../src/commands.js';
 import { createInput, Cancelled } from '../src/input.js';
 import { generatorArguments } from '../src/scaffold.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+
+test('command errors link to troubleshooting without corrupting JSON output', async () => {
+  const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+  for (const json of [false, true]) {
+    await assert.rejects(promisify(execFile)(process.execPath, [cli, 'unknown-command', ...(json ? ['--json'] : [])]), error => {
+      if (json) {
+        assert.ok(JSON.parse(error.stdout).error.message);
+        assert.equal(error.stderr, '');
+      } else {
+        assert.match(error.stderr, /Troubleshooting: https:\/\/developers.nexia.to\/docs\/troubleshooting-common-installation-errors/);
+      }
+      return true;
+    });
+  }
+});
 
 test('public commands have no retired aliases and reject unsupported or contradictory options', () => {
   for (const name of ['constructor', 'toString', '__proto__', 'init', 'create-project', 'link-project', 'link', 'validate', 'make:resource', 'make:page', 'sync', 'mcp', 'fixtures', 'resources', 'app', 'apps', 'config', 'doctor', 'deploy', 'submissions']) assert.throws(() => parseCommand([name]));
