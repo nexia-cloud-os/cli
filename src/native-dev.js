@@ -64,7 +64,6 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   let preview, build, browserRuntime = null;
   try {
     while (!signal?.aborted) {
-      let readPhase = true;
       try {
         build?.check();
         const selected = await readConnection();
@@ -123,7 +122,6 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         let renewWriter = false;
         if (state) {
           let result;
-          readPhase = Boolean(state.operation_id);
           try {
             result = state.operation_id
               ? await request(config, `v2/runtime-operations/${state.operation_id}`)
@@ -173,7 +171,6 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           const snapshot = await sourceSnapshot(directory);
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { browserRuntime = null; continue; }
           if (!state || snapshot.digest !== state.digest || operation?.stopped_at || renewWriter) {
-            readPhase = false;
             const { revision } = await syncSource(directory, { log: () => {}, config, scope });
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.
             browserRuntime = null;
@@ -191,10 +188,12 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
-        if (readPhase && (error.name === 'TimeoutError' || [502, 503, 504].includes(error.status)
-          || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(error.cause?.code))) {
+        // Source snapshots are immutable; preparation retries retain their persisted request ID.
+        if (error.name === 'TimeoutError' || [502, 503, 504].includes(error.status)
+          || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(error.cause?.code)) {
           browserRuntime = null;
-          log('Platform temporarily unavailable; retrying the connection or status check. Source and pending requests retained.');
+          const reason = error.status ? `HTTP ${error.status}` : error.name === 'TimeoutError' ? 'timeout' : 'connection interrupted';
+          log(`Platform temporarily unavailable (${error.platformRequest ?? 'development request'}: ${reason}); retrying. Source and pending requests retained.`);
           await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
