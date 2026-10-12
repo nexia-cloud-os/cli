@@ -109,7 +109,10 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
   await writeFile(path.join(root, 'composer.json'), '{}');
   await writeFile(path.join(root, '.env'), 'secret-must-not-leave');
-  await assert.rejects(nativeDev(root, { port: 0, log: () => {} }), /fetch failed/);
+  const interrupted = new AbortController();
+  await nativeDev(root, { port: 0, interval: 1, signal: interrupted.signal, log: message => {
+    if (message.includes('temporarily unavailable')) interrupted.abort();
+  } });
   const pending = JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8'));
   assert.equal(pending.request_id, submissions[0]);
   assert.equal(pending.operation_id, undefined);
@@ -298,3 +301,70 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
     } finally { clearTimeout(deadline); }
   });
 }
+
+test('stopped execution recovers source and ambiguous preparation timeouts without restarting or duplicating work', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-native-timeout-'));
+  const previousConfig = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  t.after(async () => {
+    if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
+    await rm(root, { recursive: true, force: true });
+  });
+  const endpoint = 'http://platform.localhost:8080';
+  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
+  const oldRevision = randomUUID(), revision = randomUUID(), requestId = randomUUID(), oldOperation = randomUUID();
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-secret' }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+  await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox,
+    request_id: requestId, revision_id: oldRevision, operation_id: oldOperation, digest: 'a'.repeat(64), writer_generation: 1 }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  let sourceCalls = 0, operation, writerSession;
+  const submissions = [], messages = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const route = new URL(url).pathname;
+    const input = options.body ? JSON.parse(options.body) : null;
+    let payload;
+    if (route.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { runtime_writers: true },
+      sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (route.endsWith('/writer')) {
+      writerSession ??= input.session_id;
+      assert.equal(input.session_id, writerSession);
+      payload = { writer: { app_id: app, sandbox_id: sandbox, generation: 2 } };
+    } else if (route.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+    else if (route.endsWith(oldOperation)) payload = { operation: { id: oldOperation, request_id: requestId, source_revision_id: oldRevision,
+      developer_project_id: project, developer_sandbox_id: sandbox, writer_generation: 1, status: 'completed', stopped_at: '2026-10-12T01:02:45Z' } };
+    else if (route.endsWith('/v2/sources')) {
+      if (++sourceCalls === 1) throw new DOMException('Timed out', 'TimeoutError');
+      payload = { revision: { id: revision, digest: input.source.digest, file_count: input.source.files.length } };
+    } else {
+      assert.equal(route, '/developer-api/v2/runtime-operations');
+      assert.equal(options.method, 'POST');
+      submissions.push(input);
+      operation ??= { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
+        developer_project_id: project, developer_sandbox_id: sandbox, writer_generation: 2, status: 'queued' };
+      if (submissions.length === 1) {
+        await writeFile(path.join(root, 'composer.json'), '{"description":"changed during uncertain preparation"}');
+        throw new DOMException('Response lost after acceptance', 'TimeoutError');
+      }
+      payload = { operation };
+    }
+    return new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const shutdown = new AbortController();
+  const deadline = setTimeout(() => shutdown.abort(), 5000);
+  try {
+    await nativeDev(root, { port: 0, interval: 1, signal: shutdown.signal, log: message => {
+      messages.push(message);
+      if (message.includes('preparation queued')) shutdown.abort();
+    } });
+  } finally { clearTimeout(deadline); }
+  assert.equal(sourceCalls, 2, 'pending preparation is recovered before syncing further edits');
+  assert.equal(submissions.length, 2);
+  assert.deepEqual(submissions[0], submissions[1], 'ambiguous acceptance reuses the entire preparation request');
+  assert.equal(JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8')).operation_id, operation.id);
+  assert.ok(messages.some(message => message.includes('POST /developer-api/v2/sources: timeout')));
+  assert.ok(messages.some(message => message.includes('POST /developer-api/v2/runtime-operations: timeout')));
+  assert.doesNotMatch(messages.join('\n'), /test-secret/);
+});

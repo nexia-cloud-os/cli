@@ -43,15 +43,27 @@ export async function request(config, route, { method = 'GET', body, authenticat
   // Immutable source snapshots can carry 24 MiB of JSON over local container
   // forwarding. This upload deadline does not extend runtime authority leases.
   const timeout = method === 'POST' && route === 'v2/sources' ? 120_000 : 30_000;
-  const response = await fetch(`${endpoint}/developer-api/${route}`, {
-    method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...(authenticated ? { Authorization: `Bearer ${config.token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(timeout),
-  });
-  if (response.status === 204) return null;
-  const payload = await response.json().catch(() => ({}));
+  const signal = AbortSignal.timeout(timeout);
+  let response, payload;
+  try {
+    response = await fetch(`${endpoint}/developer-api/${route}`, {
+      method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...(authenticated ? { Authorization: `Bearer ${config.token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined, redirect: 'error', signal,
+    });
+    if (response.status === 204) return null;
+    payload = await response.json().catch(error => {
+      if (error instanceof SyntaxError) return {};
+      throw error;
+    });
+  } catch (error) {
+    if (signal.aborted) error = signal.reason;
+    error.platformRequest = `${method} /developer-api/${route}`;
+    throw error;
+  }
   if (!response.ok) {
     const error = new Error(`Platform HTTP ${response.status}: ${Object.values(payload.errors || {}).flat().join(' ') || payload.message || response.statusText}`);
     error.status = response.status;
+    error.platformRequest = `${method} /developer-api/${route}`;
     error.platformStatus = payload.status;
     if (response.status === 429) {
       const retryAfter = response.headers.get('retry-after');
