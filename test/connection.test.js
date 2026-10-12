@@ -117,3 +117,25 @@ test('source uploads survive a slow response without extending runtime request d
   assert.deepEqual(await request(config, 'v2/sources', { method: 'POST', body: {} }), { accepted: true });
   await assert.rejects(request(config, 'v2/runtime-operations', { method: 'POST', body: {} }), { name: 'TimeoutError' });
 });
+
+test('a timed-out response body retains its timeout and safe request identity', async t => {
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', () => realTimeout(5));
+  t.mock.method(globalThis, 'fetch', async (_url, { signal }) => ({
+    status: 200,
+    json: () => new Promise((_, reject) => {
+      const abort = () => reject(new DOMException('Aborted response body', 'AbortError'));
+      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    }),
+  }));
+  // Timeout signals are unref'ed; keep the test alive while the response is pending.
+  const alive = setTimeout(() => {}, 1000);
+  try {
+    await assert.rejects(request({ endpoint: 'http://platform.localhost:8080', token: 'test-secret' }, 'v2/sources', { method: 'POST', body: {} }), error => {
+      assert.equal(error.name, 'TimeoutError');
+      assert.equal(error.platformRequest, 'POST /developer-api/v2/sources');
+      assert.doesNotMatch(error.message, /test-secret/);
+      return true;
+    });
+  } finally { clearTimeout(alive); }
+});

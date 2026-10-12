@@ -203,5 +203,11 @@ that never started or have an approved safe retry; `APP_PREPARATION_REVIEW_REQUI
 requires an operator to verify the outcome. Keep the printed operation ID and
 `.nexia` recovery state. Do not remove and restore App folders to bypass a failure.
 
+`dev` retries temporary connection failures, timeouts and HTTP 502/503/504 while
+synchronizing source or recovering a preparation. An uncertain preparation keeps
+its original request ID, including when local files change. Retry messages name
+the affected request; keep `.nexia` and let the existing process recover.
+Authorization failures and preparations requiring operator review still stop.
+
 Developer support: https://github.com/nexia-cloud-os/developer-support/issues.
 Include sanitized reproduction and package versions, never credentials or data.
