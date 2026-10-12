@@ -127,6 +127,11 @@ export async function nativeDev(directory, { signal, log = console.log, interval
               ? await request(config, `v2/runtime-operations/${state.operation_id}`)
               : await request(config, 'v2/runtime-operations', { method: 'POST', body: { source_revision_id: state.revision_id, request_id: state.request_id, ...(writer ? { writer_session: writerSession } : {}) } });
           } catch (error) {
+            if (error.status === 410 && error.platformStatus === 'source_expired' && !state.operation_id) {
+              // The server rejected an unbound, expired source; no operation was admitted.
+              state = null;
+              continue;
+            }
             // Another terminal can select off after this loop read the selection.
             // Preserve the same pending request; only an observed off choice permits waiting.
             if (error.status === 409 && (await readExecutionSelection(config, scope)).mode === 'off') continue;
