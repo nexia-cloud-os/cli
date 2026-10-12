@@ -1,5 +1,15 @@
 # Nexia CLI
 
+During development, the platform automatically cleans up unused old source
+bodies while preserving current execution and required recovery sources. The
+Developers project development page shows your sandbox's source usage and
+provides **Clean up old sources**. Cleanup does not delete local files,
+sandbox data, or published versions.
+
+If an interrupted upload's source has expired before runtime preparation,
+`nexia dev` re-uploads the local source and continues. Requests already
+accepted by the platform keep their original operation and recovery identity.
+
 Public PHP/React App development tools for Node.js 22.12+ (npm 11.x), PHP 8.4+
 and Composer. This command interface is a breaking change: old spellings are
 rejected, not hidden aliases. Platform authentication, resource generation,

@@ -10,6 +10,82 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { nativeDev } from '../src/native-dev.js';
 
+for (const expired of [true, false]) {
+  test(`native dev ${expired ? 'reuploads an expired unbound source' : 'preserves a pending request on an unrelated 410'}`, async t => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nexia-source-retention-'));
+    const previousConfig = process.env.NEXIA_CONFIG_HOME;
+    process.env.NEXIA_CONFIG_HOME = directory;
+    const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
+    const oldRevision = randomUUID(), oldRequest = randomUUID(), restoredRevision = randomUUID();
+    const submissions = [];
+    let uploads = 0;
+    const shutdown = new AbortController();
+    const server = createServer(async (req, res) => {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const input = raw ? JSON.parse(raw) : null;
+      let payload;
+      if (req.url.endsWith('/connection')) {
+        payload = { status: 'connected', project: { id: project }, sandbox: { id: sandbox, status: 'active',
+          workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+      } else if (req.url.endsWith('/execution')) {
+        payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+      } else if (req.url.endsWith('/v2/sources')) {
+        uploads++;
+        assert.equal(submissions.length, 1, 'resolve the old request before changing source');
+        payload = { revision: { id: restoredRevision, digest: input.source.digest, file_count: input.source.files.length } };
+      } else if (req.url.endsWith('/v2/runtime-operations') && req.method === 'POST') {
+        submissions.push(input);
+        if (input.request_id === oldRequest) {
+          res.writeHead(410, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: expired ? 'source_expired' : 'endpoint_retired', message: 'Gone' }));
+          return;
+        }
+        assert.equal(input.source_revision_id, restoredRevision);
+        payload = { operation: { id: randomUUID(), request_id: input.request_id, source_revision_id: restoredRevision,
+          developer_project_id: project, developer_sandbox_id: sandbox, status: 'queued' } };
+      } else {
+        res.writeHead(404); res.end('{}'); return;
+      }
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(payload));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    t.after(async () => {
+      server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+      if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
+      await rm(directory, { recursive: true, force: true });
+    });
+    await mkdir(path.join(directory, '.nexia'));
+    await writeFile(path.join(directory, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+    await writeFile(path.join(directory, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+    await writeFile(path.join(directory, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+    await writeFile(path.join(directory, 'composer.json'), '{}');
+    await writeFile(path.join(directory, '.nexia/runtime.json'), JSON.stringify({
+      endpoint, project_id: project, app_id: app, sandbox_id: sandbox,
+      request_id: oldRequest, revision_id: oldRevision, digest: 'a'.repeat(64), selection_revision: 1,
+    }));
+    const deadline = setTimeout(() => shutdown.abort(), 3000);
+    try {
+      const run = nativeDev(directory, { port: 0, interval: 1, signal: shutdown.signal,
+        log: message => { if (message.includes('preparation queued')) shutdown.abort(); } });
+      if (expired) await run;
+      else await assert.rejects(run, /HTTP 410/);
+    } finally { clearTimeout(deadline); }
+    const saved = JSON.parse(await readFile(path.join(directory, '.nexia/runtime.json'), 'utf8'));
+    assert.equal(uploads, expired ? 1 : 0);
+    assert.equal(submissions.length, expired ? 2 : 1);
+    if (expired) {
+      assert.notEqual(saved.request_id, oldRequest);
+      assert.equal(saved.revision_id, restoredRevision);
+      assert.ok(saved.operation_id);
+    } else {
+      assert.equal(saved.request_id, oldRequest);
+      assert.equal(saved.revision_id, oldRevision);
+    }
+  });
+}
+
 test('native dev rejects an App rebind during a connection request before uploading source', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-native-rebind-'));
   const project = randomUUID(), app = randomUUID();
