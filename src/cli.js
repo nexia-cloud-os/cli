@@ -6,6 +6,8 @@ import { setup } from './setup.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
+import { selectDevApps } from './dev-selection.js';
+import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
 import { nativeDev } from './native-dev.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
@@ -16,6 +18,12 @@ import { appTargets, appPlan, generatorPlan, generatorArguments, planSummary, fi
 const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 const log = value => console.error(value);
 const output = (options, data, text) => console.log(options.json ? JSON.stringify(data) : text);
+const formatAppStatus = apps => ['APP\tGIT\tGIT TAG (LAST CHECK)\tSUBMITTED TAG\tPUBLISHED\tDEPLOYED', ...(apps ?? []).map(app => {
+  const state = app.release_status;
+  return [app.key, state?.git_status ?? 'unknown', state?.git_tag ?? state?.git_tag_status ?? 'unknown', state?.submitted_tag ?? '—', state?.published_version ?? '—', state?.deployed_version ?? '—'].join('\t')
+    + (state?.git_tag_checked_at ? `\n  Git checked: ${state.git_tag_checked_at}` : '')
+    + (state?.deployment_environment ? `\n  Deployment: ${state.deployment_environment} (${state.deployment_status ?? 'unknown'})` : '');
+})].join('\n');
 
 async function readBinding(directory, name) {
   const folder = path.join(directory, '.nexia'), file = path.join(folder, name);
@@ -145,11 +153,24 @@ try {
     } else if (name === 'status') {
       const workspace = await findWorkspace(process.cwd()), currentApp = await findApp(), config = await readConnection();
       const connection = config.token ? await request(config, 'connection') : null;
-      const data = { authenticated: connection?.status === 'connected', endpoint: config.endpoint, project: connection?.project || null,
+      const appStatus = connection?.status === 'connected' && (!workspace || (workspace.project_id === connection.project?.id && workspace.endpoint === config.endpoint))
+        ? await request(config, 'apps') : { apps: [] };
+      const data = { apps: appStatus.apps, authenticated: connection?.status === 'connected', endpoint: config.endpoint, project: connection?.project || null,
         folder: workspace ? { root: workspace.root, project_id: workspace.project_id } : null, app: currentApp,
         matches_folder: workspace ? connection?.project?.id === workspace.project_id && config.endpoint === workspace.endpoint : null,
         sandbox: connection?.sandbox ? { id: connection.sandbox.id, status: connection.sandbox.status } : null };
-      output(options, data, `${data.authenticated ? 'Authenticated' : 'Not authenticated — run nexia login'}\nPlatform: ${data.endpoint}\nProject: ${data.project?.name || '—'}\nFolder: ${workspace?.root || 'Not connected — run nexia connect'}\nApp: ${currentApp || '—'}\nSandbox: ${data.sandbox?.status || '—'}${data.matches_folder === false ? '\nFolder and login differ. Run nexia login from this project.' : ''}`);
+      output(options, data, `${data.authenticated ? 'Authenticated' : 'Not authenticated — run nexia login'}\nPlatform: ${data.endpoint}\nProject: ${data.project?.name || '—'}\nFolder: ${workspace?.root || 'Not connected — run nexia connect'}\nApp: ${currentApp || '—'}\nSandbox: ${data.sandbox?.status || '—'}${data.matches_folder === false ? '\nFolder and login differ. Run nexia login from this project.' : ''}\n${formatAppStatus(data.apps)}\nLocal sessions and ports: nexia ps`);
+    } else if (name === 'ps' || name === 'stop') {
+      const workspace = await findWorkspace(process.cwd());
+      const root = workspace?.root || await findApp();
+      if (!root) throw new InputError('Run this command from the project or App folder used for nexia dev.');
+      const port = options.port === undefined ? undefined : Number(options.port);
+      if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new InputError('--port must be an integer from 1 to 65535.');
+      const sessions = name === 'stop' ? await stopDevSessions(root, port) : await listDevSessions(root);
+      output(options, { root, sessions }, name === 'ps' ? formatSessions(sessions) : sessions.length
+        ? sessions.map(session => `${session.port}: ${session.status}`).join('\n') + '\nOnly local development stops; sandbox data is retained.'
+        : 'No tracked local development sessions found. Older CLI sessions require Ctrl+C or manual port inspection.');
+      if (name === 'stop' && sessions.some(session => session.status === 'unreachable')) process.exitCode = 1;
     } else if (name === 'check') {
       const targets = await appTargets(options, input, { all: true });
       input.close();
@@ -168,19 +189,22 @@ try {
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new InputError('--port must be an integer from 1 to 65535.');
       const directory = workspace ? workspace.root : await findApp();
       if (!directory) throw new InputError('Run nexia connect from your project folder, then nexia dev.');
+      let selectedApps;
       if (workspace) {
         const { apps, errors } = await discoverApps(workspace.root);
-        if (options.app && apps.filter(app => app.key === options.app || app.name === options.app).length !== 1) throw new InputError(`Choose one App with --app. Available: ${apps.map(app => app.name).join(', ')}`);
-        log(`Project development: ${workspace.root}\nScope: ${options.app || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
+        selectedApps = await selectDevApps(apps, options.app, input);
+        log(`Project development: ${workspace.root}\nScope: ${selectedApps?.join(', ') || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
         for (const error of errors) log(`${error.directory}: ${error.message}`);
       }
       input.close();
       const shutdown = new AbortController(), stop = () => shutdown.abort();
       process.once('SIGINT', stop); process.once('SIGTERM', stop);
+      let session;
       try {
-        const devOptions = { signal: shutdown.signal, port, container: options.container === true, app: options.app };
+        session = await startDevSession(directory, { port, projectId: workspace?.project_id, stop });
+        const devOptions = { signal: shutdown.signal, port, container: options.container === true, app: selectedApps, onStatus: value => session.update(value) };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
-      } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+      } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
     } else if (name.startsWith('db ')) {
       const action = name.split(' ')[1], [directory] = await appTargets(options, input);
       const binding = await databaseBinding(directory), route = `v2/apps/${binding.app.id}/database-operations`;

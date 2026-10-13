@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { retryDevRead } from './dev-retry.js';
+import { MAX_DEV_APPS, filterDevApps } from './dev-selection.js';
 import { lstat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
@@ -10,9 +12,15 @@ import { startNativePreview } from './native-preview.js';
 
 const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 
-export async function workspaceDev(workspace, { signal, port = 4310, container = false, app: selector, log = console.log } = {}) {
+export async function workspaceDev(workspace, { signal, port = 4310, container = false, app: selector, log = console.log, onStatus = () => {} } = {}) {
   const config = await readConnection();
-  let connection = await request(config, 'connection');
+  const readStatus = () => retryDevRead(async () => {
+    const current = await readConnection();
+    if (current.token !== config.token || current.endpoint !== config.endpoint) throw new Error('Login changed. Restart nexia dev.');
+    return request(config, 'connection');
+  }, { signal, log });
+  let connection = await readStatus();
+  if (!connection) return;
   if (config.endpoint !== workspace.endpoint || connection.status !== 'connected' || connection.project?.id !== workspace.project_id) {
     throw new Error('Log in to the project linked to this folder before starting dev.');
   }
@@ -33,7 +41,8 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
     if (signal?.aborted) return;
     const selected = await readConnection();
     if (selected.token !== config.token || selected.endpoint !== config.endpoint) throw new Error('Login changed during sandbox preparation.');
-    connection = await request(config, 'connection');
+    connection = await readStatus();
+    if (!connection) return;
   }
   if (connection.sandbox?.status !== 'active') throw new Error('Your sandbox needs attention. Open the developer console to renew or recover it; data was retained.');
   const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
@@ -41,6 +50,7 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
   if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
   const preview = await startNativePreview(null, { workspaceOrigin, port, container, apps: new Map() });
   launch.searchParams.set('preview', preview.url);
+  onStatus({ status: 'watching', workspace_url: launch.href });
   log(`Project: ${connection.project.name}\nNexia workspace: ${launch.href}\nWatching App folders. Create or clone Apps here; Ctrl+C stops local development without deleting data.`);
   const workers = new Map(), messages = new Map(), retryAt = new Map();
   const report = (key, message) => { if (messages.get(key) !== message) { messages.set(key, message); log(message); } };
@@ -53,8 +63,8 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
       }
       const discovered = await discoverApps(workspace.root);
       for (const error of discovered.errors) report(error.directory, `${path.basename(error.directory)}: ${error.message}`);
-      const apps = discovered.apps.filter(app => !selector || app.name === selector || app.key === selector);
-      if (apps.length > 20) throw new Error('A project development connection supports at most 20 local Apps. Use --app to select one.');
+      const apps = filterDevApps(discovered.apps, selector);
+      if (apps.length > MAX_DEV_APPS) throw new Error(`A project development connection supports at most ${MAX_DEV_APPS} local Apps. Restart dev to select Apps, or repeat --app.`);
       if (selector && apps.length === 0) report('selection', `Waiting for App ${selector}.`);
       for (const [directory, worker] of workers) {
         if (!apps.some(app => app.directory === directory && app.key === worker.key)) {
