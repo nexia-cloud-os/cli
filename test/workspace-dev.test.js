@@ -80,6 +80,7 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
     assert.fail(messages.join('\n'));
   };
   const first = await waitForApps(1);
+  assert.ok(messages.some(message => message.includes(`Local App address (copy): ${url}`) || message.includes(`로컬 앱 주소 (복사용): ${url}`)), 'print the actual listening address separately, including dynamically assigned ports');
   await addApp('payroll');
   const second = await waitForApps(2);
   assert.equal(second.apps[0].app_id, first.apps[0].app_id);

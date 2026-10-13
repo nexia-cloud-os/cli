@@ -3,10 +3,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
 import { setup } from './setup.js';
+import { updateCli } from './update.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
-import { selectDevApps } from './dev-selection.js';
+import { configuredDevApps, configureDevApps } from './dev-selection.js';
 import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
 import { nativeDev } from './native-dev.js';
@@ -77,7 +78,10 @@ try {
   parsed = parseCommand(process.argv.slice(2));
   let { name, argument, options } = parsed;
   if (options.version) { const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')); console.log(pkg.version); }
-  else if (options.help || !name) console.log(helpText(name, language));
+  else if (options.help || !name) {
+    input = createInput(options);
+    if (options.help || !await updateCli(input, options, { automatic: true })) console.log(helpText(name, language));
+  }
   else {
     input = createInput(options);
     if (groups[name]) {
@@ -85,7 +89,11 @@ try {
       name += ` ${child}`;
       validateOptions(name, options);
     }
-    if (name === 'setup') {
+    if (name === 'update') {
+      await updateCli(input, options);
+    } else if (await updateCli(input, options, { automatic: true })) {
+      // Restart explicitly so the requested operation never runs with the old loaded modules.
+    } else if (name === 'setup') {
       const generatorsOnly = await input.boolean('devtools', message('Install App generators only? Choose No to also install/upgrade PHP and Composer (macOS).', '앱 생성 도구만 설치할까요? 아니요를 선택하면 PHP·Composer도 설치/업그레이드합니다 (macOS).'), false);
       if (!generatorsOnly && process.platform !== 'darwin') throw new InputError('Automatic system installation supports macOS only. Install PHP 8.4+ and Composer, then run nexia setup --devtools.');
       await input.confirm(generatorsOnly ? 'Install/update managed PHP App generators.' : 'Install/upgrade Homebrew PHP and Composer, then install/update managed App generators. Existing runtime versions may change.');
@@ -182,6 +190,12 @@ try {
       }
       if (failed) throw new Error('One or more App checks failed. See the results above.');
       console.log('Source checks passed. Runtime behavior, review and production deployment were not verified.');
+    } else if (name === 'dev config') {
+      const workspace = await findWorkspace(process.cwd());
+      if (!workspace) throw new InputError('Run nexia dev config inside a connected project.');
+      const { apps, errors } = await discoverApps(workspace.root);
+      for (const error of errors) log(`${error.directory}: ${error.message}`);
+      await configureDevApps(workspace, apps, options.app, input);
     } else if (name === 'dev') {
       const workspace = await findWorkspace(process.cwd());
       if (options.app && !workspace) throw new InputError('--app requires a connected project.');
@@ -192,7 +206,7 @@ try {
       let selectedApps;
       if (workspace) {
         const { apps, errors } = await discoverApps(workspace.root);
-        selectedApps = await selectDevApps(apps, options.app, input);
+        selectedApps = await configuredDevApps(workspace, apps, options.app, input);
         log(`Project development: ${workspace.root}\nScope: ${selectedApps?.join(', ') || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
         for (const error of errors) log(`${error.directory}: ${error.message}`);
       }

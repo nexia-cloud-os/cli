@@ -47,12 +47,14 @@ an App repository. Project/App instructions are created without overwriting your
 
 | Command | Purpose |
 | --- | --- |
+| `update` | Check and install the newer alpha CLI release |
 | `setup` | Prepare environment and generators |
 | `create [project\|app]` | Select a creation task; optionally supply the new folder |
 | `connect [project-id]` | Authenticate and bind the current project folder |
 | `login [project-id]` | Authenticate/re-authenticate without changing folder bindings |
 | `logout` | Revoke authentication; retain bindings and data |
 | `make [resource\|page]` | Select generated code; optionally supply its PascalCase name |
+| `dev config` | Config Apps: save the project’s default development Apps |
 | `dev` | Select up to 20 project Apps on one preview connection |
 | `check` | Inspect App source; no remote runtime verification |
 | `status` | Inspect authentication, project, folder and sandbox |
@@ -62,6 +64,26 @@ an App repository. Project/App instructions are created without overwriting your
 | `submit` | Submit an existing Git version tag for review |
 | `submit status\|cancel\|retry [id]` | Inspect or manage an identified submission |
 | `help [command]`, `--version` | Help and installed CLI version |
+
+## CLI updates
+
+Run `nexia update` to check the npm alpha channel and confirm an update.
+`nexia update --dry-run` shows the available update without installing it;
+`nexia update --no-interactive --yes` explicitly authorizes installation in automation.
+The installer verifies that this CLI belongs to the active npm global installation,
+installs the exact version shown, and asks you to rerun your original command.
+It does not rerun business operations automatically or use sudo.
+For other package managers, source checkouts, or Windows, use your original
+installation method; npm users can always run `npm install -g @nexia/cli@alpha`.
+
+Interactive commands (including plain `nexia`) offer **Update now**, **Skip this
+time**, or **Remind me in 24 hours**. Registry checks have a two-second timeout
+and are cached for 24 hours in the CLI config directory (`update.json`, separate
+from authentication). Network/cache failures do not block ordinary commands.
+Skipping continues the original command; a failed installation stops it with an
+error. Help, version output, CI, non-TTY, `--json`, `--no-interactive`, `--yes`,
+`--dry-run`, and source checkouts do not trigger automatic checks or prompts.
+Explicit `nexia update` ignores the notification cache and reminder delay.
 
 ## Questions and options
 
@@ -113,10 +135,33 @@ multiple Apps exist. `create app` from an App creates a sibling in the project,
 never a nested App. `connect` must run at the project root, outside an App.
 
 `check` checks all Apps from the project root and only the current App from inside
-it. With multiple Apps, interactive `dev` from either location opens a picker:
+it. Interactive `dev` always opens a picker
+that uses the terminal height instead of a fixed eight-row window:
 use ↑/↓ to move, Space to toggle an App or **All Apps**, and Enter to start.
 Select 1–20 Apps. All Apps is unavailable when the project already has more than
-20 Apps. Ctrl+C cancels before connecting. A single App starts without a picker.
+20 Apps. Ctrl+C cancels before connecting. The picker is also shown for a single App.
+
+Run `nexia dev config` to save an App group. Enter saves; Ctrl+C leaves
+existing settings unchanged. Every interactive `nexia dev` still displays
+**All Apps**, **Config Apps**, and individual Apps. A valid Config group is
+checked by default; its members are checked and marked **(Config)** in the list.
+Add other Apps with Space. Members included by Config cannot be toggled
+individually until Config is unchecked, so the 20-App limit counts unique Apps.
+Unchecking Config retains additional manual choices. Selecting All Apps clears
+Config and manual selections; selecting an individual App then leaves All Apps
+mode and selects only that App. Enter starts the chosen scope.
+
+Reopen `nexia dev config` to edit the preselected group. The startup picker never
+rewrites it. Settings are local to `.nexia/dev.json`, scoped to platform/project.
+Missing or invalid Config settings disable that option while allowing manual
+selection; use `nexia dev config` to repair them. Explicit `--app` skips the
+picker for one run and never rewrites settings.
+
+```sh
+nexia dev config
+nexia dev
+nexia dev config --app people,payroll --no-interactive --yes
+```
 
 Use comma-separated names/keys or repeat `--app` to skip the picker:
 
@@ -126,12 +171,20 @@ nexia dev --app people --app time-absence --app payroll
 ```
 
 Non-interactive `dev` without `--app` retains all-App watching, up to 20 Apps;
-larger projects must supply repeated `--app` options. Other commands still accept
+larger projects must supply repeated `--app` options. `dev config` also accepts repeated `--app`; other commands accept
 only one `--app`. The default port is 4310 (`--port` to change it).
 `--container` supports container preview access. A project uses one preview port.
 In All Apps mode, new Apps join automatically up to the 20-App limit; restart
 and select Apps if the project exceeds it. Individual selections only watch the
 selected identities. Duplicate identities and symlink folders are not run.
+
+When `dev` first observes an App with development execution off, it requests
+one switch to development using the existing platform API. A pending switch
+waits for server-confirmed shutdown. Later Console stop decisions are respected;
+the watcher never repeatedly switches an App back on. A changed selection,
+permission failure, or uncertain response stops that App with its cause and a
+link to development settings; inspect the state before restarting. Automatic
+resume is a request, not proof that runtime preparation has completed.
 
 `dev` handles registration, sandbox preparation, immutable source snapshots and
 frontend watching. A snapshot is limited to 2000 files, 2 MiB/file, 16 MiB total;
@@ -265,3 +318,16 @@ latest submitted tag, published version and deployed version when the platform
 supports this metadata. Deployed means the current platform environment, not a
 tenant's installed version. Open the App's repository page in Console to refresh
 remote tags. Unknown or unchecked values are not inferred from published versions.
+
+## Terminal links
+
+`nexia ps` and `nexia dev` emit OSC 8 hyperlinks for workspace and development
+settings URLs in interactive terminals. `nexia dev` also prints the actual
+**Local App address (copy)** as plain text, including its listening port, on its own line at startup
+and in the development-off notice. Copy this address into the workspace’s local
+App address field; changing `--port` is reflected in that line. Recognized terminals show short labels;
+unknown terminals retain the full visible URL with the hyperlink destination.
+Piped output, CI, dumb terminals and Apple Terminal retain plain URLs. JSON
+session data keeps the original URL without escape sequences. Click gestures
+depend on the terminal (for example, Command-click in iTerm2); browser opening
+is always initiated by the user.

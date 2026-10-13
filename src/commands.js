@@ -1,5 +1,6 @@
 // Public command vocabulary. PHP generator command names remain implementation details.
 export const commands = {
+  update: { description: ['Update the CLI from npm (alpha)', 'npm에서 CLI 업데이트 (alpha)'], options: ['dry-run', 'yes'] },
   setup: { description: ['Prepare PHP, Composer and App generators', 'PHP·Composer와 앱 생성 도구 준비'], options: ['devtools', 'dry-run', 'yes'] },
   'create project': { argument: 'directory', description: ['Create and connect a project', '프로젝트 생성·연결'], options: ['name', 'no-browser', 'yes'] },
   'create app': { argument: 'directory', description: ['Create a PHP/React App', 'PHP/React 앱 생성'], options: ['name', 'vendor', 'family', 'key', 'display-name', 'table-prefix', 'prerequisite', 'dry-run', 'yes'] },
@@ -8,7 +9,8 @@ export const commands = {
   logout: { description: ['Revoke CLI authentication; retain folder bindings', 'CLI 인증 해제·폴더 연결 유지'], options: ['yes'] },
   'make resource': { argument: 'name', description: ['Generate a resource in an App', '앱에 리소스 생성'], options: ['app', 'label-ko', 'label-ko-plural', 'label-zh', 'label-zh-plural', 'record-owner', 'navigation', 'navigation-group', 'navigation-subgroup', 'icon', 'sort', 'dry-run', 'yes'] },
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
-  dev: { description: ['Select up to 20 Apps; --app accepts commas or repeated flags', '최대 20개 앱 선택·--app 콤마 구분 또는 반복 지정'], options: ['app', 'port', 'container'] },
+  dev: { description: ['Choose All Apps, configured Apps, or individual Apps (up to 20)', '전체·Config 설정·개별 앱 선택 (최대 20개)'], options: ['app', 'port', 'container'] },
+  'dev config': { description: ['Config Apps: save the default development selection', 'Config Apps: 기본 개발 앱 선택 저장'], options: ['app', 'yes'] },
   check: { description: ['Check this App, or all Apps from the project root', '현재 앱 또는 프로젝트 루트의 전체 앱 검사'], options: ['app'] },
   ps: { description: ['List local development sessions, ports and Apps', '로컬 개발 세션·포트·앱 조회'], options: ['json'] },
   stop: { description: ['Stop local development for this project; retain sandbox data', '현재 프로젝트의 로컬 개발 종료·샌드박스 데이터 보존'], options: ['port', 'json'] },
@@ -67,7 +69,7 @@ export function parseCommand(argv) {
   if (Object.hasOwn(retired, words[0])) throw new InputError(`Use nexia ${retired[words[0]]}. ${words[0]} is no longer a command.`);
   let name = words.shift() || '';
   if (Object.hasOwn(groups, name) && words.length) name += ` ${words.shift()}`;
-  else if (name === 'submit' && words.length) name += ` ${words.shift()}`;
+  else if (['submit', 'dev'].includes(name) && words.length) name += ` ${words.shift()}`;
   if (name && !Object.hasOwn(commands, name) && !Object.hasOwn(groups, name)) throw new InputError(`Unknown command: ${name}. Run nexia help.`);
   const definition = Object.hasOwn(commands, name) ? commands[name] : undefined;
   if (definition && words.length > (definition.argument ? 1 : 0)) throw new InputError(`Use nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}. Run from the intended folder; use --app to select an App.`);
@@ -77,7 +79,7 @@ export function parseCommand(argv) {
   return { name, argument: words[0], options };
 }
 export function validateOptions(name, options) {
-  if (name !== 'dev' && Array.isArray(options.app)) throw new InputError('Only nexia dev supports repeated --app.');
+  if (!['dev', 'dev config'].includes(name) && Array.isArray(options.app)) throw new InputError('Only nexia dev and nexia dev config support repeated --app.');
   const allowed = [...commands[name].options, 'help', 'no-interactive'];
   for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new InputError(`--${key} is not supported by nexia ${name}.`);
   if (options.navigation === false && ['navigation-group', 'navigation-subgroup', 'icon', 'sort'].some(key => Object.hasOwn(options, key))) throw new InputError('Menu options cannot be combined with --no-navigation.');

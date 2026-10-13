@@ -235,6 +235,8 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   const offMessage = lifecycleMessages.find(message => message.includes('/development#project-apps'));
   assert.ok(offMessage, 'off state links directly to the development App list');
   assert.match(offMessage, /nexia dev/);
+  assert.match(offMessage, /(?:Local App address \(copy\)|로컬 앱 주소 \(복사용\)): http:\/\/127\.0\.0\.1:[1-9]\d*/);
+  assert.ok(lifecycleMessages.some(message => message.startsWith('Nexia workspace:') && /(?:Local App address \(copy\)|로컬 앱 주소 \(복사용\)): http:\/\/127\.0\.0\.1:[1-9]\d*/.test(message)));
   assert.match(offMessage, /workspace|워크스페이스/);
   assert.equal(submissions.at(-1), submissions.at(-2), 'off race retains the pending idempotency key');
   [...operations.values()].at(-1).status = 'needs_review';
@@ -449,3 +451,63 @@ test('stopped execution recovers source and ambiguous preparation timeouts witho
   assert.ok(messages.some(message => message.includes('POST /developer-api/v2/runtime-operations: timeout')));
   assert.doesNotMatch(messages.join('\n'), /test-secret/);
 });
+
+for (const outcome of ['pending', 'denied', 'unavailable']) {
+  test(`startup auto-resume: ${outcome}, without repeated execution writes`, async t => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nexia-auto-resume-'));
+    const previous = process.env.NEXIA_CONFIG_HOME;
+    process.env.NEXIA_CONFIG_HOME = root;
+    const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
+    let writes = 0, readsAfterResume = 0;
+    let selection = { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'off', revision: 1, stop_pending: false };
+    const shutdown = new AbortController(), messages = [];
+    const server = createServer(async (req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url.endsWith('/connection')) {
+        res.end(JSON.stringify({ status: 'connected', project: { id: project }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } }));
+      } else if (req.url.endsWith('/execution')) {
+        if (req.method === 'PUT') {
+          writes++;
+          let body = ''; for await (const chunk of req) body += chunk;
+          assert.deepEqual(JSON.parse(body), { mode: 'development', revision: 1 });
+          if (outcome !== 'pending') {
+            res.writeHead(outcome === 'denied' ? 403 : 503);
+            res.end(JSON.stringify({ message: 'fixture resume failure' }));
+            return;
+          }
+          selection = { ...selection, revision: 2, stop_pending: true, resume_pending: true };
+        } else if (writes) {
+          readsAfterResume++;
+          // A later Console decision cancels the pending resume. The watcher must respect it.
+          selection = { ...selection, revision: 3, stop_pending: false, resume_pending: false };
+          if (readsAfterResume === 3) shutdown.abort();
+        }
+        res.end(JSON.stringify({ selection }));
+      } else { res.writeHead(404).end('{}'); }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    t.after(async () => {
+      server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+      if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous;
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(path.join(root, '.nexia'));
+    await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'fixture-only' }));
+    await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+    await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'fixture' }));
+    const timeout = setTimeout(() => shutdown.abort(), 3000);
+    try {
+      const run = nativeDev(root, { port: 0, interval: 1, signal: shutdown.signal, log: value => messages.push(value) });
+      if (outcome === 'pending') {
+        await run;
+        assert.equal(readsAfterResume, 3);
+        assert.ok(messages.some(value => /switch pending|전환 대기/.test(value)));
+      } else {
+        await assert.rejects(run, error => error.code === 'DEVELOPMENT_RESUME_UNCONFIRMED' && /fixture resume failure/.test(error.message));
+      }
+    } finally { clearTimeout(timeout); }
+    assert.equal(writes, 1);
+    assert.doesNotMatch(messages.join('\n'), /fixture-only/);
+  });
+}

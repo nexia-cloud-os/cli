@@ -1,3 +1,5 @@
+import { terminalLink } from './terminal-link.js';
+import { message } from './input.js';
 import path from 'node:path';
 import { retryDevRead } from './dev-retry.js';
 import { MAX_DEV_APPS, filterDevApps } from './dev-selection.js';
@@ -51,7 +53,7 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
   const preview = await startNativePreview(null, { workspaceOrigin, port, container, apps: new Map() });
   launch.searchParams.set('preview', preview.url);
   onStatus({ status: 'watching', workspace_url: launch.href });
-  log(`Project: ${connection.project.name}\nNexia workspace: ${launch.href}\nWatching App folders. Create or clone Apps here; Ctrl+C stops local development without deleting data.`);
+  log(`Project: ${connection.project.name}\nNexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\nWatching App folders. Create or clone Apps here; Ctrl+C stops local development without deleting data.`);
   const workers = new Map(), messages = new Map(), retryAt = new Map();
   const report = (key, message) => { if (messages.get(key) !== message) { messages.set(key, message); log(message); } };
   let nextRegistration = 0;

@@ -137,3 +137,40 @@ test('native registration sends metadata only and preserves identity across retr
   await assert.rejects(() => registerApp(root), /composer.json must not be a symbolic link/);
   assert.equal(registrations, 3);
 });
+
+test('startup resume uses the observed revision, accepts pending shutdown, and refuses a changed selection', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-startup-execution-'));
+  const previous = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = path.join(root, 'config');
+  const app = '12345678-1234-4123-8123-123456789abc';
+  const project = '22345678-1234-4123-8123-123456789abc';
+  let selection = { app_id: app, project_id: project, sandbox_id: '32345678-1234-4123-8123-123456789abc', mode: 'off', revision: 4, stop_pending: true };
+  let writes = 0;
+  const server = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'PUT') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      assert.deepEqual(JSON.parse(body), { mode: 'development', revision: 4 });
+      writes++;
+      selection = { ...selection, revision: 5, resume_pending: true };
+    }
+    res.end(JSON.stringify({ selection }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  await saveConnection({ endpoint, token: 'fixture-token' });
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  const expected = { ...selection }, messages = [];
+  const result = await selectExecution(root, 'development', { expected, log: message => messages.push(message) });
+  assert.equal(result.resume_pending, true);
+  assert.match(messages.join('\n'), /pending/);
+  await assert.rejects(selectExecution(root, 'development', { expected }), /changed before startup/);
+  assert.equal(writes, 1);
+});
