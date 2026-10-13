@@ -1,12 +1,16 @@
+import { paint } from './terminal.js';
 // Public command vocabulary. PHP generator command names remain implementation details.
 export const commands = {
   update: { description: ['Update the CLI from npm (alpha)', 'npm에서 CLI 업데이트 (alpha)'], options: ['dry-run', 'yes'] },
+  docs: { description: ['Read the App development starting guide', '앱 개발 시작 가이드 읽기'], options: ['locale', 'json'] },
+  'docs search': { argument: 'query', description: ['Search public developer documentation', '공개 개발 문서 검색'], options: ['locale', 'json'] },
+  'docs read': { argument: 'document-id', description: ['Read a public document as Markdown', '공개 문서를 Markdown으로 읽기'], options: ['locale', 'json'] },
   setup: { description: ['Prepare PHP, Composer and App generators', 'PHP·Composer와 앱 생성 도구 준비'], options: ['devtools', 'dry-run', 'yes'] },
   'create project': { argument: 'directory', description: ['Create and connect a project', '프로젝트 생성·연결'], options: ['name', 'no-browser', 'yes'] },
   'create app': { argument: 'directory', description: ['Create a PHP/React App', 'PHP/React 앱 생성'], options: ['name', 'vendor', 'family', 'key', 'display-name', 'table-prefix', 'prerequisite', 'dry-run', 'yes'] },
   connect: { argument: 'project-id', description: ['Connect this folder to a project', '현재 폴더를 프로젝트에 연결'], options: ['no-browser', 'yes'] },
-  login: { argument: 'project-id', description: ['Authenticate for a project without changing folder bindings', '폴더 연결을 바꾸지 않고 프로젝트 인증'], options: ['no-browser'] },
-  logout: { description: ['Revoke CLI authentication; retain folder bindings', 'CLI 인증 해제·폴더 연결 유지'], options: ['yes'] },
+  login: { argument: 'project-id', description: ['Sign in again for the connected project', '연결된 프로젝트에 다시 로그인'], options: ['no-browser'] },
+  logout: { description: ['Sign out of the CLI; keep project and sandbox data', 'CLI 로그아웃·프로젝트와 샌드박스 데이터 보존'], options: ['yes'] },
   'make resource': { argument: 'name', description: ['Generate a resource in an App', '앱에 리소스 생성'], options: ['app', 'label-ko', 'label-ko-plural', 'label-zh', 'label-zh-plural', 'record-owner', 'navigation', 'navigation-group', 'navigation-subgroup', 'icon', 'sort', 'dry-run', 'yes'] },
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
   dev: { description: ['Choose All Apps, configured Apps, or individual Apps (up to 20)', '전체·Config 설정·개별 앱 선택 (최대 20개)'], options: ['app', 'port', 'container'] },
@@ -19,13 +23,16 @@ export const commands = {
   'db seed': { argument: 'key', description: ['Run declared development data for this App', '현재 앱의 선언된 개발 데이터 실행'], options: ['app', 'request-id', 'json', 'yes'] },
   'db status': { description: ['Inspect the App database operation', '앱 DB 작업 상태 조회'], options: ['app', 'json'] },
   submit: { description: ['Submit an existing Git tag for review', '기존 Git 태그를 심사에 제출'], options: ['app', 'tag', 'request-id', 'no-browser', 'json', 'yes'] },
-  'submit status': { argument: 'submission-id', description: ['Inspect a submission', '제출 상태 조회'], options: ['json'] },
+  'submit list': { description: ['List recent submissions for this project or App', '현재 프로젝트 또는 앱의 최근 제출 목록'], options: ['page', 'json'] },
+  'submit status': { argument: 'submission-id', description: ['Choose a recent submission or inspect an ID', '최근 제출 선택 또는 ID로 상태 조회'], options: ['json'] },
   'submit cancel': { argument: 'submission-id', description: ['Cancel a cancellable submission', '취소 가능한 제출 취소'], options: ['json', 'yes'] },
   'submit retry': { argument: 'submission-id', description: ['Retry a retryable submission', '재시도 가능한 제출 재요청'], options: ['json', 'yes'] },
 };
 export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'seed', 'status'] };
 export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'navigation', 'record']);
 export const optionDescriptions = {
+  page: 'Recent submission page (20 per page) / 최근 제출 페이지 (20개씩)',
+  locale: 'Document language: en or ko (default: terminal language) / 문서 언어 (기본: 터미널 언어)',
   app: 'App folder name or key / 앱 폴더명 또는 식별자', name: 'Project display name or App code name / 프로젝트 표시 이름 또는 앱 코드 이름',
   vendor: 'Composer/npm package owner / 패키지 소유자', family: 'App navigation family / 앱 기능 그룹', key: 'Stable App key / 앱 식별자',
   'display-name': 'App display name / 앱 표시 이름', 'table-prefix': 'Database table prefix / 테이블 접두사', prerequisite: 'Required App key (repeatable) / 필수 선행 앱 (반복 가능)',
@@ -69,7 +76,7 @@ export function parseCommand(argv) {
   if (Object.hasOwn(retired, words[0])) throw new InputError(`Use nexia ${retired[words[0]]}. ${words[0]} is no longer a command.`);
   let name = words.shift() || '';
   if (Object.hasOwn(groups, name) && words.length) name += ` ${words.shift()}`;
-  else if (['submit', 'dev'].includes(name) && words.length) name += ` ${words.shift()}`;
+  else if (['submit', 'dev', 'docs'].includes(name) && words.length) name += ` ${words.shift()}`;
   if (name && !Object.hasOwn(commands, name) && !Object.hasOwn(groups, name)) throw new InputError(`Unknown command: ${name}. Run nexia help.`);
   const definition = Object.hasOwn(commands, name) ? commands[name] : undefined;
   if (definition && words.length > (definition.argument ? 1 : 0)) throw new InputError(`Use nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}. Run from the intended folder; use --app to select an App.`);
@@ -87,7 +94,27 @@ export function validateOptions(name, options) {
 }
 export function helpText(name = '', language = 'en') {
   const index = language === 'ko' ? 1 : 0, definition = Object.hasOwn(commands, name) ? commands[name] : undefined;
-  if (definition) return [`nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}`, definition.description[index], '', ...[...definition.options, 'no-interactive', 'help'].map(key => `  --${key}${['navigation', 'record'].includes(key) ? ` / --no-${key}` : booleanOptions.has(key) ? '' : ' <value>'}  ${optionDescriptions[key] || 'Show help / 도움말'}`), '', 'Options skip matching questions. Run from an App or its project.'].join('\n');
-  const names = Object.hasOwn(groups, name) ? groups[name].map(child => `${name} ${child}`) : Object.keys(commands);
-  return ['Nexia', '', ...names.map(key => `  ${key.padEnd(22)} ${commands[key].description[index]}`), '', 'nexia help <command>    nexia --version', index ? '옵션을 생략하면 단계별로 질문합니다. SSO·프로필은 지원하지 않습니다.' : 'Omit values for step-by-step questions. SSO and profiles are not supported.'].join('\n');
+  if (name === 'docs') return [
+    'nexia docs', commands.docs.description[index], '',
+    'nexia docs search "query" [--locale en|ko] [--json]',
+    'nexia docs read <document-id> [--locale en|ko] [--json]', '',
+    index ? '로그인·프로젝트 없이 공개 문서를 조회합니다. 기본 언어는 터미널 언어입니다.' : 'Read public documentation without login or a project. Defaults to the terminal language.',
+  ].join('\n');
+  if (definition) return [`nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}`, definition.description[index], '', ...[...definition.options, 'no-interactive', 'help'].map(key => `  --${key}${['navigation', 'record'].includes(key) ? ` / --no-${key}` : booleanOptions.has(key) ? '' : ' <value>'}  ${optionDescriptions[key] || 'Show help / 도움말'}`), '', name.startsWith('docs ') ? 'No login or project required. Quote search queries containing spaces.' : 'Options skip matching questions. Run from an App or its project.'].join('\n');
+  const sections = name && Object.hasOwn(groups, name)
+    ? [{ title: [name, name], names: groups[name].map(child => `${name} ${child}`) }]
+    : [
+      { title: ['Start & connect', '시작·연결'], names: ['setup', 'update', 'create project', 'connect', 'login', 'logout', 'status'] },
+      { title: ['Build & develop', '생성·개발'], names: ['create app', 'make resource', 'make page', 'dev', 'dev config', 'check', 'ps', 'stop'] },
+      { title: ['Sandbox database', '샌드박스 데이터'], names: ['db migrate', 'db seed', 'db status'] },
+      { title: ['Submit & review', '제출·심사'], names: ['submit', 'submit list', 'submit status', 'submit cancel', 'submit retry'] },
+      { title: ['Documentation', '개발 문서'], names: ['docs', 'docs search', 'docs read'] },
+    ];
+  return [paint('Nexia', 'title'), ...sections.flatMap(section => [
+    '', paint(section.title[index], 'title'),
+    ...section.names.map(key => process.stdout.columns && process.stdout.columns < 100
+      ? `  ${paint(key, 'accent')}\n    ${commands[key].description[index]}`
+      : `  ${paint(key.padEnd(24), 'accent')} ${commands[key].description[index]}`),
+  ]), '', paint('nexia help <command>    nexia --version', 'muted'),
+  index ? '값을 생략하면 선택·입력 안내를 표시합니다. 자동화: --no-interactive 또는 --json.' : 'Omit values for guided input. Automation: --no-interactive or --json.'].join('\n');
 }

@@ -16,6 +16,8 @@ test('project binding writes the original instructions and preserves existing fi
   assert.ok(instructions.includes(`nexia connect ${binding.project.id}`));
   assert.ok(instructions.includes(`Platform: ${binding.endpoint}`));
   assert.ok(instructions.includes('## Delivery and safety'));
+  assert.ok(instructions.includes('nexia docs search "topic"'));
+  assert.ok(instructions.includes('nexia docs read <document-id>'));
   await writeFile(file, 'Custom project rules\n');
   await bindWorkspace(root, binding);
   assert.equal(await readFile(file, 'utf8'), 'Custom project rules\n');

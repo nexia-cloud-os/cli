@@ -1,6 +1,7 @@
 import { emitKeypressEvents } from 'node:readline';
 import { createInterface } from 'node:readline/promises';
 import { InputError } from './commands.js';
+import { paint, fit, plain } from './terminal.js';
 export class Cancelled extends Error { constructor() { super('Cancelled / 취소됨'); this.code = 'CANCELLED'; this.exitCode = 130; } }
 export const language = /^(ko)(?:[_-]|$)/i.test(process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || '') ? 'ko' : 'en';
 export const message = (en, ko) => language === 'ko' ? ko : en;
@@ -49,6 +50,50 @@ export function createInput(options = {}, { input = process.stdin, output = proc
       if (defaultValue !== undefined) return defaultValue;
       throw new InputError(`${label}: ${message('specify', '지정하세요:')} ${hint} (${values.join(', ')}).`);
     }
+    if (!ask && typeof input.setRawMode === 'function' && process.env.TERM !== 'dumb') {
+      if (!choices.length) throw new InputError(message('No available choices.', '선택할 항목이 없습니다.'));
+      reader?.close(); reader = undefined; closed = false;
+      let cursor = Math.max(0, values.indexOf(defaultValue)), lines = 0, finished = false;
+      const wasRaw = Boolean(input.isRaw), wasFlowing = input.readableFlowing === true;
+      const labels = choices.map(item => plain(typeof item === 'string' ? item : item.label));
+      output.write(`${paint(label, 'title', output)}\n${paint(message('↑/↓ move · Enter select · Esc cancel', '↑/↓ 이동 · Enter 선택 · Esc 취소'), 'muted', output)}\n`);
+      const render = () => {
+        if (lines) output.write(`\x1b[${lines}A`);
+        const count = Math.min(choices.length, Math.max(1, (output.rows || 24) - 5));
+        const start = Math.min(Math.max(0, cursor - count + 1), choices.length - count);
+        for (let i = start; i < start + count; i++) {
+          const row = fit(`${i === cursor ? '›' : ' '} ${labels[i]}`, output.columns || 100);
+          output.write(`\r\x1b[2K${paint(row, i === cursor ? 'accent' : 'muted', output)}\n`);
+        }
+        lines = count;
+      };
+      emitKeypressEvents(input);
+      return new Promise((resolve, reject) => {
+        const finish = error => {
+          if (finished) return;
+          finished = true;
+          input.removeListener('keypress', onKey);
+          input.removeListener('end', onEnd);
+          input.removeListener('error', onError);
+          input.setRawMode(wasRaw);
+          if (!wasFlowing) input.pause();
+          output.write(`${error ? message('Cancelled', '취소됨') : paint(`✓ ${labels[cursor]}`, 'accent', output)}\n`);
+          if (error) reject(error); else resolve(values[cursor]);
+        };
+        const onEnd = () => finish(new Cancelled());
+        const onError = error => finish(error);
+        const onKey = (_, key = {}) => {
+          if (key.name === 'escape' || key.ctrl && ['c', 'd'].includes(key.name)) return onEnd();
+          if (key.name === 'return') return finish();
+          if (key.name === 'up') cursor = (cursor + values.length - 1) % values.length;
+          else if (key.name === 'down') cursor = (cursor + 1) % values.length;
+          else return;
+          render();
+        };
+        input.on('keypress', onKey); input.once('end', onEnd); input.once('error', onError);
+        input.setRawMode(true); input.resume(); render();
+      });
+    }
     const labels = choices.map((item, i) => `  ${i + 1}. ${typeof item === 'string' ? item : item.label}`).join('\n');
     const answer = await text(key, `${label}\n${labels}`, { defaultValue: defaultValue ?? '', required: true, validate: value => values.includes(value) || (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= values.length) });
     return values.includes(answer) ? answer : values[Number(answer) - 1];
@@ -79,18 +124,12 @@ export function createInput(options = {}, { input = process.stdin, output = proc
       }
       while (lines.length < renderedLines) lines.push('');
       for (const line of lines) {
-        // Reserve two cells for non-ASCII characters without truncating ASCII names to half the terminal.
-        let visible = '', width = 0;
-        for (const character of line.replace(/[\x00-\x1f\x7f-\x9f]/g, '')) {
-          width += character.codePointAt(0) < 128 ? 1 : 2;
-          if (width >= (output.columns || 100)) break;
-          visible += character;
-        }
-        output.write(`\r\x1b[2K${visible}\n`);
+        const visible = fit(line, output.columns || 100);
+        output.write(`\r\x1b[2K${paint(visible, line.startsWith('>') ? 'accent' : 'muted', output)}\n`);
       }
       renderedLines = lines.length;
     };
-    output.write(`${label}\n${saving ? message('↑/↓ move · Space select · Enter save · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 저장 · Ctrl+C 취소') : message('↑/↓ move · Space select · Enter start · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 실행 · Ctrl+C 취소')}\n`);
+    output.write(`${paint(label, 'title', output)}\n${saving ? message('↑/↓ move · Space select · Enter save · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 저장 · Ctrl+C 취소') : message('↑/↓ move · Space select · Enter start · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 실행 · Ctrl+C 취소')}\n`);
     const wasRaw = Boolean(input.isRaw), wasFlowing = input.readableFlowing === true;
     emitKeypressEvents(input);
     return new Promise((resolve, reject) => {
