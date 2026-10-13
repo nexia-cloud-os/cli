@@ -32,6 +32,8 @@
   new Apps, up to 20. Keep dev running in a separate terminal.
 - `nexia ps` lists local development sessions and ports. `nexia stop` stops this
   project’s local watchers; `--port <port>` selects one session. Sandbox data is retained.
+- `nexia dev config` saves default development Apps for this project. Later
+  `nexia dev` offers All Apps, Config Apps, and individual Apps; `--app` skips the picker.
 - `nexia status`, `nexia db status`, and `nexia submit status <id>` report
   connection, database operation, and submission state respectively.
 - For automation use `--no-interactive` and explicit required values; `--yes`

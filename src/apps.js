@@ -66,7 +66,7 @@ export async function readExecutionSelection(config, scope) {
   return selection;
 }
 
-export async function selectExecution(directory, mode, { log = console.log } = {}) {
+export async function selectExecution(directory, mode, { log = console.log, expected } = {}) {
   if (!['development', 'off'].includes(mode)) throw new Error('Use nexia app runtime development|off [directory].');
   const config = await readConnection();
   const readBinding = async () => {
@@ -86,12 +86,18 @@ export async function selectExecution(directory, mode, { log = console.log } = {
   };
   const scope = await readBinding();
   const current = await readExecutionSelection(config, scope);
+  if (expected && (current.revision !== expected.revision || current.sandbox_id !== expected.sandbox_id
+    || current.app_id !== expected.app_id || current.project_id !== expected.project_id)) {
+    throw new Error('Execution selection changed before startup. No automatic resume was submitted.');
+  }
   const latest = await readConnection(), binding = await readBinding();
   if (latest.endpoint !== config.endpoint || latest.token !== config.token || binding.project_id !== scope.project_id || binding.app_id !== scope.app_id) throw new Error('App binding or CLI connection changed. No execution choice was submitted.');
   const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`, { method: 'PUT', body: { mode, revision: current.revision } });
+  const pendingResume = mode === 'development' && selection?.mode === 'off' && selection.resume_pending === true && selection.stop_pending === true;
   if (selection?.app_id !== scope.app_id || selection.project_id !== scope.project_id || selection.sandbox_id !== current.sandbox_id
-      || selection.mode !== mode || selection.revision !== current.revision + (current.mode === mode ? 0 : 1)
+      || (!pendingResume && selection.mode !== mode) || selection.revision !== current.revision + (current.mode === mode ? 0 : 1)
       || typeof selection.stop_pending !== 'boolean') throw new Error('Execution choice acknowledgement was not confirmed. Check status before retrying.');
-  log(`Development execution: ${selection.mode}${selection.stop_pending ? ' (operator shutdown pending)' : ''}. Source and data retained. No published App was installed.`);
+  log(pendingResume ? 'Development switch pending. Waiting for shutdown confirmation; keep nexia dev running.'
+    : `Development execution: ${selection.mode}${selection.stop_pending ? ' (operator shutdown pending)' : ''}. Source and data retained. No published App was installed.`);
   return selection;
 }

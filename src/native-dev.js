@@ -1,3 +1,4 @@
+import { terminalLink } from './terminal-link.js';
 import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
 import { message } from './input.js';
@@ -7,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
 import { sourceSnapshot } from './source-snapshot.js';
 import { syncSource } from './sync.js';
-import { readExecutionSelection } from './apps.js';
+import { readExecutionSelection, selectExecution } from './apps.js';
 import { startNativePreview } from './native-preview.js';
 import { startFrontendBuild } from './frontend-build.js';
 
@@ -67,7 +68,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   let lastStatus;
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
-  let connectionChecked = false;
+  let connectionChecked = false, startupSelectionChecked = false;
   let preview, build, browserRuntime = null;
   try {
     while (!signal?.aborted) {
@@ -104,12 +105,23 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             : await startNativePreview(directory, { workspaceOrigin, port, container, state: () => browserRuntime });
           launch.searchParams.set('preview', preview.url);
           onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
-          log(`Nexia workspace: ${launch.href}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}`);
+          log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}`);
           connectionChecked = true;
         }
         // This authenticated endpoint rechecks the connection/project/sandbox each poll.
-        const selection = await readExecutionSelection(config, scope);
+        let selection = await readExecutionSelection(config, scope);
         if (scope.sandbox_id && selection.sandbox_id !== scope.sandbox_id) throw new Error('Personal sandbox changed. Restart dev; previous state was retained.');
+        if (!startupSelectionChecked) {
+          startupSelectionChecked = true;
+          if (selection.mode === 'off' && !selection.resume_pending) {
+            log(message('Requesting development execution for the selected App…', '선택한 앱의 개발 실행을 요청합니다…'));
+            try { selection = await selectExecution(directory, 'development', { log, expected: selection }); }
+            catch (error) {
+              // Do not replay an uncertain mode switch against a newer Console decision.
+              throw Object.assign(new Error(`${message('Automatic development resume was not confirmed', '자동 개발 실행 재개를 확인하지 못했습니다')}: ${error.message}\n${message('Check this App in development settings, then restart nexia dev. Source and data were retained.', '개발 설정에서 이 앱의 상태를 확인한 뒤 nexia dev를 다시 실행하세요. 소스와 데이터는 보존됩니다.')}\n${consoleUrl.href}`), { code: 'DEVELOPMENT_RESUME_UNCONFIRMED' });
+            }
+          }
+        }
         if (selection.mode === 'off') {
           browserRuntime = { mode: 'off', app_id: scope.app_id, app_key: identity.key };
           const status = `off:${selection.revision}:${selection.stop_pending}:${selection.resume_pending}`;
@@ -117,7 +129,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             let next = message('Open the link below and choose Resume development for this App.', '아래 링크에서 이 앱의 ‘개발 실행 재개’를 누르세요.');
             if (selection.resume_pending) next = message('Switching from the installed App to development. Waiting for confirmed shutdown; development will resume automatically.', '설치본에서 개발본으로 전환 중입니다. 종료가 확인되면 자동으로 재개합니다.');
             else if (selection.stop_pending) next = message('Shutdown is still pending. Wait for it to finish, then resume development from the App list below.', '실행 종료를 기다리고 있습니다. 종료가 완료되면 아래 앱 목록에서 개발 실행을 재개하세요.');
-            log(`${selection.resume_pending ? message('Development switch pending.', '개발 실행 전환 대기 중입니다.') : message('Development execution off. This App is not shown in the workspace.', '개발 실행이 꺼져 있어 워크스페이스에 이 앱이 표시되지 않습니다.')}\n${next}\n${consoleUrl.href}\n${message('Keep nexia dev running; it will continue automatically after you resume. Source and data are retained.', 'nexia dev는 켜 두세요. 재개하면 자동으로 이어집니다. 소스와 데이터는 보존됩니다.')}`);
+            log(`${selection.resume_pending ? message('Development switch pending.', '개발 실행 전환 대기 중입니다.') : message('Development execution off. This App is not shown in the workspace.', '개발 실행이 꺼져 있어 워크스페이스에 이 앱이 표시되지 않습니다.')}\n${next}\n${terminalLink(consoleUrl.href, 'Open development settings')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${message('Keep nexia dev running; it will continue automatically after you resume. Source and data are retained.', 'nexia dev는 켜 두세요. 재개하면 자동으로 이어집니다. 소스와 데이터는 보존됩니다.')}`);
           }
           lastStatus = status;
           await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });

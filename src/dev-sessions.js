@@ -1,3 +1,4 @@
+import { terminalLink } from './terminal-link.js';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, realpath, lstat, readFile, readdir, writeFile, rm } from 'node:fs/promises';
@@ -104,11 +105,11 @@ export async function stopDevSessions(root, port) {
   return results;
 }
 
-export function formatSessions(sessions) {
+export function formatSessions(sessions, stream = process.stdout, env = process.env) {
   if (!sessions.length) return 'No tracked local development sessions. Start nexia dev with this CLI version.';
   return ['PORT\tPID\tSTATUS\tAPPS', ...sessions.flatMap(session => [
     `${session.port}\t${session.pid}\t${session.status}\t${session.apps.join(', ') || '—'}`,
-    ...(session.workspace_url ? [`Workspace: ${session.workspace_url}`] : []),
+    ...(session.workspace_url ? [`Workspace: ${terminalLink(session.workspace_url, 'Open workspace', stream, env)}`] : []),
   ]), 'Stop this project: nexia stop | Stop one session: nexia stop --port <port>',
   'Unreachable records do not prove a process is running. Older CLI sessions require Ctrl+C or manual port inspection.'].join('\n');
 }
