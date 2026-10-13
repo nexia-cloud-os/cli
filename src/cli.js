@@ -6,6 +6,7 @@ import { setup } from './setup.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
+import { selectDevApps } from './dev-selection.js';
 import { workspaceDev } from './workspace-dev.js';
 import { nativeDev } from './native-dev.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
@@ -168,17 +169,18 @@ try {
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new InputError('--port must be an integer from 1 to 65535.');
       const directory = workspace ? workspace.root : await findApp();
       if (!directory) throw new InputError('Run nexia connect from your project folder, then nexia dev.');
+      let selectedApps;
       if (workspace) {
         const { apps, errors } = await discoverApps(workspace.root);
-        if (options.app && apps.filter(app => app.key === options.app || app.name === options.app).length !== 1) throw new InputError(`Choose one App with --app. Available: ${apps.map(app => app.name).join(', ')}`);
-        log(`Project development: ${workspace.root}\nScope: ${options.app || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
+        selectedApps = await selectDevApps(apps, options.app, input);
+        log(`Project development: ${workspace.root}\nScope: ${selectedApps?.join(', ') || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
         for (const error of errors) log(`${error.directory}: ${error.message}`);
       }
       input.close();
       const shutdown = new AbortController(), stop = () => shutdown.abort();
       process.once('SIGINT', stop); process.once('SIGTERM', stop);
       try {
-        const devOptions = { signal: shutdown.signal, port, container: options.container === true, app: options.app };
+        const devOptions = { signal: shutdown.signal, port, container: options.container === true, app: selectedApps };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
     } else if (name.startsWith('db ')) {

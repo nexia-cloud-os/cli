@@ -53,7 +53,7 @@ an App repository. Project/App instructions are created without overwriting your
 | `login [project-id]` | Authenticate/re-authenticate without changing folder bindings |
 | `logout` | Revoke authentication; retain bindings and data |
 | `make [resource\|page]` | Select generated code; optionally supply its PascalCase name |
-| `dev` | Watch the entire project, including from inside an App |
+| `dev` | Select up to 20 project Apps on one preview connection |
 | `check` | Inspect App source; no remote runtime verification |
 | `status` | Inspect authentication, project, folder and sandbox |
 | `db migrate` | Request an App sandbox migration |
@@ -113,10 +113,24 @@ multiple Apps exist. `create app` from an App creates a sibling in the project,
 never a nested App. `connect` must run at the project root, outside an App.
 
 `check` checks all Apps from the project root and only the current App from inside
-it. `dev` deliberately preserves project-wide watching from either location;
-`dev --app people` selects one. The default port is 4310 (`--port` to change it).
+it. With multiple Apps, interactive `dev` from either location opens a picker:
+use ↑/↓ to move, Space to toggle an App or **All Apps**, and Enter to start.
+Select 1–20 Apps. All Apps is unavailable when the project already has more than
+20 Apps. Ctrl+C cancels before connecting. A single App starts without a picker.
+
+Repeat `--app` to skip the picker and select by folder name or App key:
+
+```sh
+nexia dev --app people --app time-absence --app payroll
+```
+
+Non-interactive `dev` without `--app` retains all-App watching, up to 20 Apps;
+larger projects must supply repeated `--app` options. Other commands still accept
+only one `--app`. The default port is 4310 (`--port` to change it).
 `--container` supports container preview access. A project uses one preview port.
-New Apps join automatically; duplicate identities and symlink folders are not run.
+In All Apps mode, new Apps join automatically up to the 20-App limit; restart
+and select Apps if the project exceeds it. Individual selections only watch the
+selected identities. Duplicate identities and symlink folders are not run.
 
 `dev` handles registration, sandbox preparation, immutable source snapshots and
 frontend watching. A snapshot is limited to 2000 files, 2 MiB/file, 16 MiB total;

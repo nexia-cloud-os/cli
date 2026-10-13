@@ -9,7 +9,7 @@ import { saveConnection } from '../src/connection.js';
 import { bindWorkspace } from '../src/workspace.js';
 import { workspaceDev } from '../src/workspace-dev.js';
 
-test('project dev registers a hot-added App on the same port and leaves other Apps running', { timeout: 20000 }, async t => {
+for (const selected of [false, true]) test(`project dev ${selected ? 'only watches selected Apps' : 'registers hot-added Apps'} on the same port`, { timeout: 20000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-project-dev-'));
   const previous = process.env.NEXIA_CONFIG_HOME;
   process.env.NEXIA_CONFIG_HOME = path.join(root, '.config');
@@ -57,10 +57,11 @@ test('project dev registers a hot-added App on the same port and leaves other Ap
     await writeFile(path.join(directory, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: name, app_table_prefix: name } }));
   };
   await addApp('people');
+  if (selected) await addApp('ignored');
   const shutdown = new AbortController();
   let url;
   const messages = [];
-  const running = workspaceDev(workspace, { signal: shutdown.signal, port: 0, log: message => {
+  const running = workspaceDev(workspace, { signal: shutdown.signal, port: 0, ...(selected ? { app: ['people', 'payroll'] } : {}), log: message => {
     messages.push(message);
     if (message.startsWith('Project:')) url = new URL(message.split('\n')[1].replace('Nexia workspace: ', '')).searchParams.get('preview');
   } });
@@ -83,6 +84,7 @@ test('project dev registers a hot-added App on the same port and leaves other Ap
   const second = await waitForApps(2);
   assert.equal(second.apps[0].app_id, first.apps[0].app_id);
   assert.equal(registrations.size, 2);
+  assert.equal(registrations.has('ignored'), false);
   assert.equal(operations.size, 2);
   shutdown.abort(); await running;
 });

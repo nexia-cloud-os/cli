@@ -8,7 +8,7 @@ export const commands = {
   logout: { description: ['Revoke CLI authentication; retain folder bindings', 'CLI 인증 해제·폴더 연결 유지'], options: ['yes'] },
   'make resource': { argument: 'name', description: ['Generate a resource in an App', '앱에 리소스 생성'], options: ['app', 'label-ko', 'label-ko-plural', 'label-zh', 'label-zh-plural', 'record-owner', 'navigation', 'navigation-group', 'navigation-subgroup', 'icon', 'sort', 'dry-run', 'yes'] },
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
-  dev: { description: ['Develop every App in the project; --app selects one', '프로젝트 전체 앱 개발·--app으로 하나 선택'], options: ['app', 'port', 'container'] },
+  dev: { description: ['Select up to 20 Apps to develop; repeat --app to skip selection', '최대 20개 앱 선택·--app 반복 지정 가능'], options: ['app', 'port', 'container'] },
   check: { description: ['Check this App, or all Apps from the project root', '현재 앱 또는 프로젝트 루트의 전체 앱 검사'], options: ['app'] },
   status: { description: ['Show authentication, project and sandbox status', '인증·프로젝트·샌드박스 상태 조회'], options: ['json'] },
   'db migrate': { description: ['Request an App sandbox migration', '앱 샌드박스 마이그레이션 요청'], options: ['app', 'request-id', 'json', 'yes'] },
@@ -57,8 +57,9 @@ export function parseCommand(argv) {
       value = equal < 0 ? argv[++i] : normalized.slice(equal + 1);
       if (value === undefined || value.startsWith('--') || value.trim() === '') throw new InputError(`--${key} needs a value.`);
     }
-    if (Object.hasOwn(options, key) && key !== 'prerequisite') throw new InputError(`Do not repeat or contradict --${key}.`);
-    options[key] = key === 'prerequisite' ? [...(options[key] || []), value] : value;
+    if (Object.hasOwn(options, key) && !['prerequisite', 'app'].includes(key)) throw new InputError(`Do not repeat or contradict --${key}.`);
+    options[key] = key === 'prerequisite' ? [...(options[key] || []), value]
+      : key === 'app' && options.app !== undefined ? [...[options.app].flat(), value] : value;
   }
   if (words[0] === 'help') { words.shift(); options.help = true; }
   if (Object.hasOwn(retired, words[0])) throw new InputError(`Use nexia ${retired[words[0]]}. ${words[0]} is no longer a command.`);
@@ -74,6 +75,7 @@ export function parseCommand(argv) {
   return { name, argument: words[0], options };
 }
 export function validateOptions(name, options) {
+  if (name !== 'dev' && Array.isArray(options.app)) throw new InputError('Only nexia dev supports repeated --app.');
   const allowed = [...commands[name].options, 'help', 'no-interactive'];
   for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new InputError(`--${key} is not supported by nexia ${name}.`);
   if (options.navigation === false && ['navigation-group', 'navigation-subgroup', 'icon', 'sort'].some(key => Object.hasOwn(options, key))) throw new InputError('Menu options cannot be combined with --no-navigation.');

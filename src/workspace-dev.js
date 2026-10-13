@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { MAX_DEV_APPS, filterDevApps } from './dev-selection.js';
 import { lstat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
@@ -53,8 +54,8 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
       }
       const discovered = await discoverApps(workspace.root);
       for (const error of discovered.errors) report(error.directory, `${path.basename(error.directory)}: ${error.message}`);
-      const apps = discovered.apps.filter(app => !selector || app.name === selector || app.key === selector);
-      if (apps.length > 20) throw new Error('A project development connection supports at most 20 local Apps. Use --app to select one.');
+      const apps = filterDevApps(discovered.apps, selector);
+      if (apps.length > MAX_DEV_APPS) throw new Error(`A project development connection supports at most ${MAX_DEV_APPS} local Apps. Restart dev to select Apps, or repeat --app.`);
       if (selector && apps.length === 0) report('selection', `Waiting for App ${selector}.`);
       for (const [directory, worker] of workers) {
         if (!apps.some(app => app.directory === directory && app.key === worker.key)) {

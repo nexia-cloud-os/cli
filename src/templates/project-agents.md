@@ -26,9 +26,10 @@
 - `nexia make resource`, `nexia make page`, `nexia check`, `nexia db migrate`,
   `nexia db seed` and `nexia submit --tag <tag>` work from an App or subdirectory.
   From this project use `--app <folder-or-key>` or the target selection prompt.
-- `nexia check` from this root checks all Apps. `nexia dev` watches the entire
-  project from either root or App directories; `--app` selects just one.
-  New Apps join automatically. Keep dev running in a separate terminal.
+- `nexia check` from this root checks all Apps. `nexia dev` from root or App
+  directories offers Space/arrow-key selection of up to 20 Apps on one port.
+  Repeat `--app` to select Apps without prompting. All Apps mode also watches
+  new Apps, up to 20. Keep dev running in a separate terminal.
 - `nexia status`, `nexia db status`, and `nexia submit status <id>` report
   connection, database operation, and submission state respectively.
 - For automation use `--no-interactive` and explicit required values; `--yes`
