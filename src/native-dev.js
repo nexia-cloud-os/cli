@@ -3,6 +3,7 @@ import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
 import { message } from './input.js';
 import { randomUUID } from 'node:crypto';
+import { preparationFailureDetails } from './preparation-failure.js';
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
@@ -37,7 +38,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
     const next = retryable
       ? 'Fix the reported error, wait for shutdown to finish, then restart nexia dev in the same project folder.'
       : 'This operation requires operator review before retrying; preparation may have changed data. Share this operation ID with developer support.';
-    return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}. ${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
+    return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}.\n${preparationFailureDetails(operation.failure)}${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
       code: retryable ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED',
     });
   }
