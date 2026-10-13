@@ -118,9 +118,10 @@ use ↑/↓ to move, Space to toggle an App or **All Apps**, and Enter to start.
 Select 1–20 Apps. All Apps is unavailable when the project already has more than
 20 Apps. Ctrl+C cancels before connecting. A single App starts without a picker.
 
-Repeat `--app` to skip the picker and select by folder name or App key:
+Use comma-separated names/keys or repeat `--app` to skip the picker:
 
 ```sh
+nexia dev --app people,time-absence,payroll
 nexia dev --app people --app time-absence --app payroll
 ```
 

@@ -36,6 +36,18 @@ test('selection resolves names and keys, deduplicates identities, rejects invali
   assert.equal(await selectDevApps([], undefined, input), undefined);
 });
 
+test('comma-separated App flags compose with repeated flags and keep validation', async () => {
+  const input = { interactive: false };
+  const options = parseCommand(['dev', '--app=folder-0, key-2', '--app', 'key-0,folder-3']).options;
+  assert.deepEqual(await selectDevApps(apps, options.app, input), ['key-0', 'key-2', 'key-3']);
+  assert.deepEqual(await selectDevApps(apps, 'folder-0,key-2', input), ['key-0', 'key-2']);
+  for (const value of ['folder-0,', ',folder-0', 'folder-0,,key-2', 'folder-0, ,key-2', 'folder-0,missing']) {
+    await assert.rejects(selectDevApps(apps, value, input), /Unknown or ambiguous/);
+  }
+  assert.equal((await selectDevApps(apps, apps.slice(0, 20).map(app => app.key).join(','), input)).length, 20);
+  await assert.rejects(selectDevApps(apps, apps.slice(0, 21).map(app => app.key).join(','), input), /1–20/);
+});
+
 test('interactive selection occurs for multiple Apps, supplied flags and single Apps skip it', async () => {
   let calls = 0;
   const input = { interactive: true, multiChoice: async (label, choices, options) => {

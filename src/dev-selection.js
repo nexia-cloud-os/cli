@@ -9,7 +9,7 @@ export const filterDevApps = (apps, selectors) => selectors === undefined ? apps
 export async function selectDevApps(apps, selectors, input) {
   if (selectors !== undefined) {
     const keys = new Set();
-    for (const selector of [selectors].flat()) {
+    for (const selector of [selectors].flat().flatMap(value => value.split(',').map(part => part.trim()))) {
       const matches = filterDevApps(apps, selector);
       if (matches.length !== 1) throw new InputError(`Unknown or ambiguous App: ${selector}. Available: ${apps.map(app => app.name).join(', ')}`);
       keys.add(matches[0].key);

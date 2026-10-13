@@ -8,7 +8,7 @@ export const commands = {
   logout: { description: ['Revoke CLI authentication; retain folder bindings', 'CLI 인증 해제·폴더 연결 유지'], options: ['yes'] },
   'make resource': { argument: 'name', description: ['Generate a resource in an App', '앱에 리소스 생성'], options: ['app', 'label-ko', 'label-ko-plural', 'label-zh', 'label-zh-plural', 'record-owner', 'navigation', 'navigation-group', 'navigation-subgroup', 'icon', 'sort', 'dry-run', 'yes'] },
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
-  dev: { description: ['Select up to 20 Apps to develop; repeat --app to skip selection', '최대 20개 앱 선택·--app 반복 지정 가능'], options: ['app', 'port', 'container'] },
+  dev: { description: ['Select up to 20 Apps; --app accepts commas or repeated flags', '최대 20개 앱 선택·--app 콤마 구분 또는 반복 지정'], options: ['app', 'port', 'container'] },
   check: { description: ['Check this App, or all Apps from the project root', '현재 앱 또는 프로젝트 루트의 전체 앱 검사'], options: ['app'] },
   status: { description: ['Show authentication, project and sandbox status', '인증·프로젝트·샌드박스 상태 조회'], options: ['json'] },
   'db migrate': { description: ['Request an App sandbox migration', '앱 샌드박스 마이그레이션 요청'], options: ['app', 'request-id', 'json', 'yes'] },

@@ -28,7 +28,7 @@
   From this project use `--app <folder-or-key>` or the target selection prompt.
 - `nexia check` from this root checks all Apps. `nexia dev` from root or App
   directories offers Space/arrow-key selection of up to 20 Apps on one port.
-  Repeat `--app` to select Apps without prompting. All Apps mode also watches
+  Use `--app people,payroll` or repeat `--app` to skip prompting. All Apps mode also watches
   new Apps, up to 20. Keep dev running in a separate terminal.
 - `nexia status`, `nexia db status`, and `nexia submit status <id>` report
   connection, database operation, and submission state respectively.
