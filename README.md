@@ -331,3 +331,15 @@ Piped output, CI, dumb terminals and Apple Terminal retain plain URLs. JSON
 session data keeps the original URL without escape sequences. Click gestures
 depend on the terminal (for example, Command-click in iTerm2); browser opening
 is always initiated by the user.
+
+### Preparation error details
+
+When the server provides safe failure details, `nexia dev` shows the failed step
+and recovery guidance. `SDK_VERSION_MISMATCH` includes the App's required PHP SDK
+range and the server version: contact developer support with those versions and
+the operation ID. Local Composer installation cannot update the server runtime.
+`DEPENDENCY_BUILD_FAILED` points to supported composer.json dependencies and
+server build inspection; other failures show the preparation stage.
+The operation's existing retry/review instructions still apply. No failure
+detail triggers an automatic retry, deletes .nexia, or resets data. Older servers
+and operations without details retain the existing generic guidance.

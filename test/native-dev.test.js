@@ -338,6 +338,9 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
         polls++;
         operation.status = outcome;
         operation.started_at = started ? '2026-10-02T02:52:00Z' : null;
+        if (outcome === 'failed' && started) operation.failure = {
+          code: 'SDK_VERSION_MISMATCH', stage: 'dependencies', required_sdk: '^0.8.6 || ^0.9.0', installed_sdk: 'v0.8.4',
+        };
         if (operations.length === 1 && (polls >= 2 || outcome !== 'completed')) {
           operation.stop_requested_at = '2026-10-02T02:52:06Z'; pending = true;
           if (polls === 3) assert.equal(readPreview(), null, 'preview becomes unavailable while stopping');
@@ -377,6 +380,10 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
           assert.match(error.message, new RegExp(`App preparation ${outcome}: ${operations[0].id}`));
           assert.ok(error.message.includes(`/projects/${project}/development#project-apps`));
           assert.match(error.message, outcome === 'failed' && !started ? /restart nexia dev/ : /requires operator review/);
+          if (outcome === 'failed' && started) {
+            assert.match(error.message, /SDK_VERSION_MISMATCH/);
+            assert.match(error.message, /Server PHP SDK: v0.8.4/);
+          }
           return true;
         });
         assert.equal(operations.length, 1, 'uncertain failures never retry automatically');
