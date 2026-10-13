@@ -63,16 +63,16 @@ test('interactive selection occurs for multiple Apps, supplied flags and single 
   assert.equal(await selectDevApps(apps.slice(0, 2), undefined, { interactive: true, multiChoice: async () => null }), undefined);
 });
 
-function picker(count, max = 20) {
+function picker(count, max = 20, settings = {}, rows = 24) {
   const stdin = new PassThrough();
   stdin.isTTY = true;
   stdin.isRaw = false;
   stdin.setRawMode = value => { stdin.isRaw = value; };
   stdin.pause();
   let rendered = '';
-  const output = { isTTY: true, columns: 100, rows: 24, write: value => { rendered += value; } };
+  const output = { isTTY: true, columns: 100, rows, write: value => { rendered += value; } };
   const input = createInput({}, { input: stdin, output });
-  const result = input.multiChoice('Apps', apps.slice(0, count).map(app => ({ value: app.key, label: app.name })), { max });
+  const result = input.multiChoice('Apps', apps.slice(0, count).map(app => ({ value: app.key, label: app.name })), { max, ...settings });
   const key = (name, ctrl = false) => stdin.emit('keypress', name === 'space' ? ' ' : '', { name, ctrl });
   return { stdin, result, key, rendered: () => rendered };
 }
@@ -92,13 +92,13 @@ test('Space toggles choices, arrows scroll, empty Enter waits, and limit does no
   assert.equal(p.stdin.listenerCount('keypress'), 0);
 });
 
-test('All Apps uses dynamic scope; deselecting one App switches to explicit scope', async () => {
+test('All Apps uses exclusive dynamic scope; selecting an App switches to only that App', async () => {
   const all = picker(3);
   all.key('space'); all.key('return');
   assert.equal(await all.result, null);
   const some = picker(3);
   some.key('space'); some.key('down'); some.key('space'); some.key('return');
-  assert.deepEqual(await some.result, ['key-1', 'key-2']);
+  assert.deepEqual(await some.result, ['key-0']);
 });
 
 test('Ctrl+C, EOF and stream errors restore terminal state and cancel', async () => {
@@ -133,4 +133,78 @@ test('non-interactive CLI rejects over-limit selection before reading authentica
   await assert.rejects(promisify(execFile)(process.execPath, [fileURLToPath(new URL('../src/cli.js', import.meta.url)), 'dev', '--no-interactive'], {
     cwd: root, env: { ...process.env, NEXIA_CONFIG_HOME: join(root, 'unused-config') }, timeout: 5000,
   }), error => error.code === 2 && /at most 20/.test(error.stderr));
+});
+
+
+test('picker uses terminal height and Config is selected by default', async () => {
+  const large = picker(27, 20, { configure: true, configKeys: ['key-0'] }, 40);
+  assert.match(large.rendered(), /folder-26/);
+  assert.match(large.rendered(), /\[x\] Config/);
+  assert.match(large.rendered(), /folder-0 \(Config\)/);
+  large.key('return');
+  assert.deepEqual(await large.result, ['key-0']);
+  const small = picker(27, 20, {}, 12);
+  assert.doesNotMatch(small.rendered(), /folder-10/);
+  small.key('down'); small.key('space'); small.key('return');
+  assert.deepEqual(await small.result, ['key-0']);
+});
+
+test('Config locks its members, permits additions, and counts distinct Apps', async () => {
+  const p = picker(3, 2, { configure: true, configKeys: ['key-0'] });
+  p.key('down'); p.key('space');
+  assert.match(p.rendered(), /Included in Config|Config 포함/);
+  p.key('down'); p.key('space');
+  p.key('down'); p.key('space');
+  assert.match(p.rendered(), /Limit reached|최대 개수/);
+  p.key('return');
+  assert.deepEqual(new Set(await p.result), new Set(['key-0', 'key-1']));
+});
+
+test('All Apps clears Config and extras; manual selection clears All Apps', async () => {
+  const p = picker(3, 20, { configure: true, configKeys: ['key-0'] });
+  p.key('down'); p.key('down'); p.key('space');
+  p.key('up'); p.key('up'); p.key('up'); p.key('space'); p.key('return');
+  assert.equal(await p.result, null);
+  const q = picker(3, 20, { configure: true, configKeys: ['key-0'] });
+  q.key('up'); q.key('space');
+  q.key('down'); q.key('down'); q.key('down'); q.key('space'); q.key('return');
+  assert.deepEqual(await q.result, ['key-1']);
+});
+
+test('turning Config off retains extras and enabling it removes duplicate manual choices', async () => {
+  const p = picker(3, 20, { configure: true, configKeys: ['key-0'] });
+  p.key('down'); p.key('down'); p.key('space');
+  p.key('up'); p.key('up'); p.key('space'); p.key('return');
+  assert.deepEqual(await p.result, ['key-1']);
+  const q = picker(3, 20, { configure: true, configKeys: ['key-0'] });
+  q.key('space'); q.key('down'); q.key('space'); q.key('up'); q.key('space'); q.key('return');
+  assert.deepEqual(await q.result, ['key-0']);
+});
+
+test('configuration editor preselects saved identities or All Apps', async () => {
+  const initial = picker(3, 20, { initial: ['key-1'], saving: true });
+  initial.key('return');
+  assert.deepEqual(await initial.result, ['key-1']);
+  const all = picker(3, 20, { initial: null, saving: true });
+  all.key('return');
+  assert.equal(await all.result, null);
+});
+
+
+test('unconfigured Config is not checked and manual selection remains available', async () => {
+  const p = picker(3, 20, { configure: true });
+  p.key('space');
+  assert.match(p.rendered(), /nexia dev config/);
+  p.key('down'); p.key('space'); p.key('return');
+  assert.deepEqual(await p.result, ['key-0']);
+});
+
+test('Config cannot be enabled when its union with extra Apps exceeds the maximum', async () => {
+  const p = picker(3, 2, { configure: true, configKeys: ['key-0', 'key-1'] });
+  p.key('space');
+  p.key('down'); p.key('down'); p.key('down'); p.key('space');
+  p.key('up'); p.key('up'); p.key('up'); p.key('space');
+  assert.match(p.rendered(), /Limit reached|최대 개수/);
+  p.key('return');
+  assert.deepEqual(await p.result, ['key-2']);
 });

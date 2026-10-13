@@ -6,7 +6,7 @@ import { setup } from './setup.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
-import { selectDevApps } from './dev-selection.js';
+import { configuredDevApps, configureDevApps } from './dev-selection.js';
 import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
 import { nativeDev } from './native-dev.js';
@@ -182,6 +182,12 @@ try {
       }
       if (failed) throw new Error('One or more App checks failed. See the results above.');
       console.log('Source checks passed. Runtime behavior, review and production deployment were not verified.');
+    } else if (name === 'dev config') {
+      const workspace = await findWorkspace(process.cwd());
+      if (!workspace) throw new InputError('Run nexia dev config inside a connected project.');
+      const { apps, errors } = await discoverApps(workspace.root);
+      for (const error of errors) log(`${error.directory}: ${error.message}`);
+      await configureDevApps(workspace, apps, options.app, input);
     } else if (name === 'dev') {
       const workspace = await findWorkspace(process.cwd());
       if (options.app && !workspace) throw new InputError('--app requires a connected project.');
@@ -192,7 +198,7 @@ try {
       let selectedApps;
       if (workspace) {
         const { apps, errors } = await discoverApps(workspace.root);
-        selectedApps = await selectDevApps(apps, options.app, input);
+        selectedApps = await configuredDevApps(workspace, apps, options.app, input);
         log(`Project development: ${workspace.root}\nScope: ${selectedApps?.join(', ') || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
         for (const error of errors) log(`${error.directory}: ${error.message}`);
       }

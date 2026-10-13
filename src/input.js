@@ -53,29 +53,44 @@ export function createInput(options = {}, { input = process.stdin, output = proc
     const answer = await text(key, `${label}\n${labels}`, { defaultValue: defaultValue ?? '', required: true, validate: value => values.includes(value) || (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= values.length) });
     return values.includes(answer) ? answer : values[Number(answer) - 1];
   }
-  async function multiChoice(label, choices, { max }) {
+  async function multiChoice(label, choices, { max, initial = [], configure = false, configKeys = [], configAll = false, configError = '', saving = false }) {
     if (!interactive) throw new InputError('Repeat --app to select Apps.');
-    const selected = new Set();
-    let cursor = 0, all = false, warning = '', renderedLines = 0;
+    const selected = new Set(initial === null ? [] : initial);
+    const total = choices.length + 1 + Number(configure);
+    const saved = new Set(configKeys);
+    const effective = () => all ? choices.map(item => item.value) : [...new Set([...selected, ...(configured ? saved : [])])];
+    let cursor = configure ? 1 : 0, all = initial === null, configured = configure && saved.size > 0 && !configError, warning = '', renderedLines = 0;
     const render = () => {
       if (renderedLines) output.write(`\x1b[${renderedLines}A`);
-      const count = Math.min(choices.length + 1, Math.max(1, Math.min(8, (output.rows || 24) - 5)));
-      const start = Math.min(Math.max(0, cursor - count + 1), choices.length + 1 - count);
-      const lines = [`${selected.size}/${max} ${message('selected', '선택')} ${warning}`];
+      const count = Math.min(total, Math.max(1, (output.rows || 24) - 6));
+      const start = Math.min(Math.max(0, cursor - count + 1), total - count);
+      const lines = [`${effective().length}/${max} ${message('selected', '선택')} ${warning}`];
       for (let index = start; index < start + count; index++) {
-        const item = index === 0 ? message('All Apps', '전체 앱') : choices[index - 1].label;
-        const checked = index === 0 ? all : selected.has(choices[index - 1].value);
+        if (configure && index === 1) {
+          lines.push(`${index === cursor ? '>' : ' '} [${configured ? 'x' : ' '}] ${message('Config Apps (nexia dev config)', 'Config 설정 (nexia dev config)')}${!saved.size || configError ? message(' — setup required', ' — 설정 필요') : ''}`);
+          continue;
+        }
+        const choice = choices[index - 1 - Number(configure && index > 1)];
+        const member = index > 0 && saved.has(choice.value);
+        const item = index === 0 ? message('All Apps', '전체 앱') : `${choice.label}${member ? ' (Config)' : ''}`;
+        const checked = index === 0 ? all : !all && (selected.has(choice.value) || configured && member);
         const limit = index === 0 && choices.length > max ? message(' (over limit)', ' (최대 개수 초과)') : '';
         lines.push(`${index === cursor ? '>' : ' '} [${checked ? 'x' : ' '}] ${item}${limit}`);
       }
       while (lines.length < renderedLines) lines.push('');
       for (const line of lines) {
-        // Bound wide characters too, so wrapped lines do not corrupt redraws.
-        output.write(`\r\x1b[2K${Array.from(line).slice(0, Math.max(1, Math.floor((output.columns || 100) / 2) - 1)).join('')}\n`);
+        // Reserve two cells for non-ASCII characters without truncating ASCII names to half the terminal.
+        let visible = '', width = 0;
+        for (const character of line.replace(/[\x00-\x1f\x7f-\x9f]/g, '')) {
+          width += character.codePointAt(0) < 128 ? 1 : 2;
+          if (width >= (output.columns || 100)) break;
+          visible += character;
+        }
+        output.write(`\r\x1b[2K${visible}\n`);
       }
       renderedLines = lines.length;
     };
-    output.write(`${label}\n${message('↑/↓ move · Space select · Enter start · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 실행 · Ctrl+C 취소')}\n`);
+    output.write(`${label}\n${saving ? message('↑/↓ move · Space select · Enter save · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 저장 · Ctrl+C 취소') : message('↑/↓ move · Space select · Enter start · Ctrl+C cancel', '↑/↓ 이동 · 스페이스 선택 · Enter 실행 · Ctrl+C 취소')}\n`);
     const wasRaw = Boolean(input.isRaw), wasFlowing = input.readableFlowing === true;
     emitKeypressEvents(input);
     return new Promise((resolve, reject) => {
@@ -93,24 +108,38 @@ export function createInput(options = {}, { input = process.stdin, output = proc
       const onKey = (text, key = {}) => {
         warning = '';
         if (key.ctrl && ['c', 'd'].includes(key.name) || key.name === 'escape') return onEnd();
-        if (key.name === 'up') cursor = (cursor + choices.length) % (choices.length + 1);
-        else if (key.name === 'down') cursor = (cursor + 1) % (choices.length + 1);
+        if (configure && cursor === 1 && (key.name === 'space' || text === ' ')) {
+          if (configError || !saved.size) warning = configError || message('Run nexia dev config first', '먼저 nexia dev config를 실행하세요');
+          else if (!configured && new Set([...selected, ...saved]).size > max) warning = message('Limit reached', '최대 개수 도달');
+          else {
+            configured = !configured; all = false;
+            for (const value of saved) selected.delete(value);
+          }
+          render();
+          return;
+        }
+        if (key.name === 'up') cursor = (cursor + total - 1) % total;
+        else if (key.name === 'down') cursor = (cursor + 1) % total;
         else if (key.name === 'space' || text === ' ') {
           if (cursor === 0) {
             if (choices.length > max) warning = message('Select individual Apps', '개별 앱을 선택하세요');
             else {
               all = !all;
               selected.clear();
-              if (all) for (const choice of choices) selected.add(choice.value);
+              configured = false;
             }
           } else {
-            const value = choices[cursor - 1].value;
-            if (selected.has(value)) { selected.delete(value); all = false; }
-            else if (selected.size < max) { selected.add(value); all = false; }
+            const value = choices[cursor - 1 - Number(configure)].value;
+            if (configured && saved.has(value)) warning = message('Included in Config; deselect Config to edit individually', 'Config 포함 앱입니다. 개별 변경은 Config를 해제하세요');
+            else if (selected.has(value)) { selected.delete(value); all = false; }
+            else if (all || effective().length < max) {
+              if (all) selected.clear();
+              selected.add(value); all = false;
+            }
             else warning = message('Limit reached', '최대 개수 도달');
           }
         } else if (key.name === 'return') {
-          if (selected.size) return finish(null, all ? null : [...selected]);
+          if (effective().length) return finish(null, all || configured && configAll ? null : effective());
           warning = message('Select at least one App', '앱을 하나 이상 선택하세요');
         }
         render();
