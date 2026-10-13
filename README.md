@@ -47,6 +47,7 @@ an App repository. Project/App instructions are created without overwriting your
 
 | Command | Purpose |
 | --- | --- |
+| `update` | Check and install the newer alpha CLI release |
 | `setup` | Prepare environment and generators |
 | `create [project\|app]` | Select a creation task; optionally supply the new folder |
 | `connect [project-id]` | Authenticate and bind the current project folder |
@@ -62,6 +63,26 @@ an App repository. Project/App instructions are created without overwriting your
 | `submit` | Submit an existing Git version tag for review |
 | `submit status\|cancel\|retry [id]` | Inspect or manage an identified submission |
 | `help [command]`, `--version` | Help and installed CLI version |
+
+## CLI updates
+
+Run `nexia update` to check the npm alpha channel and confirm an update.
+`nexia update --dry-run` shows the available update without installing it;
+`nexia update --no-interactive --yes` explicitly authorizes installation in automation.
+The installer verifies that this CLI belongs to the active npm global installation,
+installs the exact version shown, and asks you to rerun your original command.
+It does not rerun business operations automatically or use sudo.
+For other package managers, source checkouts, or Windows, use your original
+installation method; npm users can always run `npm install -g @nexia/cli@alpha`.
+
+Interactive commands (including plain `nexia`) offer **Update now**, **Skip this
+time**, or **Remind me in 24 hours**. Registry checks have a two-second timeout
+and are cached for 24 hours in the CLI config directory (`update.json`, separate
+from authentication). Network/cache failures do not block ordinary commands.
+Skipping continues the original command; a failed installation stops it with an
+error. Help, version output, CI, non-TTY, `--json`, `--no-interactive`, `--yes`,
+`--dry-run`, and source checkouts do not trigger automatic checks or prompts.
+Explicit `nexia update` ignores the notification cache and reminder delay.
 
 ## Questions and options
 
