@@ -84,7 +84,15 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
   });
   await new Promise((resolve, reject) => {
     const onError = error => reject(error.code === 'EADDRINUSE'
-      ? new Error(`Port ${port} is already in use. If nexia dev is already running, open its workspace link. Otherwise stop the other process or retry with --port <unused-port>.`)
+      ? new Error(`Port ${port} is already in use. If nexia dev is already running, open its workspace link.
+Inspect this project: nexia ps
+Stop its local development: nexia stop --port ${port}
+For older CLI sessions, press Ctrl+C in the terminal running nexia dev, then run nexia dev again.
+If you cannot find that terminal, inspect the listening process (macOS/Linux):
+  lsof -nP -iTCP:${port} -sTCP:LISTEN
+Check COMMAND and PID. Only if it is the process you intend to stop, replace PID below with its number:
+  kill -TERM PID
+Then run nexia dev again. To keep the existing process, retry with --port <unused-port>.`)
       : error);
     server.once('error', onError);
     server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', onError); resolve(); });

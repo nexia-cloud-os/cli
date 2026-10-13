@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { retryDevRead, transientPlatformError } from './dev-retry.js';
+import { message } from './input.js';
 import { randomUUID } from 'node:crypto';
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,7 +14,7 @@ import { startFrontendBuild } from './frontend-build.js';
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
 // Only public source/preparation APIs; no operator credentials or local App execution.
-export async function nativeDev(directory, { signal, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null } = {}) {
+export async function nativeDev(directory, { signal, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {} } = {}) {
   const config = await readConnection();
   const local = path.join(directory, '.nexia');
   async function readLocal(name, optional = false) {
@@ -28,18 +30,23 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   const binding = await readLocal('project.json');
   const identity = await readLocal('app.json');
   const scope = { endpoint: config.endpoint, project_id: binding.project_id, app_id: identity.id };
+  const consoleUrl = new URL(`/projects/${scope.project_id}/development#project-apps`, config.endpoint);
   function preparationFailure(operation) {
     const retryable = operation.status === 'failed' && (!operation.started_at || operation.retry_allowed === true);
     const next = retryable
       ? 'Fix the reported error, wait for shutdown to finish, then restart nexia dev in the same project folder.'
       : 'This operation requires operator review before retrying; preparation may have changed data. Share this operation ID with developer support.';
-    const consoleUrl = new URL(`/projects/${scope.project_id}/development#project-apps`, config.endpoint);
     return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}. ${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
       code: retryable ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED',
     });
   }
   if (!uuid(scope.project_id) || !uuid(scope.app_id) || binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint) throw new Error('App bindings do not match this platform. Run nexia login and project nexia dev.');
-  const initialConnection = await request(config, 'connection');
+  const initialConnection = await retryDevRead(async () => {
+    const current = await readConnection();
+    if (current.token !== config.token || current.endpoint !== config.endpoint) throw new Error('CLI connection changed. Restart nexia dev after login.');
+    return request(config, 'connection');
+  }, { signal, log, interval });
+  if (!initialConnection) return;
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
   if (initialConnection.sandbox?.id) scope.sandbox_id = initialConnection.sandbox.id;
   let state = await readLocal('runtime.json', true);
@@ -96,6 +103,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           preview = previewHost ? previewHost.attach(directory, () => browserRuntime)
             : await startNativePreview(directory, { workspaceOrigin, port, container, state: () => browserRuntime });
           launch.searchParams.set('preview', preview.url);
+          onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
           log(`Nexia workspace: ${launch.href}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}`);
           connectionChecked = true;
         }
@@ -104,8 +112,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         if (scope.sandbox_id && selection.sandbox_id !== scope.sandbox_id) throw new Error('Personal sandbox changed. Restart dev; previous state was retained.');
         if (selection.mode === 'off') {
           browserRuntime = { mode: 'off', app_id: scope.app_id, app_key: identity.key };
-          const status = `off:${selection.revision}:${selection.stop_pending}`;
-          if (lastStatus !== status) log(`Development execution off${selection.stop_pending ? '; operator shutdown pending' : ''}. Source and data retained. Resume development execution in Developers Console, then keep nexia dev running.`);
+          const status = `off:${selection.revision}:${selection.stop_pending}:${selection.resume_pending}`;
+          if (lastStatus !== status) {
+            let next = message('Open the link below and choose Resume development for this App.', '아래 링크에서 이 앱의 ‘개발 실행 재개’를 누르세요.');
+            if (selection.resume_pending) next = message('Switching from the installed App to development. Waiting for confirmed shutdown; development will resume automatically.', '설치본에서 개발본으로 전환 중입니다. 종료가 확인되면 자동으로 재개합니다.');
+            else if (selection.stop_pending) next = message('Shutdown is still pending. Wait for it to finish, then resume development from the App list below.', '실행 종료를 기다리고 있습니다. 종료가 완료되면 아래 앱 목록에서 개발 실행을 재개하세요.');
+            log(`${selection.resume_pending ? message('Development switch pending.', '개발 실행 전환 대기 중입니다.') : message('Development execution off. This App is not shown in the workspace.', '개발 실행이 꺼져 있어 워크스페이스에 이 앱이 표시되지 않습니다.')}\n${next}\n${consoleUrl.href}\n${message('Keep nexia dev running; it will continue automatically after you resume. Source and data are retained.', 'nexia dev는 켜 두세요. 재개하면 자동으로 이어집니다. 소스와 데이터는 보존됩니다.')}`);
+          }
           lastStatus = status;
           await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
@@ -194,8 +207,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           continue;
         }
         // Source snapshots are immutable; preparation retries retain their persisted request ID.
-        if (error.name === 'TimeoutError' || [502, 503, 504].includes(error.status)
-          || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(error.cause?.code)) {
+        if (transientPlatformError(error)) {
           browserRuntime = null;
           const reason = error.status ? `HTTP ${error.status}` : error.name === 'TimeoutError' ? 'timeout' : 'connection interrupted';
           log(`Platform temporarily unavailable (${error.platformRequest ?? 'development request'}: ${reason}); retrying. Source and pending requests retained.`);

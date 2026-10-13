@@ -10,7 +10,15 @@ test('occupied preview port explains how to reuse or restart development', async
   try {
     await assert.rejects(startNativePreview(null, {
       port: Number(new URL(first.url).port), workspaceOrigin: 'http://workspace.localhost:8081', apps: new Map(),
-    }), /already in use.*workspace link.*--port/);
+    }), error => {
+      assert.match(error.message, /already in use.*workspace link/s);
+      assert.match(error.message, /Ctrl\+C/);
+      assert.ok(error.message.includes(`lsof -nP -iTCP:${new URL(first.url).port} -sTCP:LISTEN`));
+      assert.match(error.message, /Check COMMAND and PID/);
+      assert.match(error.message, /kill -TERM PID/);
+      assert.match(error.message, /--port <unused-port>/);
+      return true;
+    });
   } finally { await first.close(); }
 });
 

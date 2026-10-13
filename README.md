@@ -236,3 +236,32 @@ Authorization failures and preparations requiring operator review still stop.
 
 Developer support: https://github.com/nexia-cloud-os/developer-support/issues.
 Include sanitized reproduction and package versions, never credentials or data.
+
+### Find and stop a background development session
+
+From the same project (or one of its Apps), use:
+
+```sh
+nexia ps
+nexia ps --json
+nexia stop --port 4310
+nexia stop
+nexia status
+```
+
+For Docker sessions, run these commands inside the same container.
+
+`ps` lists this folder's tracked local sessions, PIDs, preview ports, selected
+Apps and workspace links. `stop` asks those Nexia processes to shut down their
+watchers and preview servers, including sessions started by an assistant. It
+never kills an arbitrary port owner or deletes remote data. An acknowledgement
+of `stopping` means shutdown has not finished; check `ps` again. An unreachable
+record may be stale and is not proof of a running process. Sessions started by
+older CLI versions are not tracked: use their terminal's Ctrl+C, or inspect
+`lsof -nP -iTCP:4310 -sTCP:LISTEN` and stop only the intended process.
+
+`status` also reports the project's Git connection, last checked Git tag,
+latest submitted tag, published version and deployed version when the platform
+supports this metadata. Deployed means the current platform environment, not a
+tenant's installed version. Open the App's repository page in Console to refresh
+remote tags. Unknown or unchecked values are not inferred from published versions.

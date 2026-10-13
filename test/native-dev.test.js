@@ -18,13 +18,14 @@ for (const expired of [true, false]) {
     const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
     const oldRevision = randomUUID(), oldRequest = randomUUID(), restoredRevision = randomUUID();
     const submissions = [];
-    let uploads = 0;
+    let uploads = 0, connectionChecks = 0;
     const shutdown = new AbortController();
     const server = createServer(async (req, res) => {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const input = raw ? JSON.parse(raw) : null;
       let payload;
       if (req.url.endsWith('/connection')) {
+        if (++connectionChecks === 1 && expired) { res.writeHead(503).end('{}'); return; }
         payload = { status: 'connected', project: { id: project }, sandbox: { id: sandbox, status: 'active',
           workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
       } else if (req.url.endsWith('/execution')) {
@@ -231,6 +232,10 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   assert.ok(lifecycleMessages.every(message => !message.includes('preparation completed')));
   assert.equal(operations.size, 3);
   assert.equal(offPolls, 3);
+  const offMessage = lifecycleMessages.find(message => message.includes('/development#project-apps'));
+  assert.ok(offMessage, 'off state links directly to the development App list');
+  assert.match(offMessage, /nexia dev/);
+  assert.match(offMessage, /workspace|워크스페이스/);
   assert.equal(submissions.at(-1), submissions.at(-2), 'off race retains the pending idempotency key');
   [...operations.values()].at(-1).status = 'needs_review';
   // Return a terminal status on submission resume; do not silently create a fresh request.

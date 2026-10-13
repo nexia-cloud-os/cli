@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { retryDevRead } from './dev-retry.js';
 import { MAX_DEV_APPS, filterDevApps } from './dev-selection.js';
 import { lstat, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,9 +12,15 @@ import { startNativePreview } from './native-preview.js';
 
 const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 
-export async function workspaceDev(workspace, { signal, port = 4310, container = false, app: selector, log = console.log } = {}) {
+export async function workspaceDev(workspace, { signal, port = 4310, container = false, app: selector, log = console.log, onStatus = () => {} } = {}) {
   const config = await readConnection();
-  let connection = await request(config, 'connection');
+  const readStatus = () => retryDevRead(async () => {
+    const current = await readConnection();
+    if (current.token !== config.token || current.endpoint !== config.endpoint) throw new Error('Login changed. Restart nexia dev.');
+    return request(config, 'connection');
+  }, { signal, log });
+  let connection = await readStatus();
+  if (!connection) return;
   if (config.endpoint !== workspace.endpoint || connection.status !== 'connected' || connection.project?.id !== workspace.project_id) {
     throw new Error('Log in to the project linked to this folder before starting dev.');
   }
@@ -34,7 +41,8 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
     if (signal?.aborted) return;
     const selected = await readConnection();
     if (selected.token !== config.token || selected.endpoint !== config.endpoint) throw new Error('Login changed during sandbox preparation.');
-    connection = await request(config, 'connection');
+    connection = await readStatus();
+    if (!connection) return;
   }
   if (connection.sandbox?.status !== 'active') throw new Error('Your sandbox needs attention. Open the developer console to renew or recover it; data was retained.');
   const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
@@ -42,6 +50,7 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
   if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
   const preview = await startNativePreview(null, { workspaceOrigin, port, container, apps: new Map() });
   launch.searchParams.set('preview', preview.url);
+  onStatus({ status: 'watching', workspace_url: launch.href });
   log(`Project: ${connection.project.name}\nNexia workspace: ${launch.href}\nWatching App folders. Create or clone Apps here; Ctrl+C stops local development without deleting data.`);
   const workers = new Map(), messages = new Map(), retryAt = new Map();
   const report = (key, message) => { if (messages.get(key) !== message) { messages.set(key, message); log(message); } };
