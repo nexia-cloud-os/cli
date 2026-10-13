@@ -1,5 +1,6 @@
 // Public command vocabulary. PHP generator command names remain implementation details.
 export const commands = {
+  update: { description: ['Update the CLI from npm (alpha)', 'npm에서 CLI 업데이트 (alpha)'], options: ['dry-run', 'yes'] },
   setup: { description: ['Prepare PHP, Composer and App generators', 'PHP·Composer와 앱 생성 도구 준비'], options: ['devtools', 'dry-run', 'yes'] },
   'create project': { argument: 'directory', description: ['Create and connect a project', '프로젝트 생성·연결'], options: ['name', 'no-browser', 'yes'] },
   'create app': { argument: 'directory', description: ['Create a PHP/React App', 'PHP/React 앱 생성'], options: ['name', 'vendor', 'family', 'key', 'display-name', 'table-prefix', 'prerequisite', 'dry-run', 'yes'] },
