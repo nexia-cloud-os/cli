@@ -16,6 +16,7 @@ export function preparationFailureDetails(failure, check) {
   }
   if (failure.stage === 'migration_preflight') {
     const causes = {
+      DATABASE_MIGRATION_REQUIRED: 'This App database has not been migrated. Run nexia db migrate from the App directory, or nexia db migrate --app <folder-or-key> from the project. Keep nexia dev running; no administrator review is needed.',
       APPLIED_MIGRATION_SOURCE_MISMATCH: 'The database already contains migrations that are missing or changed in this source. Restore the original applied files or switch to the current source; add a new migration for further changes.',
       MIGRATION_OUTCOME_UNCERTAIN: 'An earlier nontransactional migration has an unconfirmed outcome. An administrator must inspect its actual database effects before retrying.',
       MIGRATION_OWNERSHIP_MISMATCH: 'Migration ownership does not match this App. An administrator must inspect the database allocation.',
