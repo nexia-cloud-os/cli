@@ -109,3 +109,48 @@ test('one project port routes multiple Apps without mixing their assets and supp
   assert.equal((await get(`${server.url}/__nexia_native?app_id=missing`)).status, 404);
   assert.equal((await get(`${server.url}/__nexia_native`, 'null')).status, 403);
 });
+
+test('preparation keeps the App discoverable without exposing stale execution authority', async t => {
+  const workspaceOrigin = 'http://workspace.localhost:8081';
+  const server = await startNativePreview(null, { port: 0, workspaceOrigin, apps: new Map() });
+  t.after(() => server.close());
+  let mode = 'preparing';
+  const app_id = '11111111-1111-4111-8111-111111111111';
+  const handle = server.attach('/unused', () => ({ mode, app_id, app_key: 'trial' }));
+  t.after(() => handle.close());
+  const get = route => fetch(`${server.url}${route}`, { headers: { Origin: workspaceOrigin } });
+  for (const status of ['preparing', 'build_failed']) {
+    mode = status;
+    assert.deepEqual((await (await get('/__nexia_native')).json()).apps, [{ app_id, app_key: 'trial' }]);
+    const result = await get(`/__nexia_native?app_id=${app_id}`);
+    assert.equal(result.status, 409);
+    assert.deepEqual(await result.json(), { schema_version: 'native-status-1', status, app_id, app_key: 'trial' });
+  }
+  mode = 'off';
+  assert.deepEqual((await (await get('/__nexia_native')).json()).apps, []);
+  assert.equal((await get(`/__nexia_native?app_id=${app_id}`)).status, 423);
+});
+
+
+test('completed frontend generations keep old lazy assets immutable during replacement', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-generations-'));
+  const workspaceOrigin = 'http://workspace.localhost:8081';
+  const first = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', second = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+  for (const generation of [first, second]) {
+    const output = path.join(root, 'dist/frontend-generations', generation);
+    await mkdir(output, { recursive: true });
+    await writeFile(path.join(output, 'index.js'), generation);
+  }
+  let current = { operation_id: 'old', frontend_generation: first };
+  const server = await startNativePreview(root, { port: 0, workspaceOrigin, state: () => current });
+  const get = url => fetch(url, { headers: { Origin: workspaceOrigin } });
+  try {
+    const old = await (await get(`${server.url}/__nexia_native`)).json();
+    current = { operation_id: 'new', frontend_generation: second };
+    const next = await (await get(`${server.url}/__nexia_native`)).json();
+    assert.notEqual(old.entry, next.entry);
+    assert.equal(await (await get(old.entry)).text(), first);
+    assert.equal(await (await get(next.entry)).text(), second);
+    assert.equal((await get(next.entry.replace(second, '..'))).status, 404);
+  } finally { await server.close(); await rm(root, { recursive: true, force: true }); }
+});

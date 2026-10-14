@@ -200,6 +200,30 @@ remain 100 revisions/512 MiB per sandbox. Data is never automatically reset.
 Stopping the local watcher retains data. Remote runtime management stays in
 Developers; a writer lease or pending preparation may prevent another writer.
 
+Generated Vite Apps reuse their prepared Backend when only browser source changes:
+JS/JSX/TS/TSX/CSS/SCSS in `resources/js/`, or CSS/SCSS in `resources/css/` and
+`resources/scss/`. These roots are browser-only inputs; Backend code must not read
+them as runtime data. The frontend still rebuilds locally. With a matching Core
+and an App rebuilt with the SDK's development-update contract, the Shell replaces
+that App without reloading other tabs. Unsaved forms and pending/uncertain writes
+defer replacement. This is App-scoped module replacement, not React Fast Refresh:
+component-local state can reset when a clean generation is applied. Old SDKs keep
+the explicit refresh path. Completed builds use immutable asset directories,
+retained during this watch session for existing pages and lazy chunks.
+
+PHP, routes, declarations, migrations, shared `resources/lang` translations,
+Blade views, public files, build configuration and dependencies still prepare a
+new Backend. Mixed changes follow that same full preparation path. The local
+runtime fingerprint is computed from the exact uploaded snapshot; the full source
+digest and remote revision are never rewritten to claim that local edits were
+uploaded. Legacy state gets a one-time preparation if its full source no longer
+matches. Publication and explicit database operations still upload complete source.
+
+With the matching Core update, builds and runtime preparation show a pending state
+and are polled automatically. A compile error is shown separately and recovers
+after a successful build. Stopped execution and denied access remain blocked.
+Older Core versions may still show a generic error while preparation is pending.
+
 ## Authentication
 
 `login` uses the current project ID when known, or asks for one. It still requests
@@ -460,6 +484,8 @@ can also be retried after correction and shutdown without administrator review.
 `needs_review` is execution recovery, not App publication review: an administrator
 must inspect uncertain database effects before approving another attempt.
 
-After correcting the cause and receiving any required approval, restart `nexia dev`.
+While watching, a changed source after a Core-confirmed safe failure starts a new
+preparation request automatically. An unchanged failed source is not replayed.
+Uncertain outcomes still require review; after that approval, restart `nexia dev`.
 Use Developers to stop or resume remote development execution. These controls do
 not approve `needs_review`. Preserve `.nexia`, data and migration history.
