@@ -67,6 +67,7 @@ export async function request(config, route, { method = 'GET', body, authenticat
       const op = payload.blocking_operation;
       const location = preparationLocation(op, config.endpoint);
       if (location && ['queued', 'running', 'needs_review'].includes(op.status)) {
+        error.blockingOperation = op;
         error.message += `\nBlocking preparation: ${op.id} (${op.status}).\n${preparationFailureDetails(op.failure, op.recovery_check)}${location}`;
         error.message += op.status === 'needs_review'
           ? 'An administrator must inspect this execution outcome; this is not App publication review. Preserve source and data.'

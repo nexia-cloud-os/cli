@@ -51,6 +51,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   }, { signal, log, interval });
   if (!initialConnection) return;
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
+  if (initialConnection.capabilities?.explicit_development_migrations !== true) {
+    throw new Error('The platform needs an update for explicit development migrations. nexia dev was not started because this platform may automatically migrate on source changes.');
+  }
   if (initialConnection.sandbox?.id) scope.sandbox_id = initialConnection.sandbox.id;
   if (!initialConnection.capabilities?.development_logs) log('PHP log streaming needs a platform update. Local build and browser logs remain available.');
   let state = await readLocal('runtime.json', true);
@@ -88,6 +91,24 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           || currentProject.project_id !== scope.project_id || currentApp.id !== scope.app_id) {
           throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
         }
+        const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
+        if (databaseOperation) {
+          if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
+              || databaseOperation.developer_sandbox_id !== scope.sandbox_id
+              || !['migrate', 'seed', 'reset'].includes(databaseOperation.database_command)
+              || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(databaseOperation.status)) {
+            throw new Error('Platform returned a conflicting App database operation.');
+          }
+          if (databaseOperation.status === 'needs_review') throw preparationFailure(databaseOperation);
+          if (['queued', 'running'].includes(databaseOperation.status)) {
+            browserRuntime = null;
+            const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
+            if (lastStatus !== status) log(`Database ${databaseOperation.database_command}: ${databaseOperation.status}. Source watching will resume after this operation finishes.`);
+            lastStatus = status;
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
+          }
+        }
         if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
           // The same session can safely renew its lease after a lost response.
           const response = await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession } });
@@ -111,7 +132,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: () => browserRuntime });
           launch.searchParams.set('preview', preview.url);
           onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
-          log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}`);
+          log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}\nDatabase migrations are manual. Save migration files freely; run nexia db migrate from this App in another terminal when ready.`);
           connectionChecked = true;
         }
         // This authenticated endpoint rechecks the connection/project/sandbox each poll.
@@ -163,6 +184,11 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
               state = null;
               continue;
             }
+            if (error.status === 409 && ['queued', 'running'].includes(error.blockingOperation?.status)
+                && error.blockingOperation?.database_command) {
+              await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+              continue;
+            }
             // Another terminal can select off after this loop read the selection.
             // Preserve the same pending request; only an observed off choice permits waiting.
             if (error.status === 409 && (await readExecutionSelection(config, scope)).mode === 'off') continue;
@@ -174,6 +200,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             || operation.developer_project_id !== scope.project_id || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(operation.status)
             || (state.operation_id && operation.id !== state.operation_id)) throw new Error('Platform returned a conflicting runtime operation.');
           cancelled = operation.status === 'failed' && operation.stopped_at && selection.revision > (state.selection_revision ?? 0);
+          const waitingForMigration = operation.status === 'failed' && operation.failure?.code === 'DATABASE_MIGRATION_REQUIRED';
+          if (waitingForMigration && operation.retry_allowed && databaseOperation?.status === 'completed'
+              && Date.parse(databaseOperation.created_at) >= Date.parse(operation.created_at)) cancelled = true;
           if (writer && (operation.writer_generation ?? state.writer_generation) !== writer.generation) {
             const reviewed = operation.status === 'failed' && operation.stopped_at && operation.retry_allowed === true;
             if (operation.status !== 'completed' && !cancelled && !reviewed && !(operation.status === 'failed' && !operation.started_at)) throw preparationFailure(operation);
@@ -191,7 +220,13 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             log(['stopping', 'stopped'].includes(phase)
               ? `App execution ${phase}: ${operation.id}. Source and data retained.`
               : `App preparation ${phase}: ${operation.id}${phase === 'completed' ? '\nRuntime preparation confirmed; this does not publish or install a release.' : ''}`);
+            if (waitingForMigration) log(preparationFailureDetails(operation.failure, operation.recovery_check).trim());
             lastStatus = status;
+          }
+          if (waitingForMigration && !cancelled && !renewWriter) {
+            browserRuntime = null;
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
           }
           if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw preparationFailure(operation);
           if (operation.stop_requested_at && !operation.stopped_at) {

@@ -31,6 +31,10 @@ nexia make resource Note
 nexia dev
 ```
 
+Leave `dev` running. In another terminal inside the App, run `nexia db migrate`
+to initialize its database. Run it again explicitly after writing new migrations;
+file saves do not change the schema.
+
 `setup --devtools` installs/updates generators in the CLI-owned tools directory,
 not global Composer. Plain `setup` asks whether to also install/upgrade Homebrew
 PHP and Composer on macOS, shows the plan and requires confirmation. Existing
@@ -212,11 +216,9 @@ Do not commit `.nexia/` or copy the private global CLI credential file.
 
 ## Database and submission
 
-Database commands operate only on the registered App's active sandbox. `db seed`
-asks from this App's declared fixture keys; other installed Apps are not targets.
-A returned `queued` operation is not completion: inspect `db status`. Stop `dev`
-first if it owns the writer lease. Retry a lost response using the same printed
-`--request-id`; a review-required operation needs operator inspection.
+`nexia dev` watches source without applying migrations or initialization. Keep it running while writing migration files. From the App folder in another terminal, run `nexia db migrate` when ready. The command uploads the current local source, pins that revision, and waits for completion; the watcher then resumes. A new App waits for its first explicit migration without administrator review. Already-applied migration files remain immutable: add a new migration for later changes.
+
+Database commands target only this App's active sandbox. Run migrations before `db seed`; seeding does not implicitly migrate. Recover a lost response using the printed `--request-id`, which keeps the original source revision even after local edits. `db status` reports the latest operation. Unconfirmed database effects still require operator inspection.
 
 Commit and push source and the intended version tag with Git yourself. From the
 App run `nexia check`, then `nexia submit --tag v1.0.0`. If repository connection is
