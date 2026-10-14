@@ -46,11 +46,20 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     if (!selected) { res.writeHead(404).end(); return; }
     const [assetToken, app] = selected;
     const directory = app.directory;
-    const root = path.join(path.resolve(directory), 'dist', 'frontend');
     const current = manifest ? app.state() : null;
+    const assetPath = manifest ? current?.frontend_generation : url.pathname.slice(assetToken.length + 2).split('/')[0];
+    const generation = typeof assetPath === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(assetPath) ? assetPath : null;
+    const root = path.join(path.resolve(directory), 'dist', generation ? `frontend-generations/${generation}` : 'frontend');
     if (manifest && current?.mode === 'off') { res.writeHead(423).end(); return; }
+    if (manifest && ['preparing', 'build_failed', 'runtime_failed'].includes(current?.mode)) {
+      res.writeHead(409, { 'Content-Type': 'application/json', 'Retry-After': '2' });
+      res.end(req.method === 'HEAD' ? undefined : JSON.stringify({
+        schema_version: 'native-status-1', status: current.mode, app_id: current.app_id, app_key: current.app_key,
+      }));
+      return;
+    }
     try {
-      for (const directory of [path.resolve(root, '../..'), path.dirname(root), root]) {
+      for (const directory of [path.resolve(app.directory), path.join(path.resolve(app.directory), 'dist'), path.dirname(root), root]) {
         if ((await lstat(directory)).isSymbolicLink()) throw new Error('Linked frontend directories are not public.');
       }
       if (manifest) {
@@ -68,7 +77,7 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
           } catch (error) { if (error.code === 'ENOENT') translations[locale] = {}; else throw error; }
         }
         const body = JSON.stringify({ schema_version: 'native-1', verbose_logs: app.verbose === true, ...current,
-          translations, entry: `${origin}/${assetToken}/index.js`, frontend_revision: `${info.size}:${info.mtimeMs}:${info.ctimeMs}` });
+          translations, entry: `${origin}/${assetToken}/${generation ? generation + '/' : ''}index.js`, frontend_revision: generation ?? `${info.size}:${info.mtimeMs}:${info.ctimeMs}` });
         const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
         res.setHeader('Cache-Control', 'private, no-cache');
         res.setHeader('ETag', etag);
@@ -77,7 +86,7 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
         res.end(req.method === 'HEAD' ? undefined : body);
         return;
       }
-      const prefix = `/${assetToken}/`;
+      const prefix = `/${assetToken}/${generation ? generation + '/' : ''}`;
       if (!req.url.startsWith(prefix)) { res.writeHead(404).end(); return; }
       const entry = decodeURIComponent(new URL(req.url, origin).pathname.slice(prefix.length));
       const type = types[path.extname(entry)];

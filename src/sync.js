@@ -1,7 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { readConnection, request } from './connection.js';
-import { sourceSnapshot } from './source-snapshot.js';
+import { sourceSnapshot, runtimeSourceDigest } from './source-snapshot.js';
 
 export async function syncSource(directory, { log = console.log, config = null, scope = null } = {}) {
   config ??= await readConnection();
@@ -22,5 +22,7 @@ export async function syncSource(directory, { log = console.log, config = null, 
   const result = await request(config, 'v2/sources', { method: 'POST', body: { app_id: identity.id, source } });
   if (result.revision?.digest !== source.digest || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(result.revision?.id || '')) throw new Error('Platform returned a conflicting source revision.');
   log(`Source saved: ${result.revision.id} (${result.revision.file_count} files)\nThis private snapshot does not activate, publish or install the App.`);
-  return result;
+  // Derive the local comparison from the exact uploaded bytes, not a second
+  // scan which could observe edits made while the upload was in flight.
+  return { ...result, runtime_digest: runtimeSourceDigest(source) };
 }

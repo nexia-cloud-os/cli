@@ -8,7 +8,7 @@ import { preparationFailureDetails, preparationLocation } from './preparation-fa
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
-import { sourceSnapshot } from './source-snapshot.js';
+import { sourceSnapshot, runtimeSourceDigest } from './source-snapshot.js';
 import { syncSource } from './sync.js';
 import { readExecutionSelection, selectExecution } from './apps.js';
 import { startNativePreview } from './native-preview.js';
@@ -63,6 +63,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   }
   if (state && (Object.entries(scope).some(([key, value]) => state[key] !== value)
     || !uuid(state.request_id) || !uuid(state.revision_id) || !/^[a-f0-9]{64}$/.test(state.digest)
+    || (state.runtime_digest !== undefined && !/^[a-f0-9]{64}$/.test(state.runtime_digest))
     || (state.operation_id && !uuid(state.operation_id))
     || (state.selection_revision !== undefined && (!Number.isSafeInteger(state.selection_revision) || state.selection_revision < 0)))) throw new Error('Runtime state does not match this App binding. Keep it for recovery and restore the original binding.');
   async function persist(next) {
@@ -75,7 +76,13 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
-  let preview, build, runtimeLogs, browserRuntime = null;
+  let preview, build, runtimeLogs, browserRuntime = null, preparationFailed = false;
+  // Keep the App discoverable while its current execution is unavailable.
+  // A preparing identity grants no operation or source authority.
+  const previewState = () => browserRuntime ? { ...browserRuntime,
+    update_status: preparationFailed ? 'runtime_failed' : build?.failed() ? 'build_failed' : (build && !build.ready())
+      || (state && state.revision_id !== browserRuntime.source_revision_id) ? 'preparing' : 'ready',
+  } : { mode: preparationFailed ? 'runtime_failed' : build?.failed() ? 'build_failed' : 'preparing', app_id: scope.app_id, app_key: identity.key };
   try {
     while (!signal?.aborted) {
       try {
@@ -126,10 +133,10 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
           const launch = new URL(connection.sandbox.launch_url);
           if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
-          build = await startFrontendBuild(directory, { verbose, signal, log, onInvalidate: () => { browserRuntime = null; } });
+          build = await startFrontendBuild(directory, { verbose, signal, log, onInvalidate: () => {} });
           if (signal?.aborted) break;
-          preview = previewHost ? previewHost.attach(directory, () => browserRuntime, log, verbose)
-            : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: () => browserRuntime });
+          preview = previewHost ? previewHost.attach(directory, previewState, log, verbose)
+            : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: previewState });
           launch.searchParams.set('preview', preview.url);
           onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
           log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}\nDatabase migrations are manual. Save migration files freely; run nexia db migrate from this App in another terminal when ready.`);
@@ -163,7 +170,6 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           continue;
         }
         if (build && !build.ready()) {
-          browserRuntime = null;
           await delay(Math.min(interval, 1000), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
@@ -195,6 +201,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             throw error;
           }
           operation = result.operation;
+          preparationFailed = operation?.status === 'failed' || operation?.status === 'needs_review';
           if (!uuid(operation?.id) || operation.request_id !== state.request_id || operation.source_revision_id !== state.revision_id
             || (scope.sandbox_id && operation.developer_sandbox_id !== scope.sandbox_id)
             || operation.developer_project_id !== scope.project_id || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(operation.status)
@@ -220,13 +227,23 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             log(['stopping', 'stopped'].includes(phase)
               ? `App execution ${phase}: ${operation.id}. Source and data retained.`
               : `App preparation ${phase}: ${operation.id}${phase === 'completed' ? '\nRuntime preparation confirmed; this does not publish or install a release.' : ''}`);
-            if (waitingForMigration) log(preparationFailureDetails(operation.failure, operation.recovery_check).trim());
+            if (operation.failure) log(preparationFailureDetails(operation.failure, operation.recovery_check).trim());
             lastStatus = status;
           }
           if (waitingForMigration && !cancelled && !renewWriter) {
             browserRuntime = null;
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
+          }
+          if (operation.status === 'failed' && operation.retry_allowed === true && !waitingForMigration && !cancelled && !renewWriter) {
+            // A repaired source is a NEW request, never a replay of the failed
+            // operation. Only Core's explicit safe-retry attestation permits it.
+            const repaired = await sourceSnapshot(directory);
+            if (state.runtime_digest ? runtimeSourceDigest(repaired) !== state.runtime_digest : repaired.digest !== state.digest) cancelled = true;
+            else {
+              await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+              continue;
+            }
           }
           if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw preparationFailure(operation);
           if (operation.stop_requested_at && !operation.stopped_at) {
@@ -240,15 +257,26 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         if (!operation || operation.status === 'completed' || cancelled || renewWriter) {
           // ponytail: hash the bounded 16 MiB source tree; add incremental hashing only if measured watch cost warrants it.
           const snapshot = await sourceSnapshot(directory);
-          if (build && (!build.ready() || build.generation() !== frontendGeneration)) { browserRuntime = null; continue; }
-          if (!state || snapshot.digest !== state.digest || operation?.stopped_at || renewWriter) {
-            const { revision } = await syncSource(directory, { log: () => {}, config, scope });
+          if (build && (!build.ready() || build.generation() !== frontendGeneration)) { continue; }
+          const runtimeDigest = runtimeSourceDigest(snapshot);
+          // Old CLI state can be upgraded only when the complete source still
+          // matches the previously uploaded revision. Otherwise prepare once.
+          if (build && state && !state.runtime_digest && snapshot.digest === state.digest) {
+            await persist({ ...state, runtime_digest: runtimeDigest });
+          }
+          const unchanged = state && (snapshot.digest === state.digest
+            || (build && state.runtime_digest === runtimeDigest));
+          if (!unchanged || operation?.stopped_at || renewWriter) {
+            const { revision, runtime_digest } = await syncSource(directory, { log: () => {}, config, scope });
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.
-            browserRuntime = null;
-            await persist({ ...scope, digest: revision.digest, revision_id: revision.id, request_id: randomUUID(), selection_revision: selection.revision, ...(writer ? { writer_generation: writer.generation } : {}) });
+            preparationFailed = false;
+            await persist({ ...scope, digest: revision.digest, runtime_digest, revision_id: revision.id, request_id: randomUUID(), selection_revision: selection.revision, ...(writer ? { writer_generation: writer.generation } : {}) });
             continue;
           }
-          browserRuntime = candidateRuntime;
+          // Persisting legacy metadata can yield to the build worker. Recheck
+          // before exposing an entry whose files may now be changing.
+          if (build && (!build.ready() || build.generation() !== frontendGeneration)) { continue; }
+          browserRuntime = candidateRuntime && { ...candidateRuntime, ...(build?.snapshot() ? { frontend_generation: build.snapshot() } : {}) };
           if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
             await runtimeLogs?.close();
             runtimeLogs = watchRuntimeLogs(config, browserRuntime.operation_id, { log, signal, verbose });

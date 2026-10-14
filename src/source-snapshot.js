@@ -8,6 +8,15 @@ const files = new Set(['composer.json', 'composer.lock', 'package.json', 'packag
 const extensions = new Set(['.php', '.json', '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.html', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff', '.woff2', '.yaml', '.yml', '.xml']);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
+// Only browser source in the standard frontend roots can reuse a prepared
+// Backend. Shared translations, views, public files, manifests, dependencies,
+// tests and unknown extensions remain part of the runtime fingerprint.
+export function runtimeSourceDigest(source) {
+  const browserSource = file => /^(?:resources\/js\/.*\.(?:[cm]?js|jsx|ts|tsx|css|scss)|resources\/(?:css|scss)\/.*\.(?:css|scss))$/.test(file.path);
+  return sha256('runtime-source-v1\n' + source.files.filter(file => !browserSource(file))
+    .map(file => `${file.path}\0${file.sha256}\n`).join(''));
+}
+
 // Git worktrees use a gitdir file; no Git hooks or project commands are executed.
 export async function sourceIsChanging(directory) {
   let git = path.join(directory, '.git');
