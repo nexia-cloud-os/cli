@@ -13,6 +13,7 @@ import { configuredDevApps, configureDevApps } from './dev-selection.js';
 import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
 import { nativeDev } from './native-dev.js';
+import { runDatabaseOperation } from './database-operations.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
 import { Cancelled, createInput, language, message } from './input.js';
@@ -42,7 +43,7 @@ async function databaseBinding(directory) {
   if (!isUuid(project.project_id || '') || !isUuid(app.id || '') || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint) || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint)) throw new InputError('App binding is invalid.');
   const connection = await request(config, 'connection');
   if (connection.status !== 'connected' || connection.project?.id !== project.project_id) throw new InputError('This App is linked to another project. Run nexia login from its project folder.');
-  return { config, app };
+  return { config, app, project, connection };
 }
 async function submissionContext() {
   const config = await readConnection(), connection = await request(config, 'connection');
@@ -270,11 +271,9 @@ try {
         const id = options['request-id'] || randomUUID();
         if (!isUuid(id)) throw new InputError('--request-id must be a UUID.');
         await input.confirm(`App: ${directory}\nDatabase operation: ${action}${fixture ? ` (${fixture})` : ''}\nRequest: ${id}`);
-        log(`Database request: ${id}. If the response is lost, repeat with --request-id ${id}. Stop nexia dev first if it owns this App writer lease.`);
-        const result = await request(binding.config, route, { method: 'POST', body: { command: action, ...(fixture ? { fixture_key: fixture } : {}), request_id: id, writer_session: id } });
-        const released = await request(binding.config, `v2/apps/${binding.app.id}/writer`, { method: 'PUT', body: { session_id: id, release: true } });
-        if (released.writer?.released !== true) throw new Error('The accepted request did not release its writer lease. Retry with the same --request-id.');
-        output(options, { ...result, request_id: id }, `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})\nCheck: nexia db status\nAccepted does not mean completed.`);
+        input.close();
+        const result = await runDatabaseOperation(directory, binding, { command: action, fixture, requestId: id, log });
+        output(options, result, `${result.operation.database_command}: completed (${result.operation.id})\nDatabase changes applied. nexia dev can remain running.`);
       }
     } else if (name === 'submit') {
       const [directory] = await appTargets(options, input);

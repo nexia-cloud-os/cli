@@ -36,6 +36,10 @@
   directories offers Space/arrow-key selection of up to 20 Apps on one port.
   Use `--app people,payroll` or repeat `--app` to skip prompting. All Apps mode also watches
   new Apps, up to 20. Keep dev running in a separate terminal.
+- `nexia dev` never applies migrations on startup or file saves. Keep it running;
+  run `nexia db migrate` in another terminal when ready. This uploads current
+  local source and waits for completion. Run it once before using a new App or
+  seeding data. Add new migrations instead of editing already-applied files.
 - `nexia ps` lists local development sessions and ports. `nexia stop` stops this
   project’s local watchers; `--port <port>` selects one session. Sandbox data is retained.
 - `nexia dev config` saves default development Apps for this project. Later

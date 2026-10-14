@@ -19,7 +19,7 @@ export const commands = {
   ps: { description: ['List local development sessions, ports and Apps', '로컬 개발 세션·포트·앱 조회'], options: ['json'] },
   stop: { description: ['Stop local development for this project; retain sandbox data', '현재 프로젝트의 로컬 개발 종료·샌드박스 데이터 보존'], options: ['port', 'json'] },
   status: { description: ['Show authentication, project and sandbox status', '인증·프로젝트·샌드박스 상태 조회'], options: ['json'] },
-  'db migrate': { description: ['Request an App sandbox migration', '앱 샌드박스 마이그레이션 요청'], options: ['app', 'request-id', 'json', 'yes'] },
+  'db migrate': { description: ['Apply current App migrations and wait for completion', '현재 앱 마이그레이션 적용 및 완료 대기'], options: ['app', 'request-id', 'json', 'yes'] },
   'db seed': { argument: 'key', description: ['Run declared development data for this App', '현재 앱의 선언된 개발 데이터 실행'], options: ['app', 'request-id', 'json', 'yes'] },
   'db status': { description: ['Inspect the App database operation', '앱 DB 작업 상태 조회'], options: ['app', 'json'] },
   submit: { description: ['Submit an existing Git tag for review', '기존 Git 태그를 심사에 제출'], options: ['app', 'tag', 'request-id', 'no-browser', 'json', 'yes'] },
