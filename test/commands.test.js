@@ -64,3 +64,24 @@ test('public booleans map to the existing generator contract without changing la
   assert.deepEqual(generatorArguments('resource', { directory: '/app', name: 'Request', values: { 'label-ko': '신청', navigation: false, sort: 'auto' } }), ['make:resource', '/app', 'Request', '--label-ko', '신청', '--without-navigation']);
   assert.deepEqual(generatorArguments('page', { directory: '/app', name: 'Summary', values: { record: false, navigation: true } }, { dryRun: true }), ['make:page', '/app', 'Summary', '--without-record', '--dry-run']);
 });
+
+
+test('CLI messages and every help page stay English under a Korean terminal locale', async () => {
+  const input = new URL('../src/input.js', import.meta.url).href;
+  const commands = new URL('../src/commands.js', import.meta.url).href;
+  const script = `
+    import { language, message, Cancelled } from ${JSON.stringify(input)};
+    import { commands, groups, helpText } from ${JSON.stringify(commands)};
+    console.log(JSON.stringify({ language, prompt: message('Continue?', '진행할까요?'),
+      cancelled: new Cancelled().message,
+      help: ['', ...Object.keys(commands), ...Object.keys(groups)].map(name => helpText(name)) }));
+  `;
+  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], {
+    env: { ...process.env, LC_ALL: 'ko_KR.UTF-8', LC_MESSAGES: 'ko_KR.UTF-8', LANG: 'ko_KR.UTF-8' },
+  });
+  const output = JSON.parse(stdout);
+  assert.equal(output.language, 'en');
+  assert.equal(output.prompt, 'Continue?');
+  assert.equal(output.cancelled, 'Cancelled');
+  assert.doesNotMatch(output.help.join('\n'), /[가-힣]/);
+});

@@ -1,3 +1,4 @@
+import { preparationFailureDetails, preparationLocation } from './preparation-failure.js';
 import { access, mkdir, readFile, writeFile, chmod, rename, rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -62,6 +63,16 @@ export async function request(config, route, { method = 'GET', body, authenticat
   }
   if (!response.ok) {
     const error = new Error(`Platform HTTP ${response.status}: ${Object.values(payload.errors || {}).flat().join(' ') || payload.message || response.statusText}`);
+    if (response.status === 409 && payload.status === 'preparation_pending') {
+      const op = payload.blocking_operation;
+      const location = preparationLocation(op, config.endpoint);
+      if (location && ['queued', 'running', 'needs_review'].includes(op.status)) {
+        error.message += `\nBlocking preparation: ${op.id} (${op.status}).\n${preparationFailureDetails(op.failure, op.recovery_check)}${location}`;
+        error.message += op.status === 'needs_review'
+          ? 'An administrator must inspect this execution outcome; this is not App publication review. Preserve source and data.'
+          : 'Wait for this preparation to finish; do not submit duplicate requests.';
+      }
+    }
     error.status = response.status;
     error.platformRequest = `${method} /developer-api/${route}`;
     error.platformStatus = payload.status;

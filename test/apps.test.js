@@ -56,7 +56,7 @@ test('execution selection uses server revision and refuses stale or rebound choi
   rebind = true;
   await assert.rejects(selectExecution(root, 'development'), /binding or CLI connection changed/);
   assert.equal(writes, 3);
-  await assert.rejects(selectExecution(root, 'published'), /development\|off/);
+  await assert.rejects(selectExecution(root, 'published'), /development or off/);
 });
 
 test('native registration sends metadata only and preserves identity across retries', async t => {
@@ -150,7 +150,7 @@ test('startup resume uses the observed revision, accepts pending shutdown, and r
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'PUT') {
       let body = ''; for await (const chunk of req) body += chunk;
-      assert.deepEqual(JSON.parse(body), { mode: 'development', revision: 4 });
+      assert.deepEqual(JSON.parse(body), { mode: 'development', revision: selection.revision });
       writes++;
       selection = { ...selection, revision: 5, resume_pending: true };
     }
@@ -172,5 +172,6 @@ test('startup resume uses the observed revision, accepts pending shutdown, and r
   assert.equal(result.resume_pending, true);
   assert.match(messages.join('\n'), /pending/);
   await assert.rejects(selectExecution(root, 'development', { expected }), /changed before startup/);
-  assert.equal(writes, 1);
+  assert.equal((await selectExecution(root, 'development', { log: () => {} })).revision, 5);
+  assert.equal(writes, 2);
 });
