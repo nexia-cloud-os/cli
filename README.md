@@ -400,3 +400,40 @@ sign-in is required. Network failures are reported rather than treated as logout
 Help is grouped by task. Interactive selections use arrows and highlight the
 current row; terminals without raw input retain numbered choices. `NO_COLOR`
 or `TERM=dumb` disables colors. Piped/JSON output stays plain and noninteractive.
+
+### Development logs
+
+`nexia dev` prints App-prefixed warnings, errors and build failures. Use
+`nexia dev --verbose` to include general browser/PHP logs and successful request
+timings. Routine messages are filtered before serialization and transmission in
+the default mode. Vite uses its warning log level by default.
+
+Browser diagnostics include console calls attributed to the local App, uncaught
+errors, rejected promises, API failures and React boundary errors. Host-only
+messages are not attributed to an App. Output is batched, with at most 20 queued
+events, 16 KiB per request and 120 events per App per minute. Object inspection is
+bounded and does not evaluate getters; the browser console remains the local source.
+
+With a supporting Core and runtime image, PHP diagnostics are read every two
+seconds. The runtime retains 100 messages of at most 2 KiB in a local temporary
+file bounded to 800 KiB + 256 bytes per App scope, reused across revisions. It
+writes one fixed slot per event, uses nonblocking locks and limits recording to
+120 events/minute plus an overflow notice. Polling reads only new slots. Verbose
+collection expires within 15 seconds after polling stops. No log rows are written
+to the database; this is not an administrator error archive.
+
+Build output has bounded partial lines and rate limits; a slow terminal pipe
+cannot accumulate an unlimited output queue. Overload, lock contention or slow
+consumers may drop messages to protect development. These bounds are not a
+measured CPU or memory performance guarantee.
+
+Reconnects use a cursor and report expired history. Logs from customer
+installations, other developers and other Apps are not exposed. Disconnection
+does not stop development; Ctrl+C closes log polling together with the watchers.
+Older servers report unsupported PHP logs rather than implying no errors.
+
+Common credential fields are masked, but developers must still avoid logging
+secrets or unnecessary personal data. PHP startup failures before application
+logging is initialized and operator/container logs remain outside this stream.
+Deploy the matching runtime image and Core API before the CLI. No new dependency
+or external logging service is required.

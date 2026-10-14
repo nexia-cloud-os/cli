@@ -1,3 +1,4 @@
+import { receiveBrowserLogs } from './dev-log.js';
 import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, lstat } from 'node:fs/promises';
@@ -8,10 +9,10 @@ import { validateEndpoint } from './connection.js';
 const types = { '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff': 'font/woff', '.woff2': 'font/woff2' };
 
 // Serves only the developer's compiled frontend. Never executes a build or project script.
-export async function startNativePreview(directory, { workspaceOrigin, state, port = 4310, container = false, apps = null }) {
+export async function startNativePreview(directory, { workspaceOrigin, state, port = 4310, container = false, apps = null, log = console.log, verbose = false }) {
   workspaceOrigin = validateEndpoint(workspaceOrigin);
   const token = randomBytes(32).toString('hex');
-  const registrations = apps ?? new Map([[token, { directory, state }]]);
+  const registrations = apps ?? new Map([[token, { directory, state, log, verbose }]]);
   const server = createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     if (req.headers.host !== new URL(origin).host) { res.writeHead(403).end(); return; }
@@ -23,8 +24,14 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     res.setHeader('Vary', 'Origin');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (req.method === 'OPTIONS' && req.headers['access-control-request-method'] === 'GET' && !req.headers['access-control-request-headers']) {
-      res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Private-Network': 'true' }).end(); return;
+    if (req.method === 'OPTIONS' && ['GET', 'POST'].includes(req.headers['access-control-request-method']) && !req.headers['access-control-request-headers']) {
+      res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Private-Network': 'true' }).end(); return;
+    }
+    if (req.method === 'POST' && /^\/[a-f0-9]{64}\/__nexia_diagnostics$/.test(url.pathname)) {
+      const app = registrations.get(url.pathname.split('/')[1]);
+      if (!app?.state() || app.state().mode === 'off') { res.writeHead(404).end(); return; }
+      try { await receiveBrowserLogs(req, res, app); } catch { if (!res.headersSent) res.writeHead(400).end(); }
+      return;
     }
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
     if (manifest && apps && !url.searchParams.has('app_id')) {
@@ -60,7 +67,7 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
             translations[locale] = JSON.parse(await readFile(langFile, 'utf8'));
           } catch (error) { if (error.code === 'ENOENT') translations[locale] = {}; else throw error; }
         }
-        const body = JSON.stringify({ schema_version: 'native-1', ...current,
+        const body = JSON.stringify({ schema_version: 'native-1', verbose_logs: app.verbose === true, ...current,
           translations, entry: `${origin}/${assetToken}/index.js`, frontend_revision: `${info.size}:${info.mtimeMs}:${info.ctimeMs}` });
         const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
         res.setHeader('Cache-Control', 'private, no-cache');
@@ -98,9 +105,9 @@ Then run nexia dev again. To keep the existing process, retry with --port <unuse
     server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', onError); resolve(); });
   });
   return {
-    attach(directory, state) {
+    attach(directory, state, log = console.log, verbose = false) {
       const key = randomBytes(32).toString('hex');
-      registrations.set(key, { directory, state });
+      registrations.set(key, { directory, state, log, verbose });
       return { url: `http://127.0.0.1:${server.address().port}`, close: async () => { registrations.delete(key); } };
     },
     url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };

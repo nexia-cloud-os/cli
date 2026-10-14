@@ -247,7 +247,7 @@ try {
       let session;
       try {
         session = await startDevSession(directory, { port, projectId: workspace?.project_id, stop });
-        const devOptions = { signal: shutdown.signal, port, container: options.container === true, app: selectedApps, onStatus: value => session.update(value) };
+        const devOptions = { verbose: options.verbose === true, signal: shutdown.signal, port, container: options.container === true, app: selectedApps, onStatus: value => session.update(value) };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
     } else if (name.startsWith('db ')) {
