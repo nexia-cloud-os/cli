@@ -124,8 +124,10 @@ migration or Resource. Implement its business query before using it.
 Groups are `insights`, `management`, `operations`, `master-data`, `settings`.
 Menu options with `--no-navigation`, duplicate scalar options and contradictory
 booleans are errors. Field/type/relationship designers and force-overwrite are
-not part of the public CLI. Prompt language follows `LC_ALL`, `LC_MESSAGES`, then
-`LANG` (Korean or English); backend/tool diagnostics retain their own language.
+not part of the public CLI. CLI help, prompts and built-in diagnostics are always in English, regardless of
+`LC_ALL`, `LC_MESSAGES` or `LANG`. Public documents default to English;
+`--locale ko` explicitly requests Korean document content. App-authored labels
+and upstream tool output retain their original language.
 
 ## Folder and App selection
 
@@ -437,3 +439,25 @@ secrets or unnecessary personal data. PHP startup failures before application
 logging is initialized and operator/container logs remain outside this stream.
 Deploy the matching runtime image and Core API before the CLI. No new dependency
 or external logging service is required.
+
+
+### Preparation errors and recovery
+
+A 409 preparation conflict identifies the blocking operation, its failure and a
+scoped Developers link. That link shows the failed source revision and retained
+evidence; `nexia db status` only shows the latest explicit database command and
+must not be used to conclude that a later development preparation succeeded.
+
+`APPLIED_MIGRATION_SOURCE_MISMATCH` means already-applied migration files are
+missing or changed in the uploaded source. Restore their original contents or
+use the current source, then add new migrations for subsequent changes. The
+matching Core/operator implementation checks stored source against migration
+history before App code runs. Older servers retain their existing diagnostics and
+retry rules. Dependency/catalog failures confirmed before database-capable execution
+can also be retried after correction and shutdown without administrator review.
+`needs_review` is execution recovery, not App publication review: an administrator
+must inspect uncertain database effects before approving another attempt.
+
+After correcting the cause and receiving any required approval, restart `nexia dev`.
+Use Developers to stop or resume remote development execution. These controls do
+not approve `needs_review`. Preserve `.nexia`, data and migration history.

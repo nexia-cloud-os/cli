@@ -67,7 +67,7 @@ export async function readExecutionSelection(config, scope) {
 }
 
 export async function selectExecution(directory, mode, { log = console.log, expected } = {}) {
-  if (!['development', 'off'].includes(mode)) throw new Error('Use nexia app runtime development|off [directory].');
+  if (!['development', 'off'].includes(mode)) throw new Error('Development execution mode must be development or off.');
   const config = await readConnection();
   const readBinding = async () => {
     const folder = path.join(directory, '.nexia');
@@ -95,7 +95,7 @@ export async function selectExecution(directory, mode, { log = console.log, expe
   const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`, { method: 'PUT', body: { mode, revision: current.revision } });
   const pendingResume = mode === 'development' && selection?.mode === 'off' && selection.resume_pending === true && selection.stop_pending === true;
   if (selection?.app_id !== scope.app_id || selection.project_id !== scope.project_id || selection.sandbox_id !== current.sandbox_id
-      || (!pendingResume && selection.mode !== mode) || selection.revision !== current.revision + (current.mode === mode ? 0 : 1)
+      || (!pendingResume && selection.mode !== mode) || (!Number.isSafeInteger(selection.revision) || selection.revision < current.revision || selection.revision > current.revision + 1)
       || typeof selection.stop_pending !== 'boolean') throw new Error('Execution choice acknowledgement was not confirmed. Check status before retrying.');
   log(pendingResume ? 'Development switch pending. Waiting for shutdown confirmation; keep nexia dev running.'
     : `Development execution: ${selection.mode}${selection.stop_pending ? ' (operator shutdown pending)' : ''}. Source and data retained. No published App was installed.`);

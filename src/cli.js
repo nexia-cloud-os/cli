@@ -95,7 +95,7 @@ try {
   if (options.version) { const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')); console.log(pkg.version); }
   else if (options.help || !name) {
     input = createInput(options);
-    if (options.help || !await updateCli(input, options, { automatic: true })) console.log(helpText(name, language));
+    if (options.help || !await updateCli(input, options, { automatic: true })) console.log(helpText(name));
   }
   else if (name === 'docs' || name.startsWith('docs ')) {
     const data = await readDocs(name, argument, options.locale || language);
@@ -104,7 +104,7 @@ try {
   else {
     input = createInput(options);
     if (groups[name]) {
-      const child = await input.choice('command', message('Choose a task', '작업을 선택하세요'), groups[name].map(child => ({ value: child, label: commands[`${name} ${child}`].description[language === 'ko' ? 1 : 0] })), undefined, { hint: `nexia ${name} <${groups[name].join('|')}>` });
+      const child = await input.choice('command', message('Choose a task', '작업을 선택하세요'), groups[name].map(child => ({ value: child, label: commands[`${name} ${child}`].description[0] })), undefined, { hint: `nexia ${name} <${groups[name].join('|')}>` });
       name += ` ${child}`;
       validateOptions(name, options);
     }

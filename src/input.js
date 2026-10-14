@@ -2,9 +2,9 @@ import { emitKeypressEvents } from 'node:readline';
 import { createInterface } from 'node:readline/promises';
 import { InputError } from './commands.js';
 import { paint, fit, plain } from './terminal.js';
-export class Cancelled extends Error { constructor() { super('Cancelled / 취소됨'); this.code = 'CANCELLED'; this.exitCode = 130; } }
-export const language = /^(ko)(?:[_-]|$)/i.test(process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || '') ? 'ko' : 'en';
-export const message = (en, ko) => language === 'ko' ? ko : en;
+export class Cancelled extends Error { constructor() { super('Cancelled'); this.code = 'CANCELLED'; this.exitCode = 130; } }
+export const language = 'en';
+export const message = en => en;
 export function createInput(options = {}, { input = process.stdin, output = process.stderr, ask } = {}) {
   const interactive = !options['no-interactive'] && !options.json && Boolean(input.isTTY && output.isTTY);
   let reader, closed = false;
