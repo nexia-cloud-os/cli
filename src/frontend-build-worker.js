@@ -2,7 +2,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readdir } from 'node:fs/promises';
 
-const [viteEntry, directory] = process.argv.slice(2);
+const [viteEntry, directory, output] = process.argv.slice(2);
 const { build } = await import(pathToFileURL(viteEntry).href);
 // Rollup watches existing imports, but a newly generated glob match may not
 // invalidate its importer. Recreate the graph when the resources layout changes.
@@ -15,7 +15,7 @@ let closing = false;
 async function start() {
   process.send?.({ phase: 'building' });
   layout = await resourceLayout();
-  const current = await build({ root: directory, configFile: path.join(directory, 'vite.config.mjs'), build: { watch: {} } });
+  const current = await build({ logLevel: output === 'verbose' ? 'info' : 'warn', root: directory, configFile: path.join(directory, 'vite.config.mjs'), build: { watch: {} } });
   if (!current || typeof current.on !== 'function') throw new Error('Vite did not start a build watcher.');
   if (closing) { await current.close(); return; }
   watcher = current;
@@ -23,7 +23,7 @@ async function start() {
   current.on('event', async event => {
     if (closing || watcher !== current) return;
     if (event.code === 'START') { failed = false; cycle++; process.send?.({ phase: 'building' }); }
-    if (event.code === 'ERROR') { failed = true; cycle++; process.send?.({ phase: 'building' }); }
+    if (event.code === 'ERROR') { console.error(event.error?.stack || event.error?.message || 'Frontend build failed.'); failed = true; cycle++; process.send?.({ phase: 'building' }); }
     if (event.code === 'END' && !failed) {
       try {
         const completedCycle = cycle;

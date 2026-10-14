@@ -14,7 +14,7 @@ import { startNativePreview } from './native-preview.js';
 
 const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 
-export async function workspaceDev(workspace, { signal, port = 4310, container = false, app: selector, log = console.log, onStatus = () => {} } = {}) {
+export async function workspaceDev(workspace, { signal, verbose = false, port = 4310, container = false, app: selector, log = console.log, onStatus = () => {} } = {}) {
   const config = await readConnection();
   const readStatus = () => retryDevRead(async () => {
     const current = await readConnection();
@@ -99,7 +99,7 @@ export async function workspaceDev(workspace, { signal, port = 4310, container =
           const controller = new AbortController();
           const worker = { key: app.key, controller, done: null };
           workers.set(app.directory, worker);
-          worker.done = nativeDev(app.directory, { signal: controller.signal, previewHost: preview, interval: 10000,
+          worker.done = nativeDev(app.directory, { verbose, signal: controller.signal, previewHost: preview, interval: 10000,
             log: message => log(`${app.name}: ${message}`),
           }).catch(error => report(app.directory, `${app.name}: [${error.code || 'APP_DEVELOPMENT_FAILED'}] ${error.message}\nKeep the App folder and .nexia state. Resolve the error before restarting dev.\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`));
         } catch (error) {

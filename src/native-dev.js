@@ -1,3 +1,4 @@
+import { watchRuntimeLogs } from './runtime-logs.js';
 import { terminalLink } from './terminal-link.js';
 import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
@@ -16,7 +17,7 @@ import { startFrontendBuild } from './frontend-build.js';
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
 // Only public source/preparation APIs; no operator credentials or local App execution.
-export async function nativeDev(directory, { signal, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {} } = {}) {
+export async function nativeDev(directory, { signal, verbose = false, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {} } = {}) {
   const config = await readConnection();
   const local = path.join(directory, '.nexia');
   async function readLocal(name, optional = false) {
@@ -51,6 +52,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   if (!initialConnection) return;
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
   if (initialConnection.sandbox?.id) scope.sandbox_id = initialConnection.sandbox.id;
+  if (!initialConnection.capabilities?.development_logs) log('PHP log streaming needs a platform update. Local build and browser logs remain available.');
   let state = await readLocal('runtime.json', true);
   if (state && scope.sandbox_id && state.sandbox_id !== scope.sandbox_id) {
     await rename(path.join(local, 'runtime.json'), path.join(local, `runtime-previous-${randomUUID()}.json`));
@@ -70,11 +72,14 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
-  let preview, build, browserRuntime = null;
+  let preview, build, runtimeLogs, browserRuntime = null;
   try {
     while (!signal?.aborted) {
       try {
         build?.check();
+        if (runtimeLogs && runtimeLogs.operation !== browserRuntime?.operation_id) {
+          await runtimeLogs.close(); runtimeLogs = null;
+        }
         const selected = await readConnection();
         if (selected.endpoint !== config.endpoint || selected.token !== config.token) throw new Error('CLI connection changed. Restart nexia dev after login. Runtime data was not reset.');
         const currentProject = await readLocal('project.json');
@@ -100,10 +105,10 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
           const launch = new URL(connection.sandbox.launch_url);
           if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
-          build = await startFrontendBuild(directory, { signal, onInvalidate: () => { browserRuntime = null; } });
+          build = await startFrontendBuild(directory, { verbose, signal, log, onInvalidate: () => { browserRuntime = null; } });
           if (signal?.aborted) break;
-          preview = previewHost ? previewHost.attach(directory, () => browserRuntime)
-            : await startNativePreview(directory, { workspaceOrigin, port, container, state: () => browserRuntime });
+          preview = previewHost ? previewHost.attach(directory, () => browserRuntime, log, verbose)
+            : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: () => browserRuntime });
           launch.searchParams.set('preview', preview.url);
           onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
           log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}`);
@@ -209,6 +214,10 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             continue;
           }
           browserRuntime = candidateRuntime;
+          if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
+            await runtimeLogs?.close();
+            runtimeLogs = watchRuntimeLogs(config, browserRuntime.operation_id, { log, signal, verbose });
+          }
         }
         await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
       } catch (error) {
@@ -234,7 +243,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
       }
     }
   } finally {
-    await preview?.close(); await build?.close();
+    await runtimeLogs?.close(); await preview?.close(); await build?.close();
     if (writer) await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession, release: true } })
       .catch(() => log('Writer release was not confirmed; it expires automatically. Runtime data was retained.'));
   }
