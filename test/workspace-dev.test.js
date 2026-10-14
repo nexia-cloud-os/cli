@@ -75,7 +75,13 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
       const current = await manifest();
-      if (current?.apps.length === count) return current;
+      if (current?.apps.length === count) {
+        const ready = await Promise.all(current.apps.map(async app => {
+          const response = await fetch(`${url}/__nexia_native?app_id=${app.app_id}`, { headers: { Origin: 'http://sandbox.localhost:8081' } });
+          return response.ok && typeof (await response.json()).operation_id === 'string';
+        }));
+        if (ready.every(Boolean)) return current;
+      }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert.fail(messages.join('\n'));
