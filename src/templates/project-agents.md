@@ -16,6 +16,12 @@
 
 ## Commands
 
+- Run `nexia docs` for the App development guide, `nexia docs search "topic"`
+  to find SDK contracts and examples, and `nexia docs read <document-id>` to
+  read them. Use `--locale en|ko` and `--json` as needed. Public documentation
+  requires no login; it uses developers.nexia.to unless NEXIA_ENDPOINT is set.
+  Web entry: https://developers.nexia.to/docs/getting-started-agent-assisted-development
+
 - Run `nexia connect {{ projectId }}` at this project root. For an alternate
   platform, set `NEXIA_ENDPOINT` to the origin above before connection.
   Browser approval belongs to the developer; never read/copy credentials.
