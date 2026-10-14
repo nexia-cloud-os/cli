@@ -20,7 +20,8 @@ test('generated App build starts, rebuilds and stops with one dev watcher', asyn
   await writeFile(path.join(viteDir, 'index.js'), `
     const fs = require('node:fs');
     const path = require('node:path');
-    exports.build = async () => {
+    exports.build = async options => {
+    if (options.build.emptyOutDir !== false) throw new Error('Existing lazy chunks must be retained');
     // A build captures glob matches once; its incremental watcher only notices
     // edits to the already imported source. New files require a new graph.
     const matches = fs.readdirSync('resources').sort();
@@ -48,17 +49,23 @@ test('generated App build starts, rebuilds and stops with one dev watcher', asyn
   try {
     assert.equal(await readFile(manifest, 'utf8'), 'first');
     assert.equal(await readFile(path.join(root, 'dist/frontend/index.js'), 'utf8'), 'first');
+    const firstSnapshot = build.snapshot();
+    assert.equal(await readFile(path.join(root, 'dist/frontend-generations', firstSnapshot, 'index.js'), 'utf8'), 'first');
     await saveSource('second');
     for (let i = 0; i < 50 && (await readFile(manifest, 'utf8')) !== 'second'; i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(await readFile(manifest, 'utf8'), 'second');
     for (let i = 0; i < 50 && !build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(build.ready(), true);
+    assert.notEqual(build.snapshot(), firstSnapshot);
+    assert.equal(await readFile(path.join(root, 'dist/frontend-generations', firstSnapshot, 'index.js'), 'utf8'), 'first');
     await saveSource('broken');
-    for (let i = 0; i < 50 && build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    for (let i = 0; i < 50 && !build.failed(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(build.ready(), false, 'a failed compile cannot expose the previous frontend as ready');
+    assert.equal(build.failed(), true);
     await saveSource('fixed');
     for (let i = 0; i < 50 && !build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(build.ready(), true);
+    assert.equal(build.failed(), false);
     assert.equal(await readFile(path.join(root, 'dist/frontend/index.js'), 'utf8'), 'fixed');
     const matches = path.join(root, 'dist/frontend/matches.json');
     const waitForMatches = async expected => {

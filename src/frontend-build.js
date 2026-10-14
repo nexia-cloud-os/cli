@@ -21,10 +21,11 @@ export async function startFrontendBuild(directory, { signal, verbose = false, l
   for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'error']]) {
     pipeBuildLogs(stream, log, level);
   }
-  let failure, ready = false, generation = 0;
+  let failure, ready = false, failed = false, generation = 0, snapshot;
   child.on('message', message => {
-    if (message?.phase === 'building') { ready = false; onInvalidate(); }
-    if (message?.phase === 'ready') { ready = true; generation++; }
+    if (message?.phase === 'building') { ready = false; failed = false; onInvalidate(); }
+    if (message?.phase === 'failed') { ready = false; failed = true; onInvalidate(); }
+    if (message?.phase === 'ready') { ready = true; failed = false; generation++; snapshot = message.snapshot; }
   });
   child.once('error', error => { failure = error; });
   child.once('exit', code => { failure = new Error(`Frontend build watcher stopped (${code}). Restart nexia dev after fixing the build.`); });
@@ -46,6 +47,6 @@ export async function startFrontendBuild(directory, { signal, verbose = false, l
     }
     if (signal?.aborted) await close();
     else if (failure) throw failure;
-    return signal?.aborted ? null : { close, ready: () => ready, generation: () => generation, check: () => { if (failure) throw failure; } };
+    return signal?.aborted ? null : { close, ready: () => ready, failed: () => failed, generation: () => generation, snapshot: () => snapshot, check: () => { if (failure) throw failure; } };
   } catch (error) { await close(); throw error; }
 }
