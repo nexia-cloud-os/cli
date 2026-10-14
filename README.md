@@ -62,7 +62,8 @@ an App repository. Project/App instructions are created without overwriting your
 | `db seed [key]` | Run this App's declared development data |
 | `db status` | Inspect the App database operation |
 | `submit` | Submit an existing Git version tag for review |
-| `submit status\|cancel\|retry [id]` | Inspect or manage an identified submission |
+| `submit list [--page N]` | List recent submissions for this project or App |
+| `submit status\|cancel\|retry [id]` | Choose a recent submission, or use an explicit ID |
 | `help [command]`, `--version` | Help and installed CLI version |
 
 ## CLI updates
@@ -87,7 +88,7 @@ Explicit `nexia update` ignores the notification cache and reminder delay.
 
 ## Questions and options
 
-Start with `nexia create` or `nexia make`; select the task by number or name.
+Start with `nexia create` or `nexia make`; select the task with ↑/↓ and Enter. Terminals without raw input accept a number or name.
 Missing settings are asked one at a time with defaults. Explicit options are
 validated and never asked again. Menu-specific settings are skipped when menu
 visibility is disabled. A final summary offers create, edit a setting, or cancel.
@@ -343,3 +344,59 @@ server build inspection; other failures show the preparation stage.
 The operation's existing retry/review instructions still apply. No failure
 detail triggers an automatic retry, deletes .nexia, or resets data. Older servers
 and operations without details retain the existing generic guidance.
+## Public developer documentation
+
+```sh
+nexia docs
+nexia docs search "Resource permission" --locale en
+nexia docs read app-sdk-sdk-contracts --locale en
+nexia docs search "권한" --locale ko --json
+```
+
+These commands work from any directory without login, project bindings or reading
+stored credentials. They use https://developers.nexia.to, or NEXIA_ENDPOINT when
+explicitly set, and require a Developers deployment with the documentation API.
+If either the CLI or server does not support this yet, read the
+[App development guide](https://developers.nexia.to/docs/getting-started-agent-assisted-development).
+Search matches all whitespace-separated terms, ranks title/description matches
+first and returns at most 20 results with the total count; narrow broad queries.
+Read prints Markdown; `--json` returns structured results. Source URLs and actual
+source languages are included. A missing translation may use a fallback edition.
+Check documented requirements against the SDK versions in your lockfiles and
+installed public types: these documents are not an installed-version snapshot.
+
+The public HTTP contract is `GET /developer-api/docs?q=<query>&locale=en` for
+search and `GET /developer-api/docs/<document-id>?locale=en` for a document.
+Search returns `{query, locale, total, documents}`; each summary contains
+`id`, `title`, `description`, `url`, `locale`, `source_locale`, and `locale_status`.
+Read adds `content` (Markdown). Invalid input returns 422, missing/unpublished
+IDs return 404, and rate limits return 429. No bearer token is sent.
+New project/App instruction templates point to the guide. Existing AGENTS.md
+files belong to developers and are never synchronized by this feature.
+
+## Submission selection and sign-in lifecycle
+
+`nexia submit status` shows recent submissions for the current App, or the whole
+project from its root. Choose by App, Git tag, state and creation time with
+↑/↓ and Enter; Esc or Ctrl+C cancels. Older/newer pages remain available in the
+picker. `nexia submit list --page 2` prints 20 items per page and their IDs.
+An explicit ID still works. Without a terminal, `submit status` without an ID
+returns the list (also with `--json`); cancel/retry require an explicit ID and
+confirmation. The server rechecks current project access on every request.
+The list API must be deployed before this CLI's selection flow is distributed.
+
+- `connect`: bind a project folder and sign in through browser approval.
+- `login`: sign in again for that folder. It does not recreate or delete a sandbox.
+- `stop`: stop tracked local dev watchers/preview servers; keep remote data.
+- `logout`: revoke this CLI login and clear its local token. It does not stop local
+  processes, delete the project/sandbox/workspace, or sign out the browser.
+
+For a pause, use `nexia stop`. To also sign out, run `nexia logout` afterward.
+To resume, use `nexia login` if needed, `nexia status`, then `nexia dev`. A watcher
+keeps the login it started with; after reauthentication stop/restart old watchers.
+An expired/revoked token can still be cleared by logout, and status reports that
+sign-in is required. Network failures are reported rather than treated as logout.
+
+Help is grouped by task. Interactive selections use arrows and highlight the
+current row; terminals without raw input retain numbered choices. `NO_COLOR`
+or `TERM=dumb` disables colors. Piped/JSON output stays plain and noninteractive.

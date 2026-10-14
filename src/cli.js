@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
 import { setup } from './setup.js';
 import { updateCli } from './update.js';
+import { readDocs, formatDocs } from './docs.js';
+import { recentSubmissions, selectSubmission, formatSubmissions } from './submissions.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
@@ -42,6 +44,19 @@ async function databaseBinding(directory) {
   if (connection.status !== 'connected' || connection.project?.id !== project.project_id) throw new InputError('This App is linked to another project. Run nexia login from its project folder.');
   return { config, app };
 }
+async function submissionContext() {
+  const config = await readConnection(), connection = await request(config, 'connection');
+  if (connection.status !== 'connected' || !isUuid(connection.project?.id || '')) throw new InputError('Run nexia login from the intended project first.');
+  const workspace = await findWorkspace(process.cwd()), directory = await findApp();
+  const binding = workspace || (directory ? await readBinding(directory, 'project.json') : null);
+  if (binding && (binding.project_id !== connection.project?.id || validateEndpoint(binding.endpoint) !== validateEndpoint(config.endpoint))) {
+    throw new InputError('Folder and login differ. Run nexia login from the intended project.');
+  }
+  const app = directory ? await readBinding(directory, 'app.json') : null;
+  if (app && (!isUuid(app.id || '') || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint))) throw new InputError('Invalid App binding. Run nexia dev from its project.');
+  return { config: { ...config, project: connection.project }, appId: app?.id };
+}
+
 async function authenticate(projectId, options, workspace) {
   const config = await readConnection();
   const endpoint = workspace?.endpoint || process.env.NEXIA_ENDPOINT || config.endpoint;
@@ -81,6 +96,10 @@ try {
   else if (options.help || !name) {
     input = createInput(options);
     if (options.help || !await updateCli(input, options, { automatic: true })) console.log(helpText(name, language));
+  }
+  else if (name === 'docs' || name.startsWith('docs ')) {
+    const data = await readDocs(name, argument, options.locale || language);
+    output(options, data, formatDocs(data));
   }
   else {
     input = createInput(options);
@@ -151,16 +170,28 @@ try {
       if (name === 'connect') {
         await bindWorkspace(process.cwd(), { endpoint: connected.endpoint, project: connected.project });
         console.log(`Project connected: ${connected.project.name}\nNext: create or clone Apps directly inside this folder, then nexia dev.`);
+      } else {
+        console.log(message('Signed in. Run nexia status, then nexia dev. Restart any watcher using the previous login.', '로그인했습니다. nexia status로 확인한 뒤 nexia dev를 실행하세요. 이전 인증으로 실행 중인 watcher는 재시작하세요.'));
       }
     } else if (name === 'logout') {
-      await input.confirm(message('Revoke CLI authentication. Project folder bindings and data are retained.', 'CLI 인증을 해제합니다. 프로젝트 폴더 연결과 데이터는 유지합니다.'));
+      await input.confirm(message(
+        'Sign out of this CLI login. Local watchers are not stopped; run nexia stop first if needed. Project bindings, sandbox data and the browser login remain. Remote CLI requests will require nexia login again.',
+        '현재 CLI 인증을 해제합니다. 로컬 watcher는 종료하지 않으므로 필요하면 먼저 nexia stop을 실행하세요. 프로젝트 연결·샌드박스 데이터·브라우저 로그인은 유지됩니다. 원격 CLI 요청은 nexia login으로 다시 인증해야 합니다.',
+      ));
       const config = await readConnection();
-      if (config.token) await request(config, 'connection', { method: 'DELETE' });
+      if (config.token) {
+        try { await request(config, 'connection', { method: 'DELETE' }); }
+        catch (error) { if (error.status !== 401) throw error; }
+      }
       await saveConnection({ endpoint: config.endpoint });
-      console.log(message('Logged out.', '로그아웃했습니다.'));
+      console.log(message('CLI signed out. Resume from the project folder: nexia login → nexia status → nexia dev.', 'CLI 로그아웃 완료. 프로젝트 폴더에서 nexia login → nexia status → nexia dev로 다시 시작하세요.'));
     } else if (name === 'status') {
       const workspace = await findWorkspace(process.cwd()), currentApp = await findApp(), config = await readConnection();
-      const connection = config.token ? await request(config, 'connection') : null;
+      let connection = null;
+      if (config.token) {
+        try { connection = await request(config, 'connection'); }
+        catch (error) { if (error.status !== 401) throw error; }
+      }
       const appStatus = connection?.status === 'connected' && (!workspace || (workspace.project_id === connection.project?.id && workspace.endpoint === config.endpoint))
         ? await request(config, 'apps') : { apps: [] };
       const data = { apps: appStatus.apps, authenticated: connection?.status === 'connected', endpoint: config.endpoint, project: connection?.project || null,
@@ -260,11 +291,24 @@ try {
       output(options, { ...result, request_id: requestId }, `Check: nexia submit status ${result.submission.id}`);
     } else if (name.startsWith('submit ')) {
       const action = name.split(' ')[1];
-      const id = await input.text('submission-id', message('Submission ID from the submission receipt or Developers', '제출 결과 또는 Developers의 제출 ID'), { value: argument, hint: `nexia submit ${action} <submission-id>`, required: true, validate: isUuid });
-      if (action !== 'status') await input.confirm(`${action}: ${id}`);
-      const result = await request(await readConnection(), `v2/submissions/${id}${action === 'status' ? '' : `/${action}`}`, action === 'status' ? undefined : { method: 'POST', body: {} });
-      if (result.submission?.id !== id) throw new Error('Platform returned a different submission.');
-      output(options, result, `${result.submission.tag}: ${result.submission.status}\n${result.submission.failure || ''}\n${result.submission.retryable ? `Retry: nexia submit retry ${id}` : 'Code changes require a new version tag.'}`);
+      if (!argument && !['list', 'status'].includes(action) && !input.interactive) throw new InputError(`Use nexia submit list, then nexia submit ${action} <submission-id>. No change was made.`);
+      if (argument && !isUuid(argument)) throw new InputError('Use a submission ID from nexia submit list, or omit it to choose.');
+      const { config, appId } = await submissionContext();
+      if (action === 'list') {
+        const result = await recentSubmissions(config, { page: options.page === undefined ? 1 : Number(options.page), appId });
+        output(options, result, formatSubmissions(result));
+      } else {
+        const selected = argument ? { id: argument } : await selectSubmission(config, input, { appId, action });
+        if (selected.list) {
+          output(options, selected.list, formatSubmissions(selected.list));
+          if (action !== 'status') throw new InputError(`Use nexia submit ${action} <submission-id>; no change was made.`);
+        } else {
+          if (action !== 'status') await input.confirm(`${action}: ${selected.label || selected.id}\nSubmission: ${selected.id}`);
+          const result = await request(config, `v2/submissions/${selected.id}${action === 'status' ? '' : `/${action}`}`, action === 'status' ? undefined : { method: 'POST', body: {} });
+          if (result.submission?.id !== selected.id) throw new Error('Platform returned a different submission.');
+          output(options, result, `${result.submission.tag}: ${result.submission.status}\nSubmission: ${selected.id}\n${result.submission.failure || ''}\n${result.submission.retryable ? `Retry: nexia submit retry ${selected.id}` : 'Code changes require a new version tag.'}`);
+        }
+      }
     }
   }
 } catch (error) {
