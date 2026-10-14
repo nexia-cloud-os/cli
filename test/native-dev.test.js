@@ -21,12 +21,13 @@ for (const expired of [true, false]) {
     let uploads = 0, connectionChecks = 0;
     const shutdown = new AbortController();
     const server = createServer(async (req, res) => {
+      if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
       let raw = ''; for await (const chunk of req) raw += chunk;
       const input = raw ? JSON.parse(raw) : null;
       let payload;
       if (req.url.endsWith('/connection')) {
         if (++connectionChecks === 1 && expired) { res.writeHead(503).end('{}'); return; }
-        payload = { status: 'connected', project: { id: project }, sandbox: { id: sandbox, status: 'active',
+        payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true }, sandbox: { id: sandbox, status: 'active',
           workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
       } else if (req.url.endsWith('/execution')) {
         payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
@@ -93,11 +94,12 @@ test('native dev rejects an App rebind during a connection request before upload
   const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
   const calls = [];
   const server = createServer(async (req, res) => {
+    if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
     calls.push(req.url);
     // Another terminal changes the binding while the first public request is in flight.
     await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: randomUUID() }));
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ status: 'connected', project: { id: project }, sandbox: { status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } }));
+    res.end(JSON.stringify({ status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true }, sandbox: { status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
@@ -128,11 +130,12 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   let loseResponse = true, sequence = 0, polls = 0;
   let throttledAt = null, retriedAt = null, unavailableReads = 0;
   const server = createServer(async (req, res) => {
+    if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
     assert.equal(req.headers.authorization, 'Bearer disposable-token');
     let raw = ''; for await (const chunk of req) raw += chunk;
     const input = raw ? JSON.parse(raw) : null;
     let payload;
-    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, sandbox: { status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true }, sandbox: { status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
     else if (req.url.endsWith('/execution')) {
       payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode, revision: selectionRevision, stop_pending: false } };
       if (mode === 'off' && ++offPolls === 3) { mode = 'development'; selectionRevision++; }
@@ -256,10 +259,11 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
   const abort = new AbortController(), submissions = [];
   let session, unavailableLease = oldState === 'completed';
   const server = createServer(async (req, res) => {
+    if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
     let raw = ''; for await (const chunk of req) raw += chunk;
     const input = raw ? JSON.parse(raw) : null;
     let payload;
-    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { runtime_writers: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true, runtime_writers: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
     else if (req.url.endsWith('/v2/sources')) {
       assert.equal(submissions.length, 1, 'recover the old request before uploading current source');
       payload = { revision: { id: currentRevision, digest: input.source.digest, file_count: input.source.files.length } };
@@ -317,10 +321,11 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
     const operations = [];
     let pending = false, polls = 0, completed = 0, readPreview;
     const server = createServer(async (req, res) => {
+      if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
       let raw = ''; for await (const chunk of req) raw += chunk;
       const input = raw ? JSON.parse(raw) : null;
       let payload;
-      if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project },
+      if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true },
         sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
       else if (req.url.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project,
         sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: pending } };
@@ -416,8 +421,9 @@ test('stopped execution recovers source and ambiguous preparation timeouts witho
     const route = new URL(url).pathname;
     const input = options.body ? JSON.parse(options.body) : null;
     let payload;
-    if (route.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { runtime_writers: true },
+    if (route.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true, runtime_writers: true },
       sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (route.endsWith('/database-operations')) payload = { operation: null };
     else if (route.endsWith('/writer')) {
       writerSession ??= input.session_id;
       assert.equal(input.session_id, writerSession);
@@ -469,9 +475,10 @@ for (const outcome of ['pending', 'denied', 'unavailable']) {
     let selection = { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'off', revision: 1, stop_pending: false };
     const shutdown = new AbortController(), messages = [];
     const server = createServer(async (req, res) => {
+      if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
       res.setHeader('Content-Type', 'application/json');
       if (req.url.endsWith('/connection')) {
-        res.end(JSON.stringify({ status: 'connected', project: { id: project }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } }));
+        res.end(JSON.stringify({ status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } }));
       } else if (req.url.endsWith('/execution')) {
         if (req.method === 'PUT') {
           writes++;
@@ -518,3 +525,75 @@ for (const outcome of ['pending', 'denied', 'unavailable']) {
     assert.doesNotMatch(messages.join('\n'), /fixture-only/);
   });
 }
+
+test('first dev waits for explicit migration and file saves never submit database commands', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-manual-migration-'));
+  const previousConfig = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID(), first = randomUUID();
+  const shutdown = new AbortController();
+  const operations = new Map();
+  let database = null, submissions = 0, uploads = 0, waitingPolls = 0, edited = false;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const input = raw ? JSON.parse(raw) : null;
+    let payload;
+    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project },
+      capabilities: { explicit_development_migrations: true }, sandbox: { id: sandbox, status: 'active',
+        workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (req.url.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project,
+      sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+    else if (req.url.endsWith('/database-operations')) {
+      assert.equal(req.method, 'GET', 'watcher must not authorize database writes');
+      if (waitingPolls && ++waitingPolls === 4) database = { id: randomUUID(), database_command: 'migrate',
+        developer_project_id: project, developer_sandbox_id: sandbox, status: 'completed', created_at: '2026-10-14T05:00:00Z' };
+      payload = { operation: database };
+    } else if (req.url.endsWith('/v2/sources')) {
+      uploads++;
+      payload = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
+    } else if (req.url.endsWith('/v2/runtime-operations')) {
+      submissions++;
+      assert.equal(input.database_command, undefined);
+      const operation = { id: submissions === 1 ? first : randomUUID(), request_id: input.request_id,
+        source_revision_id: input.source_revision_id, developer_project_id: project, developer_sandbox_id: sandbox,
+        created_at: '2026-10-14T05:00:00Z', status: submissions === 1 ? 'failed' : 'completed',
+        ...(submissions === 1 ? { stopped_at: '2026-10-14T05:00:01Z', retry_allowed: true,
+          failure: { code: 'DATABASE_MIGRATION_REQUIRED', stage: 'migration_preflight' } } : {}) };
+      operations.set(operation.id, operation); payload = { operation };
+    } else {
+      const operation = [...operations.values()].find(op => req.url.endsWith(op.id));
+      assert.ok(operation);
+      if (operation.id === first && !waitingPolls) waitingPolls = 1;
+      if (operation.id !== first && !edited) {
+        edited = true;
+        await writeFile(path.join(root, 'database/migrations/draft.php'), '<?php // unfinished migration edit');
+      }
+      payload = { operation };
+    }
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(payload));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(path.join(root, '.nexia'));
+  await mkdir(path.join(root, 'database/migrations'), { recursive: true });
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  const messages = [];
+  const deadline = setTimeout(() => shutdown.abort(), 5000);
+  try {
+    await nativeDev(root, { port: 0, interval: 1, signal: shutdown.signal, log: message => {
+      messages.push(message);
+      if (submissions === 3 && message.includes('preparation completed')) shutdown.abort();
+    } });
+  } finally { clearTimeout(deadline); }
+  assert.equal(submissions, 3, 'initial wait, explicit migration recovery, then source-only edit');
+  assert.equal(uploads, 3);
+  assert.ok(messages.some(message => message.includes('nexia db migrate')));
+});

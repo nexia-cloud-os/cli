@@ -1,3 +1,4 @@
+import { pipeBuildLogs } from './dev-log.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -9,14 +10,17 @@ async function modified(file) {
 }
 
 // Generated Apps use Vite's own incremental build; no App package script is run.
-export async function startFrontendBuild(directory, { signal, onInvalidate = () => {} } = {}) {
+export async function startFrontendBuild(directory, { signal, verbose = false, log = console.log, onInvalidate = () => {} } = {}) {
   if (!(await modified(path.join(directory, 'vite.config.mjs')))) return null;
   const vite = path.join(directory, 'node_modules', 'vite', 'dist', 'node', 'index.js');
   if (!(await modified(vite))) throw new Error('Frontend dependencies are missing. Run npm install in this App, then retry nexia dev.');
   const manifest = path.join(directory, 'dist', 'frontend', '.vite', 'manifest.json');
   const entry = path.join(directory, 'dist', 'frontend', 'index.js');
   const worker = fileURLToPath(new URL('./frontend-build-worker.js', import.meta.url));
-  const child = spawn(process.execPath, [worker, vite, directory], { cwd: directory, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  const child = spawn(process.execPath, [worker, vite, directory, verbose ? 'verbose' : 'warnings'], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'error']]) {
+    pipeBuildLogs(stream, log, level);
+  }
   let failure, ready = false, generation = 0;
   child.on('message', message => {
     if (message?.phase === 'building') { ready = false; onInvalidate(); }

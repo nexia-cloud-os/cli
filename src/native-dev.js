@@ -1,9 +1,10 @@
+import { watchRuntimeLogs } from './runtime-logs.js';
 import { terminalLink } from './terminal-link.js';
 import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
 import { message } from './input.js';
 import { randomUUID } from 'node:crypto';
-import { preparationFailureDetails } from './preparation-failure.js';
+import { preparationFailureDetails, preparationLocation } from './preparation-failure.js';
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
@@ -16,7 +17,7 @@ import { startFrontendBuild } from './frontend-build.js';
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
 // Only public source/preparation APIs; no operator credentials or local App execution.
-export async function nativeDev(directory, { signal, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {} } = {}) {
+export async function nativeDev(directory, { signal, verbose = false, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {} } = {}) {
   const config = await readConnection();
   const local = path.join(directory, '.nexia');
   async function readLocal(name, optional = false) {
@@ -38,7 +39,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
     const next = retryable
       ? 'Fix the reported error, wait for shutdown to finish, then restart nexia dev in the same project folder.'
       : 'This operation requires operator review before retrying; preparation may have changed data. Share this operation ID with developer support.';
-    return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}.\n${preparationFailureDetails(operation.failure)}${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
+    return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}.\n${preparationFailureDetails(operation.failure, operation.recovery_check)}${preparationLocation(operation, config.endpoint)}${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
       code: retryable ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED',
     });
   }
@@ -50,7 +51,11 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   }, { signal, log, interval });
   if (!initialConnection) return;
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
+  if (initialConnection.capabilities?.explicit_development_migrations !== true) {
+    throw new Error('The platform needs an update for explicit development migrations. nexia dev was not started because this platform may automatically migrate on source changes.');
+  }
   if (initialConnection.sandbox?.id) scope.sandbox_id = initialConnection.sandbox.id;
+  if (!initialConnection.capabilities?.development_logs) log('PHP log streaming needs a platform update. Local build and browser logs remain available.');
   let state = await readLocal('runtime.json', true);
   if (state && scope.sandbox_id && state.sandbox_id !== scope.sandbox_id) {
     await rename(path.join(local, 'runtime.json'), path.join(local, `runtime-previous-${randomUUID()}.json`));
@@ -70,11 +75,14 @@ export async function nativeDev(directory, { signal, log = console.log, interval
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
-  let preview, build, browserRuntime = null;
+  let preview, build, runtimeLogs, browserRuntime = null;
   try {
     while (!signal?.aborted) {
       try {
         build?.check();
+        if (runtimeLogs && runtimeLogs.operation !== browserRuntime?.operation_id) {
+          await runtimeLogs.close(); runtimeLogs = null;
+        }
         const selected = await readConnection();
         if (selected.endpoint !== config.endpoint || selected.token !== config.token) throw new Error('CLI connection changed. Restart nexia dev after login. Runtime data was not reset.');
         const currentProject = await readLocal('project.json');
@@ -82,6 +90,24 @@ export async function nativeDev(directory, { signal, log = console.log, interval
         if (currentProject.endpoint !== scope.endpoint || currentApp.endpoint !== scope.endpoint
           || currentProject.project_id !== scope.project_id || currentApp.id !== scope.app_id) {
           throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
+        }
+        const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
+        if (databaseOperation) {
+          if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
+              || databaseOperation.developer_sandbox_id !== scope.sandbox_id
+              || !['migrate', 'seed', 'reset'].includes(databaseOperation.database_command)
+              || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(databaseOperation.status)) {
+            throw new Error('Platform returned a conflicting App database operation.');
+          }
+          if (databaseOperation.status === 'needs_review') throw preparationFailure(databaseOperation);
+          if (['queued', 'running'].includes(databaseOperation.status)) {
+            browserRuntime = null;
+            const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
+            if (lastStatus !== status) log(`Database ${databaseOperation.database_command}: ${databaseOperation.status}. Source watching will resume after this operation finishes.`);
+            lastStatus = status;
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
+          }
         }
         if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
           // The same session can safely renew its lease after a lost response.
@@ -100,13 +126,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
           const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
           const launch = new URL(connection.sandbox.launch_url);
           if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
-          build = await startFrontendBuild(directory, { signal, onInvalidate: () => { browserRuntime = null; } });
+          build = await startFrontendBuild(directory, { verbose, signal, log, onInvalidate: () => { browserRuntime = null; } });
           if (signal?.aborted) break;
-          preview = previewHost ? previewHost.attach(directory, () => browserRuntime)
-            : await startNativePreview(directory, { workspaceOrigin, port, container, state: () => browserRuntime });
+          preview = previewHost ? previewHost.attach(directory, () => browserRuntime, log, verbose)
+            : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: () => browserRuntime });
           launch.searchParams.set('preview', preview.url);
           onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
-          log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}`);
+          log(`Nexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\n${build ? 'Frontend build/watch is running with nexia dev.' : 'Frontend files are served from dist/frontend; this App has no generated Vite build.'}\nDatabase migrations are manual. Save migration files freely; run nexia db migrate from this App in another terminal when ready.`);
           connectionChecked = true;
         }
         // This authenticated endpoint rechecks the connection/project/sandbox each poll.
@@ -158,6 +184,11 @@ export async function nativeDev(directory, { signal, log = console.log, interval
               state = null;
               continue;
             }
+            if (error.status === 409 && ['queued', 'running'].includes(error.blockingOperation?.status)
+                && error.blockingOperation?.database_command) {
+              await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+              continue;
+            }
             // Another terminal can select off after this loop read the selection.
             // Preserve the same pending request; only an observed off choice permits waiting.
             if (error.status === 409 && (await readExecutionSelection(config, scope)).mode === 'off') continue;
@@ -169,6 +200,9 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             || operation.developer_project_id !== scope.project_id || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(operation.status)
             || (state.operation_id && operation.id !== state.operation_id)) throw new Error('Platform returned a conflicting runtime operation.');
           cancelled = operation.status === 'failed' && operation.stopped_at && selection.revision > (state.selection_revision ?? 0);
+          const waitingForMigration = operation.status === 'failed' && operation.failure?.code === 'DATABASE_MIGRATION_REQUIRED';
+          if (waitingForMigration && operation.retry_allowed && databaseOperation?.status === 'completed'
+              && Date.parse(databaseOperation.created_at) >= Date.parse(operation.created_at)) cancelled = true;
           if (writer && (operation.writer_generation ?? state.writer_generation) !== writer.generation) {
             const reviewed = operation.status === 'failed' && operation.stopped_at && operation.retry_allowed === true;
             if (operation.status !== 'completed' && !cancelled && !reviewed && !(operation.status === 'failed' && !operation.started_at)) throw preparationFailure(operation);
@@ -186,7 +220,13 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             log(['stopping', 'stopped'].includes(phase)
               ? `App execution ${phase}: ${operation.id}. Source and data retained.`
               : `App preparation ${phase}: ${operation.id}${phase === 'completed' ? '\nRuntime preparation confirmed; this does not publish or install a release.' : ''}`);
+            if (waitingForMigration) log(preparationFailureDetails(operation.failure, operation.recovery_check).trim());
             lastStatus = status;
+          }
+          if (waitingForMigration && !cancelled && !renewWriter) {
+            browserRuntime = null;
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
           }
           if (['failed', 'needs_review'].includes(operation.status) && !cancelled && !renewWriter) throw preparationFailure(operation);
           if (operation.stop_requested_at && !operation.stopped_at) {
@@ -209,6 +249,10 @@ export async function nativeDev(directory, { signal, log = console.log, interval
             continue;
           }
           browserRuntime = candidateRuntime;
+          if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
+            await runtimeLogs?.close();
+            runtimeLogs = watchRuntimeLogs(config, browserRuntime.operation_id, { log, signal, verbose });
+          }
         }
         await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
       } catch (error) {
@@ -234,7 +278,7 @@ export async function nativeDev(directory, { signal, log = console.log, interval
       }
     }
   } finally {
-    await preview?.close(); await build?.close();
+    await runtimeLogs?.close(); await preview?.close(); await build?.close();
     if (writer) await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession, release: true } })
       .catch(() => log('Writer release was not confirmed; it expires automatically. Runtime data was retained.'));
   }

@@ -21,12 +21,13 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
   const registrations = new Map(), sources = new Map(), operations = new Map();
   let endpoint;
   const server = createServer(async (req, res) => {
+    if (req.url.endsWith('/database-operations')) { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation: null })); return; }
     try {
       assert.equal(req.headers.authorization, 'Bearer fixture');
       let raw = ''; for await (const chunk of req) raw += chunk;
       const body = raw ? JSON.parse(raw) : {};
       let result;
-      if (req.url === '/developer-api/connection') result = { status: 'connected', project, capabilities: { personal_sandboxes: true },
+      if (req.url === '/developer-api/connection') result = { status: 'connected', project, capabilities: { explicit_development_migrations: true, personal_sandboxes: true },
         sandbox: { id: sandboxId, status: 'active', workspace_url: 'http://sandbox.localhost:8081', launch_url: `${endpoint}/projects/${project.id}/workspace` } };
       else if (req.url === '/developer-api/apps') {
         const key = body.metadata.app_key;

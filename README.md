@@ -31,6 +31,10 @@ nexia make resource Note
 nexia dev
 ```
 
+Leave `dev` running. In another terminal inside the App, run `nexia db migrate`
+to initialize its database. Run it again explicitly after writing new migrations;
+file saves do not change the schema.
+
 `setup --devtools` installs/updates generators in the CLI-owned tools directory,
 not global Composer. Plain `setup` asks whether to also install/upgrade Homebrew
 PHP and Composer on macOS, shows the plan and requires confirmation. Existing
@@ -124,8 +128,10 @@ migration or Resource. Implement its business query before using it.
 Groups are `insights`, `management`, `operations`, `master-data`, `settings`.
 Menu options with `--no-navigation`, duplicate scalar options and contradictory
 booleans are errors. Field/type/relationship designers and force-overwrite are
-not part of the public CLI. Prompt language follows `LC_ALL`, `LC_MESSAGES`, then
-`LANG` (Korean or English); backend/tool diagnostics retain their own language.
+not part of the public CLI. CLI help, prompts and built-in diagnostics are always in English, regardless of
+`LC_ALL`, `LC_MESSAGES` or `LANG`. Public documents default to English;
+`--locale ko` explicitly requests Korean document content. App-authored labels
+and upstream tool output retain their original language.
 
 ## Folder and App selection
 
@@ -210,11 +216,9 @@ Do not commit `.nexia/` or copy the private global CLI credential file.
 
 ## Database and submission
 
-Database commands operate only on the registered App's active sandbox. `db seed`
-asks from this App's declared fixture keys; other installed Apps are not targets.
-A returned `queued` operation is not completion: inspect `db status`. Stop `dev`
-first if it owns the writer lease. Retry a lost response using the same printed
-`--request-id`; a review-required operation needs operator inspection.
+`nexia dev` watches source without applying migrations or initialization. Keep it running while writing migration files. From the App folder in another terminal, run `nexia db migrate` when ready. The command uploads the current local source, pins that revision, and waits for completion; the watcher then resumes. A new App waits for its first explicit migration without administrator review. Already-applied migration files remain immutable: add a new migration for later changes.
+
+Database commands target only this App's active sandbox. Run migrations before `db seed`; seeding does not implicitly migrate. Recover a lost response using the printed `--request-id`, which keeps the original source revision even after local edits. `db status` reports the latest operation. Unconfirmed database effects still require operator inspection.
 
 Commit and push source and the intended version tag with Git yourself. From the
 App run `nexia check`, then `nexia submit --tag v1.0.0`. If repository connection is
@@ -400,3 +404,62 @@ sign-in is required. Network failures are reported rather than treated as logout
 Help is grouped by task. Interactive selections use arrows and highlight the
 current row; terminals without raw input retain numbered choices. `NO_COLOR`
 or `TERM=dumb` disables colors. Piped/JSON output stays plain and noninteractive.
+
+### Development logs
+
+`nexia dev` prints App-prefixed warnings, errors and build failures. Use
+`nexia dev --verbose` to include general browser/PHP logs and successful request
+timings. Routine messages are filtered before serialization and transmission in
+the default mode. Vite uses its warning log level by default.
+
+Browser diagnostics include console calls attributed to the local App, uncaught
+errors, rejected promises, API failures and React boundary errors. Host-only
+messages are not attributed to an App. Output is batched, with at most 20 queued
+events, 16 KiB per request and 120 events per App per minute. Object inspection is
+bounded and does not evaluate getters; the browser console remains the local source.
+
+With a supporting Core and runtime image, PHP diagnostics are read every two
+seconds. The runtime retains 100 messages of at most 2 KiB in a local temporary
+file bounded to 800 KiB + 256 bytes per App scope, reused across revisions. It
+writes one fixed slot per event, uses nonblocking locks and limits recording to
+120 events/minute plus an overflow notice. Polling reads only new slots. Verbose
+collection expires within 15 seconds after polling stops. No log rows are written
+to the database; this is not an administrator error archive.
+
+Build output has bounded partial lines and rate limits; a slow terminal pipe
+cannot accumulate an unlimited output queue. Overload, lock contention or slow
+consumers may drop messages to protect development. These bounds are not a
+measured CPU or memory performance guarantee.
+
+Reconnects use a cursor and report expired history. Logs from customer
+installations, other developers and other Apps are not exposed. Disconnection
+does not stop development; Ctrl+C closes log polling together with the watchers.
+Older servers report unsupported PHP logs rather than implying no errors.
+
+Common credential fields are masked, but developers must still avoid logging
+secrets or unnecessary personal data. PHP startup failures before application
+logging is initialized and operator/container logs remain outside this stream.
+Deploy the matching runtime image and Core API before the CLI. No new dependency
+or external logging service is required.
+
+
+### Preparation errors and recovery
+
+A 409 preparation conflict identifies the blocking operation, its failure and a
+scoped Developers link. That link shows the failed source revision and retained
+evidence; `nexia db status` only shows the latest explicit database command and
+must not be used to conclude that a later development preparation succeeded.
+
+`APPLIED_MIGRATION_SOURCE_MISMATCH` means already-applied migration files are
+missing or changed in the uploaded source. Restore their original contents or
+use the current source, then add new migrations for subsequent changes. The
+matching Core/operator implementation checks stored source against migration
+history before App code runs. Older servers retain their existing diagnostics and
+retry rules. Dependency/catalog failures confirmed before database-capable execution
+can also be retried after correction and shutdown without administrator review.
+`needs_review` is execution recovery, not App publication review: an administrator
+must inspect uncertain database effects before approving another attempt.
+
+After correcting the cause and receiving any required approval, restart `nexia dev`.
+Use Developers to stop or resume remote development execution. These controls do
+not approve `needs_review`. Preserve `.nexia`, data and migration history.

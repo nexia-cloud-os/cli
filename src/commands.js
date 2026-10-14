@@ -13,13 +13,13 @@ export const commands = {
   logout: { description: ['Sign out of the CLI; keep project and sandbox data', 'CLI 로그아웃·프로젝트와 샌드박스 데이터 보존'], options: ['yes'] },
   'make resource': { argument: 'name', description: ['Generate a resource in an App', '앱에 리소스 생성'], options: ['app', 'label-ko', 'label-ko-plural', 'label-zh', 'label-zh-plural', 'record-owner', 'navigation', 'navigation-group', 'navigation-subgroup', 'icon', 'sort', 'dry-run', 'yes'] },
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
-  dev: { description: ['Choose All Apps, configured Apps, or individual Apps (up to 20)', '전체·Config 설정·개별 앱 선택 (최대 20개)'], options: ['app', 'port', 'container'] },
+  dev: { description: ['Choose All Apps, configured Apps, or individual Apps (up to 20)', '전체·Config 설정·개별 앱 선택 (최대 20개)'], options: ['app', 'port', 'container', 'verbose'] },
   'dev config': { description: ['Config Apps: save the default development selection', 'Config Apps: 기본 개발 앱 선택 저장'], options: ['app', 'yes'] },
   check: { description: ['Check this App, or all Apps from the project root', '현재 앱 또는 프로젝트 루트의 전체 앱 검사'], options: ['app'] },
   ps: { description: ['List local development sessions, ports and Apps', '로컬 개발 세션·포트·앱 조회'], options: ['json'] },
   stop: { description: ['Stop local development for this project; retain sandbox data', '현재 프로젝트의 로컬 개발 종료·샌드박스 데이터 보존'], options: ['port', 'json'] },
   status: { description: ['Show authentication, project and sandbox status', '인증·프로젝트·샌드박스 상태 조회'], options: ['json'] },
-  'db migrate': { description: ['Request an App sandbox migration', '앱 샌드박스 마이그레이션 요청'], options: ['app', 'request-id', 'json', 'yes'] },
+  'db migrate': { description: ['Apply current App migrations and wait for completion', '현재 앱 마이그레이션 적용 및 완료 대기'], options: ['app', 'request-id', 'json', 'yes'] },
   'db seed': { argument: 'key', description: ['Run declared development data for this App', '현재 앱의 선언된 개발 데이터 실행'], options: ['app', 'request-id', 'json', 'yes'] },
   'db status': { description: ['Inspect the App database operation', '앱 DB 작업 상태 조회'], options: ['app', 'json'] },
   submit: { description: ['Submit an existing Git tag for review', '기존 Git 태그를 심사에 제출'], options: ['app', 'tag', 'request-id', 'no-browser', 'json', 'yes'] },
@@ -29,22 +29,23 @@ export const commands = {
   'submit retry': { argument: 'submission-id', description: ['Retry a retryable submission', '재시도 가능한 제출 재요청'], options: ['json', 'yes'] },
 };
 export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'seed', 'status'] };
-export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'navigation', 'record']);
+export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'navigation', 'record']);
 export const optionDescriptions = {
-  page: 'Recent submission page (20 per page) / 최근 제출 페이지 (20개씩)',
-  locale: 'Document language: en or ko (default: terminal language) / 문서 언어 (기본: 터미널 언어)',
-  app: 'App folder name or key / 앱 폴더명 또는 식별자', name: 'Project display name or App code name / 프로젝트 표시 이름 또는 앱 코드 이름',
-  vendor: 'Composer/npm package owner / 패키지 소유자', family: 'App navigation family / 앱 기능 그룹', key: 'Stable App key / 앱 식별자',
-  'display-name': 'App display name / 앱 표시 이름', 'table-prefix': 'Database table prefix / 테이블 접두사', prerequisite: 'Required App key (repeatable) / 필수 선행 앱 (반복 가능)',
-  'label-ko': 'Authored Korean label (required) / 한국어 표시 이름 (필수)', 'label-ko-plural': 'Korean list label / 한국어 목록 이름',
-  'label-zh': 'Chinese label; omitted uses English fallback / 중국어 이름·생략 시 영어 fallback', 'label-zh-plural': 'Chinese list label / 중국어 목록 이름',
-  'record-owner': 'legal_entity or tenant / 법인별 또는 테넌트 공통', navigation: 'Publish a menu entry / 메뉴 표시', record: 'Include record read/edit screens / 개별 항목 조회·수정 화면 포함',
-  'navigation-group': 'insights, management, operations, master-data, settings', 'navigation-subgroup': 'Optional menu subgroup / 메뉴 하위 그룹',
-  icon: 'Shell icon name / 아이콘 이름', sort: 'Menu order; resource default auto / 메뉴 순서·리소스 기본 auto', port: 'Local preview port (4310) / 로컬 포트',
-  container: 'Listen for container development / 컨테이너 개발', tag: 'Existing version tag, e.g. v1.0.0 / 기존 버전 태그', 'request-id': 'UUID for recovering the same request / 동일 요청 복구용 UUID',
-  'no-browser': 'Print the approval URL without opening a browser / 승인 URL만 출력', devtools: 'Install generators only / 생성 도구만 설치',
-  'dry-run': 'Show the plan without writing / 변경 계획만 표시', yes: 'Accept final confirmation, not missing input / 최종 확인 생략',
-  json: 'JSON result on stdout; no prompts / 표준 출력은 JSON·질문 없음', 'no-interactive': 'Never prompt; missing required values fail / 질문 없이 실행',
+  page: 'Recent submission page (20 per page)',
+  locale: 'Document language: en or ko (default: en)',
+  app: 'App folder name or key', name: 'Project display name or App code name',
+  vendor: 'Composer/npm package owner', family: 'App navigation family', key: 'Stable App key',
+  'display-name': 'App display name', 'table-prefix': 'Database table prefix', prerequisite: 'Required App key (repeatable)',
+  'label-ko': 'Authored Korean label (required)', 'label-ko-plural': 'Korean list label',
+  'label-zh': 'Chinese label; omitted uses English fallback', 'label-zh-plural': 'Chinese list label',
+  'record-owner': 'legal_entity or tenant', navigation: 'Publish a menu entry', record: 'Include record read/edit screens',
+  'navigation-group': 'insights, management, operations, master-data, settings', 'navigation-subgroup': 'Optional menu subgroup',
+  icon: 'Shell icon name', sort: 'Menu order; resource default auto', port: 'Local preview port (4310)',
+  container: 'Listen for container development', tag: 'Existing version tag, e.g. v1.0.0', 'request-id': 'UUID for recovering the same request',
+  'no-browser': 'Print the approval URL without opening a browser', devtools: 'Install generators only',
+  'dry-run': 'Show the plan without writing', yes: 'Accept final confirmation, not missing input',
+  json: 'JSON result on stdout; no prompts', 'no-interactive': 'Never prompt; missing required values fail',
+  verbose: 'Include general development logs',
 };
 const retired = { init: 'create app', 'create-project': 'create project', 'link-project': 'connect', link: 'connect', validate: 'check', 'make:resource': 'make resource', 'make:page': 'make page', submissions: 'submit status', deploy: 'submit' };
 export class InputError extends Error { constructor(message) { super(message); this.code = 'INVALID_INPUT'; this.exitCode = 2; } }
@@ -92,15 +93,15 @@ export function validateOptions(name, options) {
   if (options.navigation === false && ['navigation-group', 'navigation-subgroup', 'icon', 'sort'].some(key => Object.hasOwn(options, key))) throw new InputError('Menu options cannot be combined with --no-navigation.');
   if (options['label-zh-plural'] && !options['label-zh']) throw new InputError('--label-zh-plural requires --label-zh.');
 }
-export function helpText(name = '', language = 'en') {
-  const index = language === 'ko' ? 1 : 0, definition = Object.hasOwn(commands, name) ? commands[name] : undefined;
+export function helpText(name = '') {
+  const index = 0, definition = Object.hasOwn(commands, name) ? commands[name] : undefined;
   if (name === 'docs') return [
     'nexia docs', commands.docs.description[index], '',
     'nexia docs search "query" [--locale en|ko] [--json]',
     'nexia docs read <document-id> [--locale en|ko] [--json]', '',
-    index ? '로그인·프로젝트 없이 공개 문서를 조회합니다. 기본 언어는 터미널 언어입니다.' : 'Read public documentation without login or a project. Defaults to the terminal language.',
+    'Read public documentation without login or a project. Defaults to English; use --locale ko for Korean documents.',
   ].join('\n');
-  if (definition) return [`nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}`, definition.description[index], '', ...[...definition.options, 'no-interactive', 'help'].map(key => `  --${key}${['navigation', 'record'].includes(key) ? ` / --no-${key}` : booleanOptions.has(key) ? '' : ' <value>'}  ${optionDescriptions[key] || 'Show help / 도움말'}`), '', name.startsWith('docs ') ? 'No login or project required. Quote search queries containing spaces.' : 'Options skip matching questions. Run from an App or its project.'].join('\n');
+  if (definition) return [`nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}`, definition.description[index], '', ...[...definition.options, 'no-interactive', 'help'].map(key => `  --${key}${['navigation', 'record'].includes(key) ? ` / --no-${key}` : booleanOptions.has(key) ? '' : ' <value>'}  ${optionDescriptions[key] || 'Show help'}`), '', name.startsWith('docs ') ? 'No login or project required. Quote search queries containing spaces.' : 'Options skip matching questions. Run from an App or its project.'].join('\n');
   const sections = name && Object.hasOwn(groups, name)
     ? [{ title: [name, name], names: groups[name].map(child => `${name} ${child}`) }]
     : [
@@ -116,5 +117,5 @@ export function helpText(name = '', language = 'en') {
       ? `  ${paint(key, 'accent')}\n    ${commands[key].description[index]}`
       : `  ${paint(key.padEnd(24), 'accent')} ${commands[key].description[index]}`),
   ]), '', paint('nexia help <command>    nexia --version', 'muted'),
-  index ? '값을 생략하면 선택·입력 안내를 표시합니다. 자동화: --no-interactive 또는 --json.' : 'Omit values for guided input. Automation: --no-interactive or --json.'].join('\n');
+  'Omit values for guided input. Automation: --no-interactive or --json.'].join('\n');
 }

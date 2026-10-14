@@ -27,3 +27,22 @@ test('uncertain migration failures retain evidence and identify the failed step'
   assert.match(message, /do not delete migration history or reset data/);
   assert.doesNotMatch(message, /safe to retry|restart nexia dev/i);
 });
+
+test('migration diagnostics show bounded safe file names without granting retry', () => {
+  const message = preparationFailureDetails({ code: 'APPLIED_MIGRATION_SOURCE_MISMATCH', stage: 'migration_preflight' }, {
+    migrations: [{ name: '2026_10_14_payroll', reason: 'missing' }, { name: '\x1b[2Jprivate', reason: 'missing' }],
+  });
+  assert.match(message, /missing: 2026_10_14_payroll.php/);
+  assert.match(message, /Restore the original applied files/);
+  assert.doesNotMatch(message, /private|safe to retry|restart nexia dev/i);
+});
+
+test('diagnostic navigation rejects external links and unrelated operation anchors', async () => {
+  const { preparationLocation } = await import('../src/preparation-failure.js');
+  const id = '11111111-1111-4111-8111-111111111111', project = '22222222-2222-4222-8222-222222222222';
+  const diagnostic_path = `/projects/${project}/development?operation=${id}#operation-${id}`;
+  assert.match(preparationLocation({ id, diagnostic_path }, 'https://developers.example'), /https:\/\/developers.example\/projects\//);
+  for (const path of ['https://evil.example', '//evil.example', diagnostic_path + '\nFAKE', diagnostic_path.replace(`#operation-${id}`, `#operation-${project}`)]) {
+    assert.equal(preparationLocation({ id, diagnostic_path: path }, 'https://developers.example'), '');
+  }
+});

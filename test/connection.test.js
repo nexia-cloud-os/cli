@@ -139,3 +139,30 @@ test('a timed-out response body retains its timeout and safe request identity', 
     });
   } finally { clearTimeout(alive); }
 });
+
+test('preparation conflicts distinguish waiting from review and reject unsafe diagnostic links', async t => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const project = '22222222-2222-4222-8222-222222222222';
+  const operation = { id, status: 'needs_review', diagnostic_path: `/projects/${project}/development?operation=${id}#operation-${id}`,
+    failure: { code: 'APPLIED_MIGRATION_SOURCE_MISMATCH', stage: 'migration_preflight' },
+    recovery_check: { migrations: [{ name: '2026_10_14_payroll', reason: 'missing' }] } };
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 409,
+    json: async () => ({ status: 'preparation_pending', message: 'Preparation pending.', blocking_operation: operation }) }));
+  const config = { endpoint: 'https://developers.example', token: 'test-secret' };
+  for (const status of ['needs_review', 'queued', 'running']) {
+    operation.status = status;
+    await assert.rejects(request(config, 'v2/runtime-operations'), error => {
+      assert.equal(error.status, 409);
+      assert.match(error.message, /missing: 2026_10_14_payroll.php/);
+      assert.match(error.message, /Details and recovery: https:\/\/developers.example\/projects\//);
+      assert.match(error.message, status === 'needs_review' ? /administrator must inspect/ : /Wait for this preparation/);
+      assert.doesNotMatch(error.message, /test-secret/);
+      return true;
+    });
+  }
+  operation.diagnostic_path = 'https://untrusted.example';
+  await assert.rejects(request(config, 'v2/runtime-operations'), error => {
+    assert.equal(error.message, 'Platform HTTP 409: Preparation pending.');
+    return true;
+  });
+});
