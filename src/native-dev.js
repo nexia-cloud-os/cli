@@ -160,8 +160,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
               ['Frontend', build ? 'Build/watch running' : 'Serving dist/frontend'],
               ['Database', 'Migrations are manual: nexia db migrate'],
             ];
-            if (reporter) reporter.panel('Nexia App development', rows);
-            else log(devPanel('Nexia App development', rows));
+            if (reporter) reporter.summary([['App', identity.key], ['App folder', directory], ...rows.slice(1), ['Stop', 'Ctrl+C stops local development; sandbox data is retained']]);
+            else log(devPanel('Nexia development', rows));
           }
           task('running', 'Checking development execution…');
           connectionChecked = true;
@@ -358,7 +358,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
       }
     }
   } catch (error) {
-    task('error', String(error.message || error).split(/\r?\n/, 1)[0]);
+    if (!reporter) task('error', String(error.message || error).split(/\r?\n/, 1)[0]);
     throw error;
   } finally {
     await runtimeLogs?.close(); await preview?.close(); await build?.close();

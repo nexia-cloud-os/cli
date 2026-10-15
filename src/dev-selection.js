@@ -103,10 +103,12 @@ export async function configuredDevApps(workspace, apps, selectors, input) {
       configError = error.message;
     }
     const configKeys = configError ? [] : saved === null ? apps.map(app => app.key) : saved || [];
-    return (await input.multiChoice(message('Choose Apps to develop', '개발할 앱을 선택하세요'),
+    const selected = await input.multiChoice(message('Choose Apps to develop', '개발할 앱을 선택하세요'),
       apps.map(app => ({ value: app.key, label: app.name })), {
         max: MAX_DEV_APPS, configure: true, configKeys, configAll: saved === null, configError,
-      })) ?? undefined;
+      });
+    if (selected?.configure) return configureDevApps(workspace, apps, undefined, input);
+    return selected ?? undefined;
   }
   return selectDevApps(apps, undefined, input);
 }

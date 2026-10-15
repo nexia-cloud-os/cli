@@ -321,7 +321,7 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   assert.ok(offMessage, 'off state links directly to the development App list');
   assert.match(offMessage, /nexia dev/);
   assert.match(offMessage, /(?:Local App address \(copy\)|로컬 앱 주소 \(복사용\)): http:\/\/127\.0\.0\.1:[1-9]\d*/);
-  assert.ok(lifecycleMessages.some(message => message.startsWith('┌─ Nexia App development') && /Local address\s+http:\/\/127\.0\.0\.1:[1-9]\d*/.test(message)));
+  assert.ok(lifecycleMessages.some(message => message.startsWith('┌─ Nexia development') && /Local address\s+http:\/\/127\.0\.0\.1:[1-9]\d*/.test(message)));
   assert.match(offMessage, /workspace|워크스페이스/);
   assert.equal(submissions.at(-1), submissions.at(-2), 'off race retains the pending idempotency key');
   [...operations.values()].at(-1).status = 'needs_review';

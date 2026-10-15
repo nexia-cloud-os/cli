@@ -43,6 +43,14 @@ test('temporary picker selection is not persisted', async t => {
   await assert.rejects(readFile(configFile(workspace)), { code: 'ENOENT' });
 });
 
+test('setup-required Config opens the editor and starts with the saved Apps', async t => {
+  const workspace = await fixture(t);
+  let calls = 0;
+  const input = { interactive: true, multiChoice: async () => ++calls === 1 ? { configure: true } : ['two'] };
+  assert.deepEqual(await configuredDevApps(workspace, apps, undefined, input), ['two']);
+  assert.deepEqual(JSON.parse(await readFile(configFile(workspace), 'utf8')).apps, ['two']);
+});
+
 test('editing preselects saved identities; cancellation preserves the file', async t => {
   const workspace = await fixture(t);
   await configureDevApps(workspace, apps, undefined, editor(['two']), quiet);

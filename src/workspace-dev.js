@@ -57,12 +57,10 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
   const preview = await startNativePreview(null, { workspaceOrigin, port, container, apps: new Map() });
   launch.searchParams.set('preview', preview.url);
   onStatus({ status: 'watching', workspace_url: launch.href });
-  output.panel('Nexia project development', [
+  output.summary([
     ['Project', connection.project.name],
-    ['Scope', selector ? [selector].flat().join(', ') : 'All selected local Apps'],
     ['Workspace', { link: launch.href, label: 'Open workspace' }],
     [message('Local address', '로컬 주소'), preview.url],
-    ['Stop', 'Ctrl+C stops local development; sandbox data is retained'],
   ]);
   const workers = new Map(), messages = new Map(), retryAt = new Map();
   const report = (key, name, state, detail) => {

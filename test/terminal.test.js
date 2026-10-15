@@ -1,9 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import { stripVTControlCharacters } from 'node:util';
 import { createInput, Cancelled } from '../src/input.js';
 import { helpText, commands } from '../src/commands.js';
 import { paint, fit } from '../src/terminal.js';
+import { banner } from '../src/banner.js';
+
+test('development banner keeps the dot logo proportional and responsive', () => {
+  const terminal = { isTTY: true, columns: 80 };
+  const colored = banner(terminal, { COLORTERM: 'truecolor' });
+  assert.match(colored, /[⠁-⣿]/u);
+  assert.match(colored, /\x1b\[38;2;0;104;255m/);
+  assert.match(colored, /\x1b\[97m/);
+  assert.doesNotMatch(colored, /nexia/i);
+  assert.ok(!banner(terminal, { NO_COLOR: '' }).includes('\x1b'));
+  assert.equal(banner({}, {}), '');
+  const dimensions = columns => {
+    const rows = stripVTControlCharacters(banner({ ...terminal, columns }, {})).split('\n').slice(1, -1);
+    return { width: Math.max(...rows.map(row => [...row].length)), height: rows.length };
+  };
+  const narrow = dimensions(60), wide = dimensions(120);
+  assert.ok(narrow.width <= 60 && wide.width <= 120);
+  assert.ok(narrow.width < wide.width && narrow.height < wide.height);
+});
 
 test('help includes every command in task groups and color respects plain output', () => {
   const help = helpText();
