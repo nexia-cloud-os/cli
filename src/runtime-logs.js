@@ -6,7 +6,7 @@ export function watchRuntimeLogs(config, operation, { log, signal, interval = 20
   const controller = new AbortController();
   const stopped = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const finished = (async () => {
-    let cursor = 0, disconnected = false;
+    let cursor = 0, disconnected = false, idleWait = interval;
     while (!stopped.aborted) {
       let wait = interval;
       try {
@@ -21,6 +21,8 @@ export function watchRuntimeLogs(config, operation, { log, signal, interval = 20
         disconnected = false;
         if (result.truncated) devLog(log, 'php', 'warning', 'Earlier logs expired from the bounded buffer.', { verbose });
         for (const row of result.entries) devLog(log, 'php', row.level, row.message, { verbose });
+        idleWait = result.cursor !== cursor ? interval : Math.min(Math.max(interval, 10000), idleWait * 2);
+        wait = idleWait;
         cursor = result.cursor;
       } catch (error) {
         if (stopped.aborted) break;

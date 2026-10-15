@@ -46,3 +46,17 @@ test('diagnostic navigation rejects external links and unrelated operation ancho
     assert.equal(preparationLocation({ id, diagnostic_path: path }, 'https://developers.example'), '');
   }
 });
+
+test('catalog errors name the file, exact dotted key and lengths without granting retry', () => {
+  const message = preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [
+    { field: 'catalog.translations.en.payroll.approval.description', rule: 'too_long', limit: 2000, actual: 2001, value: 'PRIVATE' },
+    { field: 'catalog.permissions.0.key', rule: 'invalid', limit: null, actual: null },
+    { field: '\x1b[2JPRIVATE', rule: 'invalid' },
+  ] });
+  assert.match(message, /File: resources\/lang\/en.json\n  Key: payroll.approval.description/);
+  assert.match(message, /maximum 2000 characters; actual 2001/);
+  assert.match(message, /invalid declaration\ncatalog.permissions.0.key/);
+  assert.match(message, /nexia check/);
+  assert.doesNotMatch(message, /PRIVATE|safe to retry|No App code ran/);
+  assert.match(preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [] }), /Fix the reported catalog declarations/);
+});

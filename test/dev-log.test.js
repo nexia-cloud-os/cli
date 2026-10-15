@@ -90,3 +90,27 @@ test('verbose is an explicit boolean dev option', async () => {
   assert.equal(result.options.verbose, true);
   validateOptions('dev', result.options);
 });
+
+test('quiet log polling backs off and new output restores the fast interval', async t => {
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  const times = [];
+  globalThis.fetch = async () => {
+    times.push(performance.now());
+    const calls = times.length;
+    if (calls === 4) controller.abort();
+    return new Response(JSON.stringify({ operation_id: 'operation', cursor: calls < 3 ? 0 : 1, truncated: false,
+      entries: calls === 3 ? [{ id: 1, level: 'warning', message: 'new output' }] : [],
+    }), { headers: { 'Content-Type': 'application/json' } });
+  };
+  const watcher = watchRuntimeLogs({ endpoint: 'http://127.0.0.1:4310', token: 'test' }, 'operation', {
+    log: () => {}, signal: controller.signal, interval: 20,
+  });
+  t.after(async () => { controller.abort(); await watcher.close(); globalThis.fetch = original; });
+  await new Promise(resolve => controller.signal.addEventListener('abort', resolve, { once: true }));
+  await watcher.close();
+  assert.equal(times.length, 4);
+  assert.ok(times[1] - times[0] >= 30, 'first quiet response waits twice the base interval');
+  assert.ok(times[2] - times[1] >= 65, 'second quiet response backs off again');
+  assert.ok(times[3] - times[2] >= 15, 'new output resumes the base interval');
+});

@@ -5,6 +5,20 @@ export function preparationFailureDetails(failure, check) {
     references: 'resource references', ingress: 'workspace routing', operator: 'platform preparation' };
   if (!failure || !Object.hasOwn(stages, failure.stage)) return '';
   const stage = `Failed step: ${stages[failure.stage]}.`;
+  if (failure.code === 'CATALOG_VALIDATION_FAILED' && failure.stage === 'catalog') {
+    const issues = Array.isArray(failure.issues) ? failure.issues.slice(0, 10) : [];
+    const details = issues.filter(issue => issue && typeof issue.field === 'string'
+      && /^[a-zA-Z0-9_.:-]{1,240}$/.test(issue.field) && ['invalid', 'too_long'].includes(issue.rule)).map(issue => {
+      const translation = /^catalog\.translations\.([a-zA-Z0-9_-]{1,20})\.(.+)$/.exec(issue.field);
+      const length = issue.rule === 'too_long' && Number.isInteger(issue.limit) && issue.limit >= 1 && issue.limit <= 1048576
+        && Number.isInteger(issue.actual) && issue.actual >= 0 && issue.actual <= 1048576
+        ? `maximum ${issue.limit} characters; actual ${issue.actual}` : 'invalid declaration';
+      return translation
+        ? `  Translation: ${length}\n  File: resources/lang/${translation[1]}.json\n  Key: ${translation[2]}`
+        : `  ${length}\n${issue.field}`;
+    });
+    return `[CATALOG_VALIDATION_FAILED] ${stage}\n${details.length ? details.join('\n') + '\n' : ''}Fix the reported catalog declarations and run nexia check from the App folder. Follow this operation's retry/review guidance; do not delete .nexia or reset data.\n`;
+  }
   if (failure.code === 'SDK_VERSION_MISMATCH' && failure.stage === 'dependencies'
       && typeof failure.required_sdk === 'string' && /^[0-9vVxX*^~<>=| .+\-]{1,160}$/.test(failure.required_sdk)
       && typeof failure.installed_sdk === 'string' && /^v?\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(failure.installed_sdk)
