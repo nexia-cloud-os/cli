@@ -1,5 +1,5 @@
 import { terminalLink } from './terminal-link.js';
-import { paint, plain } from './terminal.js';
+import { displayWidth, fit, paint, plain } from './terminal.js';
 
 const states = {
   pending: { icon: '○', label: 'WAITING', style: 'muted' },
@@ -11,7 +11,11 @@ const states = {
 };
 
 const safeLines = value => String(value).split(/\r?\n/).map(line => plain(line)).filter(Boolean);
-const shorten = (value, limit) => value.length <= limit ? value : `${value.slice(0, Math.max(1, limit - 14))}… [truncated]`;
+const shorten = (value, limit) => {
+  const text = plain(value), marker = '… [truncated]';
+  return !Number.isFinite(limit) || displayWidth(text) <= limit ? text
+    : `${fit(text, Math.max(2, limit - displayWidth(marker) + 1))}${marker}`;
+};
 const styleForLevel = level => {
   if (['error', 'fatal', 'critical', 'alert', 'emergency'].includes(level)) return 'error';
   if (['warning', 'warn'].includes(level)) return 'warning';
@@ -33,20 +37,22 @@ export function devTask(name, state, detail, stream = process.stderr) {
 }
 
 function box(title, lines, stream) {
-  const width = Math.max(plain(title).length + 1, 1, ...lines.map(line => plain(line).length));
-  const top = `┌─ ${paint(title, 'title', stream)} ${'─'.repeat(Math.max(0, width - plain(title).length - 1))}┐`;
-  return [top, ...lines.map(line => `│ ${line}${' '.repeat(Math.max(0, width - plain(line).length))} │`), `└${'─'.repeat(width + 2)}┘`].join('\n');
+  const width = Math.max(displayWidth(title) + 1, 1, ...lines.map(displayWidth));
+  const top = `┌─ ${paint(title, 'title', stream)} ${'─'.repeat(Math.max(0, width - displayWidth(title) - 1))}┐`;
+  return [top, ...lines.map(line => `│ ${line}${' '.repeat(Math.max(0, width - displayWidth(line)))} │`), `└${'─'.repeat(width + 2)}┘`].join('\n');
 }
 
 export function devPanel(title, rows, stream = process.stderr) {
-  const width = Math.max(0, ...rows.map(([label]) => plain(label).length));
+  const width = Math.max(0, ...rows.map(([label]) => displayWidth(label)));
+  const panelWidth = Number.isInteger(stream.columns) ? Math.max(24, Math.min(120, stream.columns - 2)) : Infinity;
   const lines = rows.map(([label, value]) => {
     if (value && typeof value === 'object' && value.formatted) return value.formatted;
-    const limit = Number.isInteger(stream.columns) ? Math.max(20, stream.columns - width - 8) : Infinity;
+    const limit = Math.max(12, panelWidth - width - 6);
     const rendered = value && typeof value === 'object' && value.link
         ? terminalLink(value.link, shorten(plain(value.label || value.link), limit), stream)
         : shorten(plain(value ?? '—'), limit);
-    return `${paint(plain(label).padEnd(width), 'muted', stream)}  ${rendered}`;
+    const labelText = plain(label);
+    return `${paint(`${labelText}${' '.repeat(width - displayWidth(labelText))}`, 'muted', stream)}  ${rendered}`;
   });
   return box(title, lines, stream);
 }
@@ -59,7 +65,8 @@ export function createDevReporter(log = console.error, {
   stream = process.stderr, now = Date.now, heartbeatMs = 15_000, timers = globalThis,
 } = {}) {
   const tasks = new Map(), live = Boolean(stream.isTTY && typeof stream.write === 'function');
-  let summaryRows = [], renderedLines = 0, paused = false;
+  let summaryRows = [], detailLines = [], omittedDetails = 0, renderedLines = 0, paused = false;
+  const outputWidth = () => Math.max(24, Math.min(120, (stream.columns || 122) - 2));
   const clear = () => {
     if (!renderedLines) return;
     stream.write(`\x1b[${renderedLines}A\r\x1b[J`);
@@ -74,7 +81,8 @@ export function createDevReporter(log = console.error, {
       for (const [name, task] of tasks) {
         const elapsed = task.state === 'running' && current - task.startedAt >= heartbeatMs
           ? ` · ${Math.max(1, Math.floor((current - task.startedAt) / 1000))}s elapsed` : '';
-        const detail = shorten(`${task.detail}${elapsed}`, Math.max(20, (stream.columns || 160) - plain(name).length - 20));
+        const prefix = devTask(name, task.state, '', stream);
+        const detail = shorten(`${task.detail}${elapsed}`, Math.max(20, outputWidth() - displayWidth(prefix) - 4));
         rows.push(['', { formatted: devTask(name, task.state, detail, stream) }]);
       }
     }
@@ -83,14 +91,30 @@ export function createDevReporter(log = console.error, {
   const render = () => {
     if (!live || paused || (!summaryRows.length && !tasks.size)) return;
     clear();
-    const value = dashboard();
+    const panel = dashboard(), panelLines = panel.split('\n');
+    const room = Math.max(1, (stream.rows || 40) - panelLines.length - 2);
+    const hidden = omittedDetails + Math.max(0, detailLines.length - room);
+    const visibleCount = Math.max(0, room - Number(hidden > 0));
+    const visible = visibleCount ? detailLines.slice(-visibleCount) : [];
+    if (hidden) visible.unshift(paint(`… ${hidden} earlier detail line(s) omitted.`, 'muted', stream));
+    const detailTitle = `${paint('Details', 'title', stream)} · resolve ${paint('FAILED', 'error', stream)} items first`;
+    const value = visible.length ? `${panel}\n\n${detailTitle}\n${visible.join('\n')}` : panel;
     stream.write(`${value}\n`);
     renderedLines = value.split('\n').length;
   };
   const writeLog = value => {
-    if (live) clear();
-    log(value);
-    if (live) render();
+    if (!live) { log(value); return; }
+    detailLines.push(...String(value).split(/\r?\n/).filter(Boolean));
+    if (detailLines.length > 200) {
+      omittedDetails += detailLines.length - 200;
+      detailLines = detailLines.slice(-200);
+    }
+    render();
+  };
+  const formatDetail = (branch, name, value, style) => {
+    const prefix = `${branch} ${plain(name)}  `;
+    const detail = shorten(value, Math.max(20, outputWidth() - displayWidth(prefix)));
+    return `${paint(branch, style, stream)} ${paint(name, 'title', stream)}  ${paint(detail, style, stream)}`;
   };
   const timer = stream.isTTY && heartbeatMs > 0 ? timers.setInterval(() => {
     const current = now();
@@ -128,7 +152,7 @@ export function createDevReporter(log = console.error, {
       const lines = visible.map((line, index) => {
         const level = line.match(/^\[[^\]]+\s+(error|fatal|critical|alert|emergency|warning|warn)\]/)?.[1];
         const style = styleForLevel(level);
-        return `${paint(index ? '│' : '└', style, stream)} ${paint(name, 'muted', stream)}  ${paint(line, style, stream)}`;
+        return formatDetail(index ? '│' : '└', name, line, style);
       });
       if (lines.length) writeLog(lines.join('\n'));
     },
@@ -136,9 +160,9 @@ export function createDevReporter(log = console.error, {
       const lines = safeLines(devFailure(error, { verbose }));
       const headline = lines.shift() || 'Unknown failure.';
       task(name, 'error', headline);
-      const details = lines.map(line => `${paint('│', 'error', stream)} ${paint(name, 'muted', stream)}  ${line}`);
-      if (live && paused) details.unshift(devTask(name, 'error', headline, stream));
-      if (next) details.push(`${paint('└', 'warning', stream)} ${paint(name, 'muted', stream)}  Next: ${plain(next)}`);
+      const details = lines.map(line => formatDetail('│', name, line, 'error'));
+      if (live && paused) details.unshift(formatDetail('✕', name, headline, 'error'));
+      if (next) details.push(formatDetail('└', name, `Next: ${plain(next)}`, 'warning'));
       if (details.length) writeLog(details.join('\n'));
     },
     close() { if (timer) timers.clearInterval(timer); },
