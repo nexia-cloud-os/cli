@@ -100,6 +100,7 @@ for (const expired of [true, false]) {
     const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
     const oldRevision = randomUUID(), oldRequest = randomUUID(), restoredRevision = randomUUID();
     const submissions = [];
+    const tasks = [];
     let uploads = 0, connectionChecks = 0;
     const shutdown = new AbortController();
     const server = createServer(async (req, res) => {
@@ -151,8 +152,11 @@ for (const expired of [true, false]) {
     }));
     const deadline = setTimeout(() => shutdown.abort(), 3000);
     try {
-      const run = nativeDev(directory, { port: 0, interval: 1, signal: shutdown.signal,
-        log: message => { if (message.includes('preparation queued')) shutdown.abort(); } });
+      const run = nativeDev(directory, { port: 0, interval: 1, signal: shutdown.signal, reporter: {
+        task(name, state, detail) { tasks.push({ name, state, detail }); if (detail.includes('Platform queue has not started')) shutdown.abort(); },
+        message() {},
+        summary() {},
+      } });
       if (expired) await run;
       else await assert.rejects(run, /HTTP 410/);
     } finally { clearTimeout(deadline); }
@@ -160,6 +164,7 @@ for (const expired of [true, false]) {
     assert.equal(uploads, expired ? 1 : 0);
     assert.equal(submissions.length, expired ? 2 : 1);
     if (expired) {
+      assert.ok(tasks.some(task => task.state === 'pending' && task.detail === 'Platform queue has not started runtime preparation…'));
       assert.notEqual(saved.request_id, oldRequest);
       assert.equal(saved.revision_id, restoredRevision);
       assert.ok(saved.operation_id);

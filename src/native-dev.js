@@ -116,7 +116,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             browserRuntime = null;
             const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
             if (lastStatus !== status) {
-              if (reporter) task('running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
+              if (reporter) task(databaseOperation.status === 'queued' ? 'pending' : 'running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
               else log(`Database ${databaseOperation.database_command}: ${databaseOperation.status}. Source watching will resume after this operation finishes.`);
             }
             lastStatus = status;
@@ -256,8 +256,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           const status = `${operation.id}:${phase}`;
           if (lastStatus !== status) {
             if (reporter) {
-              let state = 'running';
-              let detail = `Runtime preparation ${phase}…`;
+              let state = phase === 'queued' ? 'pending' : 'running';
+              let detail = phase === 'queued' ? 'Platform queue has not started runtime preparation…' : `Runtime preparation ${phase}…`;
               if (phase === 'completed') {
                 state = 'success';
                 detail = 'Runtime preparation confirmed';
