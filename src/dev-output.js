@@ -3,7 +3,7 @@ import { displayWidth, fit, paint, plain } from './terminal.js';
 
 const states = {
   pending: { icon: '○', label: 'WAITING', style: 'muted' },
-  running: { icon: '◆', label: 'RUNNING', style: 'accent' },
+  running: { icon: '◆', label: 'PROCESSING', style: 'accent' },
   success: { icon: '✓', label: 'DONE', style: 'success' },
   warning: { icon: '!', label: 'ACTION', style: 'warning' },
   error: { icon: '✕', label: 'FAILED', style: 'error' },
@@ -79,7 +79,7 @@ export function createDevReporter(log = console.error, {
       if (rows.length) rows.push(['', '']);
       rows.push(['Progress', '']);
       for (const [name, task] of tasks) {
-        const elapsed = task.state === 'running' && current - task.startedAt >= heartbeatMs
+        const elapsed = ['pending', 'running'].includes(task.state) && current - task.startedAt >= heartbeatMs
           ? ` · ${Math.max(1, Math.floor((current - task.startedAt) / 1000))}s elapsed` : '';
         const prefix = devTask(name, task.state, '', stream);
         const detail = shorten(`${task.detail}${elapsed}`, Math.max(20, outputWidth() - displayWidth(prefix) - 4));
@@ -120,7 +120,7 @@ export function createDevReporter(log = console.error, {
     const current = now();
     let changed = false;
     for (const task of tasks.values()) {
-      if (task.state !== 'running' || current - task.reportedAt < heartbeatMs) continue;
+      if (!['pending', 'running'].includes(task.state) || current - task.reportedAt < heartbeatMs) continue;
       task.reportedAt = current;
       changed = true;
     }
@@ -157,12 +157,12 @@ export function createDevReporter(log = console.error, {
       });
       if (lines.length) writeLog(lines.join('\n'));
     },
-    failure(name, error, { verbose = false, next } = {}) {
+    failure(name, error, { verbose = false, next, summary } = {}) {
       const lines = safeLines(devFailure(error, { verbose }));
       const headline = lines.shift() || 'Unknown failure.';
-      task(name, 'error', headline);
+      task(name, 'error', summary || headline);
       const details = lines.map(line => formatDetail('✕', name, line, 'error'));
-      if (live && paused) details.unshift(formatDetail('✕', name, headline, 'error'));
+      if (summary || (live && paused)) details.unshift(formatDetail('✕', name, headline, 'error'));
       if (next) details.push(formatDetail('→', name, `Next: ${plain(next)}`, 'warning'));
       if (details.length) writeLog(details.join('\n'));
     },
