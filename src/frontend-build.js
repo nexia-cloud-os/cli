@@ -10,7 +10,7 @@ async function modified(file) {
 }
 
 // Generated Apps use Vite's own incremental build; no App package script is run.
-export async function startFrontendBuild(directory, { signal, verbose = false, log = console.log, onInvalidate = () => {} } = {}) {
+export async function startFrontendBuild(directory, { signal, verbose = false, log = console.log, onInvalidate = () => {}, onState = () => {} } = {}) {
   if (!(await modified(path.join(directory, 'vite.config.mjs')))) return null;
   const vite = path.join(directory, 'node_modules', 'vite', 'dist', 'node', 'index.js');
   if (!(await modified(vite))) throw new Error('Frontend dependencies are missing. Run npm install in this App, then retry nexia dev.');
@@ -18,14 +18,14 @@ export async function startFrontendBuild(directory, { signal, verbose = false, l
   const entry = path.join(directory, 'dist', 'frontend', 'index.js');
   const worker = fileURLToPath(new URL('./frontend-build-worker.js', import.meta.url));
   const child = spawn(process.execPath, [worker, vite, directory, verbose ? 'verbose' : 'warnings'], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-  for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'error']]) {
-    pipeBuildLogs(stream, log, level);
+  for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'warning']]) {
+    pipeBuildLogs(stream, log, level, { verbose });
   }
   let failure, ready = false, failed = false, generation = 0, snapshot;
   child.on('message', message => {
-    if (message?.phase === 'building') { ready = false; failed = false; onInvalidate(); }
-    if (message?.phase === 'failed') { ready = false; failed = true; onInvalidate(); }
-    if (message?.phase === 'ready') { ready = true; failed = false; generation++; snapshot = message.snapshot; }
+    if (message?.phase === 'building') { ready = false; failed = false; onInvalidate(); onState('building'); }
+    if (message?.phase === 'failed') { ready = false; failed = true; onInvalidate(); onState('failed', message.detail); }
+    if (message?.phase === 'ready') { ready = true; failed = false; generation++; snapshot = message.snapshot; onState('ready'); }
   });
   child.once('error', error => { failure = error; });
   child.once('exit', code => { failure = new Error(`Frontend build watcher stopped (${code}). Restart nexia dev after fixing the build.`); });

@@ -64,7 +64,8 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
   const messages = [];
   const running = workspaceDev(workspace, { signal: shutdown.signal, port: 0, ...(selected ? { app: ['people', 'payroll'] } : {}), log: message => {
     messages.push(message);
-    if (message.startsWith('Project:')) url = new URL(message.split('\n')[1].replace('Nexia workspace: ', '')).searchParams.get('preview');
+    const match = message.match(/Local address\s+(http:\/\/[^\s]+)/);
+    if (match) url = match[1];
   } });
   t.after(async () => { shutdown.abort(); await running; });
   const manifest = async () => {
@@ -87,7 +88,7 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
     assert.fail(messages.join('\n'));
   };
   const first = await waitForApps(1);
-  assert.ok(messages.some(message => message.includes(`Local App address (copy): ${url}`) || message.includes(`로컬 앱 주소 (복사용): ${url}`)), 'print the actual listening address separately, including dynamically assigned ports');
+  assert.ok(messages.some(message => message.includes(`Local address  ${url}`)), 'print the actual listening address separately, including dynamically assigned ports');
   await addApp('payroll');
   const second = await waitForApps(2);
   assert.equal(second.apps[0].app_id, first.apps[0].app_id);

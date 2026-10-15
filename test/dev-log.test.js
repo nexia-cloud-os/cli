@@ -70,6 +70,19 @@ test('build logs bound newline-free output and drop a flood after one warning', 
   assert.match(output.at(-1), /Log limit reached/);
 });
 
+test('default build output collapses verbose Vite reporter warnings', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { pipeBuildLogs } = await import('../src/dev-log.js');
+  const output = [], stream = new PassThrough();
+  pipeBuildLogs(stream, line => output.push(line), 'warning');
+  const warning = '[plugin:vite:reporter]\n(!) /long/path/module.ts is dynamically imported by /one.ts but also statically imported by /two.ts\n';
+  stream.end(warning.repeat(20));
+  await new Promise(resolve => stream.once('end', resolve));
+  assert.equal(output.length, 1);
+  assert.match(output[0], /mixed static\/dynamic imports/);
+  assert.doesNotMatch(output[0], /long\/path/);
+});
+
 
 test('verbose is an explicit boolean dev option', async () => {
   const { parseCommand, validateOptions } = await import('../src/commands.js');

@@ -77,7 +77,7 @@ export function createInput(options = {}, { input = process.stdin, output = proc
           input.removeListener('error', onError);
           input.setRawMode(wasRaw);
           if (!wasFlowing) input.pause();
-          output.write(`${error ? message('Cancelled', '취소됨') : paint(`✓ ${labels[cursor]}`, 'accent', output)}\n`);
+          output.write(`${error ? message('Cancelled', '취소됨') : paint(`✓ ${labels[cursor]}`, 'success', output)}\n`);
           if (error) reject(error); else resolve(values[cursor]);
         };
         const onEnd = () => finish(new Cancelled());
@@ -125,7 +125,11 @@ export function createInput(options = {}, { input = process.stdin, output = proc
       while (lines.length < renderedLines) lines.push('');
       for (const line of lines) {
         const visible = fit(line, output.columns || 100);
-        output.write(`\r\x1b[2K${paint(visible, line.startsWith('>') ? 'accent' : 'muted', output)}\n`);
+        let style = 'muted';
+        if (line.startsWith('>')) style = 'accent';
+        else if (line.includes('[x]')) style = 'success';
+        else if (line.includes('setup required')) style = 'warning';
+        output.write(`\r\x1b[2K${paint(visible, style, output)}\n`);
       }
       renderedLines = lines.length;
     };

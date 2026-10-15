@@ -14,6 +14,8 @@ test('help includes every command in task groups and color respects plain output
   assert.equal(paint('Title', 'title', { isTTY: true }, { NO_COLOR: '' }), 'Title');
   assert.equal(paint('Title', 'title', { isTTY: true }, { TERM: 'dumb' }), 'Title');
   assert.match(paint('Title', 'title', { isTTY: true }, {}), /\x1b\[1m/);
+  assert.match(paint('Done', 'success', { isTTY: true }, {}), /\x1b\[32m/);
+  assert.match(paint('Failed', 'error', { isTTY: true }, {}), /\x1b\[31m/);
   assert.equal(fit('ab한글cd', 6), 'ab한');
 });
 
