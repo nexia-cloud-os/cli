@@ -128,10 +128,17 @@ export function createDevReporter(log = console.error, {
     }
     render();
   };
-  const formatDetail = (marker, name, value, style) => {
+  const formatDetail = (marker, name, value, style, wrap = false) => {
     const prefix = `${marker} ${plain(name)}  `;
-    const detail = shorten(value, Math.max(20, outputWidth() - displayWidth(prefix)));
-    return `${paint(marker, style, stream)} ${paint(name, 'title', stream)}  ${paint(detail, style, stream)}`;
+    const width = Math.max(20, outputWidth() - displayWidth(prefix));
+    const details = [];
+    let remaining = plain(value);
+    do {
+      const detail = wrap ? fit(remaining, width + 1) : shorten(remaining, width);
+      details.push(`${paint(marker, style, stream)} ${paint(name, 'title', stream)}  ${paint(detail, style, stream)}`);
+      remaining = wrap ? remaining.slice(detail.length) : '';
+    } while (remaining);
+    return details.join('\n');
   };
   const timer = stream.isTTY && heartbeatMs > 0 ? timers.setInterval(() => {
     const current = now();
@@ -196,9 +203,9 @@ export function createDevReporter(log = console.error, {
       const lines = safeLines(devFailure(error, { verbose }));
       const headline = lines.shift() || 'Unknown failure.';
       task(name, 'error', summary || headline);
-      const details = lines.map(line => formatDetail('✕', name, line, 'error'));
-      if (summary || (live && paused)) details.unshift(formatDetail('✕', name, headline, 'error'));
-      if (next) details.push(formatDetail('→', name, `Next: ${plain(next)}`, 'warning'));
+      const details = lines.map(line => formatDetail('✕', name, line, 'error', true));
+      if (summary || (live && paused)) details.unshift(formatDetail('✕', name, headline, 'error', true));
+      if (next) details.push(formatDetail('→', name, `Next: ${plain(next)}`, 'warning', true));
       if (details.length) writeLog(details.join('\n'), { owner: name, failure: true });
     },
     close() { if (timer) timers.clearInterval(timer); },

@@ -144,3 +144,20 @@ test('non-TTY output appends an explicit resolution after a prior failure', () =
   assert.match(plain(output.at(-1)), /✓ people\s+DONE\s+Runtime preparation confirmed; previous failure resolved/);
   reporter.close();
 });
+
+test('catalog failure keys and character limits survive a narrow terminal', async () => {
+  const { preparationFailureDetails } = await import('../src/preparation-failure.js');
+  const output = [];
+  const reporter = createDevReporter(line => output.push(line), { stream: { isTTY: false, columns: 55 }, heartbeatMs: 0 });
+  const key = 'payroll.approval.presets.payroll_adjustment_request.description';
+  reporter.failure('payroll', new Error('Preparation failed\n' + preparationFailureDetails({
+    code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [{
+      field: 'catalog.translations.en.' + key, rule: 'too_long', limit: 2000, actual: 2001,
+    }],
+  })), { next: 'Fix the translation, then run nexia check.' });
+  const details = output.slice(1).join('\n').split('\n').map(line => line.replace(/^[✕→] payroll  /, '')).join('');
+  assert.ok(details.includes('maximum 2000 characters; actual 2001'));
+  assert.ok(details.includes('Key: ' + key));
+  assert.ok(details.includes('resources/lang/en.json'));
+  reporter.close();
+});
