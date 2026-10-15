@@ -82,10 +82,6 @@ export async function updateCli(input, options = {}, {
   const recentCheck = automatic && recent(cache.checkedAt);
   let latest = recentCheck && parts(cache.latest) ? cache.latest : null;
   let checkFailed = recentCheck && !latest;
-  if (automatic && recent(cache.snoozedAt)) {
-    onChecked({ current, latest, updateAvailable: Boolean(latest && isNewer(latest, current)), checkFailed });
-    return false;
-  }
   if (fresh) { latest = null; checkFailed = false; }
   if (!latest && !(recentCheck && !fresh)) {
     try { latest = await getLatest(); }
@@ -93,7 +89,7 @@ export async function updateCli(input, options = {}, {
       checkFailed = true;
       if (!automatic) throw new Error(`Could not check CLI updates: ${error.message}. Retry nexia update or run ${manual}.`);
     }
-    cache = { checkedAt: now, latest, failed: checkFailed };
+    cache = { ...cache, checkedAt: now, latest, failed: checkFailed };
     if (automatic) await saveCache();
   }
   onChecked({ current, latest, updateAvailable: Boolean(latest && isNewer(latest, current)), checkFailed });
@@ -101,20 +97,19 @@ export async function updateCli(input, options = {}, {
     if (!automatic) log(message(`No newer alpha release (installed: ${current}).`, `새 alpha 버전이 없습니다 (설치 버전: ${current}).`));
     return false;
   }
+  if (automatic && cache.skippedVersion === latest) return false;
   const summary = message(`Nexia update: ${current} → ${latest}`, `Nexia 새 버전: ${current} → ${latest}`);
   if (automatic) {
     const action = await input.choice('cli-update', summary, [
-      { value: 'update', label: message('Update now', '지금 업데이트') },
-      { value: 'skip', label: message('Skip this time', '이번에는 건너뛰기') },
-      { value: 'later', label: message('Remind me in 24 hours', '24시간 뒤에 알림') },
+      { value: 'update', label: message('Update', '업데이트') },
+      { value: 'skip', label: message('Skip', '건너뛰기') },
+      { value: 'skip-version', label: message('Skip Until Next Version', '다음 버전까지 건너뛰기') },
     ], 'skip');
-    if (action === 'later') { cache.snoozedAt = now; await saveCache(); }
+    if (action === 'skip-version') { cache.skippedVersion = latest; await saveCache(); }
     if (action !== 'update') return false;
-    log(`${summary}\nnpm install -g @nexia/cli@${latest}`);
-  } else {
-    await input.confirm(`${summary}\nnpm install -g @nexia/cli@${latest}`);
-    if (options['dry-run']) return false;
   }
+  log(`${summary}\nnpm install -g @nexia/cli@${latest}`);
+  if (options['dry-run']) return false;
   input.close();
   await installVersion(latest);
   log(message(`Updated to ${latest}. Run your command again.`, `${latest} 버전으로 업데이트했습니다. 명령을 다시 실행하세요.`));

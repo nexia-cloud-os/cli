@@ -70,15 +70,26 @@ test('automatic check refreshes a cached current version and discovers a new rel
   assert.deepEqual(statuses, [{ current: '0.2.0-alpha.7', latest: '0.2.0-alpha.10', updateAvailable: true, checkFailed: false }]);
 });
 
-test('later snoozes 24 hours while an explicit update bypasses snooze/cache', async t => {
-  const { input, settings, calls } = await fixture(t, 'later');
+test('skip until next version suppresses that release and prompts for the next one', async t => {
+  const { input, settings, calls } = await fixture(t, 'skip-version');
   await updateCli(input, {}, settings);
-  assert.equal(await updateCli(input, {}, { ...settings, now: settings.now + day - 1 }), false);
+  assert.equal(JSON.parse(await readFile(settings.cacheFile, 'utf8')).skippedVersion, '0.2.0-alpha.10');
+  assert.match(calls.questions[0], /1\. Update\n\s+2\. Skip\n\s+3\. Skip Until Next Version/);
+  assert.equal(await updateCli(input, {}, { ...settings, fresh: true, now: settings.now + 1 }), false);
   assert.equal(calls.questions.length, 1);
-  const explicit = createInput({ yes: true }, { output: { write() {} } });
-  assert.equal(await updateCli(explicit, { yes: true }, { ...settings, automatic: false }), true);
-  assert.equal(calls.lookups, 2);
+  settings.getLatest = async () => { calls.lookups++; return '0.2.0-alpha.11'; };
+  assert.equal(await updateCli(input, {}, { ...settings, fresh: true, now: settings.now + 2 }), false);
+  assert.equal(calls.questions.length, 2);
+  assert.equal(JSON.parse(await readFile(settings.cacheFile, 'utf8')).skippedVersion, '0.2.0-alpha.11');
+  assert.equal(calls.lookups, 3);
+});
+
+test('explicit update installs immediately without confirmation', async t => {
+  const { input, settings, calls } = await fixture(t);
+  assert.equal(await updateCli(input, {}, { ...settings, automatic: false }), true);
+  assert.equal(calls.questions.length, 0);
   assert.deepEqual(calls.installs, ['0.2.0-alpha.10']);
+  assert.match(calls.logs[0], /npm install -g @nexia\/cli@0\.2\.0-alpha\.10/);
 });
 
 test('automatic update returns a stop signal only after installing the displayed version', async t => {
@@ -119,14 +130,16 @@ test('corrupt or unwritable cache does not block the original command', async t 
   assert.equal(await updateCli(input, {}, { ...settings, cacheFile: path.join(settings.cacheFile, 'impossible') }), false);
 });
 
-test('explicit dry run and missing consent never install', async t => {
+test('explicit dry run only previews while noninteractive update installs directly', async t => {
   const { settings, calls } = await fixture(t);
   const dry = createInput({ 'dry-run': true }, { output: { write() {} } });
   await updateCli(dry, { 'dry-run': true }, { ...settings, automatic: false });
   await assert.rejects(readFile(settings.cacheFile), { code: 'ENOENT' });
-  const unattended = createInput({ 'no-interactive': true }, { output: { write() {} } });
-  await assert.rejects(updateCli(unattended, {}, { ...settings, automatic: false }), /--yes/);
   assert.deepEqual(calls.installs, []);
+  assert.match(calls.logs[0], /npm install -g @nexia\/cli@0\.2\.0-alpha\.10/);
+  const unattended = createInput({ 'no-interactive': true }, { output: { write() {} } });
+  assert.equal(await updateCli(unattended, {}, { ...settings, automatic: false }), true);
+  assert.deepEqual(calls.installs, ['0.2.0-alpha.10']);
 });
 
 test('current or newer installed versions do not prompt or downgrade', async t => {
@@ -143,7 +156,7 @@ test('cancellation and installation failure stop the command without success out
   await assert.rejects(updateCli({ interactive: true, choice: async () => { throw new Cancelled(); } }, {}, settings), Cancelled);
 });
 
-test('update command exposes confirmation and preview flags without arbitrary package/channel input', () => {
+test('update command keeps compatibility and preview flags without arbitrary package/channel input', () => {
   assert.equal(parseCommand(['update', '--no-interactive', '--yes']).name, 'update');
   assert.equal(parseCommand(['update', '--dry-run']).options['dry-run'], true);
   for (const args of [['update', 'other-package'], ['update', '--tag', 'latest'], ['update', '--json']]) assert.throws(() => parseCommand(args));
