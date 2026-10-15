@@ -1,13 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDevReporter, devFailure, devPanel, devTask } from '../src/dev-output.js';
-import { plain } from '../src/terminal.js';
+import { displayWidth, plain } from '../src/terminal.js';
 
 test('development output remains explicit without color', () => {
   const stream = { isTTY: false };
   assert.equal(devTask('people', 'success', 'Runtime ready', stream), '✓ people  DONE  Runtime ready');
   assert.equal(devTask('assets', 'warning', 'Run npm install', stream), '! assets  ACTION  Run npm install');
   assert.match(devPanel('Nexia development', [['Project', 'example'], ['Local', 'http://127.0.0.1:4310']], stream), /┌─ Nexia development ─+┐\n│ Project  example\s+│\n│ Local    http:\/\/127\.0\.0\.1:4310 │\n└─+┘/);
+  const panel = devPanel('Nexia development', [
+    ['', { formatted: devTask('startup', 'success', 'Found 27 Apps', stream) }],
+    ['', { formatted: devTask('payroll', 'running', 'Runtime preparation queued…', stream) }],
+    ['', { formatted: devTask('people', 'pending', 'Queued for development', stream) }],
+  ], stream);
+  assert.equal(new Set(panel.split('\n').map(displayWidth)).size, 1);
 });
 
 test('development failures are bounded unless verbose', () => {
