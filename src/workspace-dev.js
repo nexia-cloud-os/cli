@@ -1,5 +1,5 @@
 import { message } from './input.js';
-import { createDevReporter } from './dev-output.js';
+import { createDevReporter, serverVersionRows } from './dev-output.js';
 import path from 'node:path';
 import { retryDevRead } from './dev-retry.js';
 import { MAX_DEV_APPS, filterDevApps } from './dev-selection.js';
@@ -29,6 +29,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
   if (config.endpoint !== workspace.endpoint || connection.status !== 'connected' || connection.project?.id !== workspace.project_id) {
     throw new Error('Log in to the project linked to this folder before starting dev.');
   }
+  output.summary(serverVersionRows(connection.platform_versions), { after: 'CLI version' });
   if (!connection.capabilities?.personal_sandboxes) throw new Error('This platform must be upgraded to support project development with personal sandboxes.');
   if (!connection.sandbox) {
     if (!(await discoverApps(workspace.root)).apps.length) {

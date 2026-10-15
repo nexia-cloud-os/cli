@@ -13,7 +13,7 @@ import { syncSource } from './sync.js';
 import { readExecutionSelection, selectExecution } from './apps.js';
 import { startNativePreview } from './native-preview.js';
 import { startFrontendBuild } from './frontend-build.js';
-import { devPanel, devTask } from './dev-output.js';
+import { devPanel, devTask, serverVersionRows } from './dev-output.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
@@ -56,6 +56,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   }, { signal, log: detailLog, interval });
   if (!initialConnection) return;
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
+  const versionRows = serverVersionRows(initialConnection.platform_versions);
+  if (reporter && !taskName) reporter.summary(versionRows, { after: 'CLI version' });
   if (initialConnection.capabilities?.explicit_development_migrations !== true) {
     throw new Error('The platform needs an update for explicit development migrations. nexia dev was not started because this platform may automatically migrate on source changes.');
   }
@@ -155,6 +157,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           if (!previewHost) {
             const rows = [
               ['App', identity.key],
+              ...versionRows,
               ['Workspace', { link: launch.href, label: 'Open workspace' }],
               [message('Local address', '로컬 주소'), preview.url],
               ['Frontend', build ? 'Build/watch running' : 'Serving dist/frontend'],
@@ -259,8 +262,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
               let state = phase === 'queued' ? 'pending' : 'running';
               let detail = phase === 'queued' ? 'Platform queue has not started runtime preparation…' : `Runtime preparation ${phase}…`;
               if (phase === 'completed') {
+                const resolved = reporter.resolve?.(name) === true;
                 state = 'success';
-                detail = 'Runtime preparation confirmed';
+                detail = resolved ? 'Runtime preparation confirmed; previous failure resolved' : 'Runtime preparation confirmed';
               } else if (['failed', 'needs_review'].includes(phase)) {
                 state = 'error';
                 detail = `Runtime preparation ${phase.replace('_', ' ')}`;
@@ -268,7 +272,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
                 state = 'warning';
               }
               task(state, detail);
-              if (operation.failure) reporter.message(name, preparationFailureDetails(operation.failure, operation.recovery_check).trim(), { verbose });
+              if (operation.failure) reporter.message(name, preparationFailureDetails(operation.failure, operation.recovery_check).trim(), { verbose, failure: true });
             } else {
               log(['stopping', 'stopped'].includes(phase)
                 ? `App execution ${phase}: ${operation.id}. Source and data retained.`
