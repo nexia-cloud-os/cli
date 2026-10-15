@@ -161,8 +161,9 @@ mode and selects only that App. Enter starts the chosen scope.
 Reopen `nexia dev config` to edit the preselected group. The startup picker never
 rewrites it. Settings are local to `.nexia/dev.json`, scoped to platform/project.
 Missing or invalid Config settings disable that option while allowing manual
-selection; use `nexia dev config` to repair them. Explicit `--app` skips the
-picker for one run and never rewrites settings.
+selection; select **Config Apps** and press Enter to configure it immediately,
+or use `nexia dev config`. Explicit `--app` skips the picker for one run and
+never rewrites settings.
 
 ```sh
 nexia dev config
@@ -321,7 +322,7 @@ Include sanitized reproduction and package versions, never credentials or data.
 
 ### Find and stop a background development session
 
-From the same project (or one of its Apps), use:
+From a project (or one of its Apps), use:
 
 ```sh
 nexia ps
@@ -334,13 +335,15 @@ nexia status
 For Docker sessions, run these commands inside the same container.
 
 `ps` lists this folder's tracked local sessions, PIDs, preview ports, selected
-Apps and workspace links. `stop` asks those Nexia processes to shut down their
-watchers and preview servers, including sessions started by an assistant. It
-never kills an arbitrary port owner or deletes remote data. An acknowledgement
-of `stopping` means shutdown has not finished; check `ps` again. An unreachable
-record may be stale and is not proof of a running process. Sessions started by
-older CLI versions are not tracked: use their terminal's Ctrl+C, or inspect
-`lsof -nP -iTCP:4310 -sTCP:LISTEN` and stop only the intended process.
+Apps and workspace links. `stop --port` can find a tracked session from another
+project folder. `stop` asks those authenticated Nexia processes to shut down
+their watchers and preview servers, including sessions started by an assistant.
+It never kills an arbitrary port owner or deletes remote data. An acknowledgement
+of `stopping` means shutdown has not finished; check `ps` again. Dead authenticated
+records are removed; an unreachable live record is not proof that its process is
+healthy. Sessions started by older CLI versions are not tracked: use their
+terminal's Ctrl+C, or inspect `lsof -nP -iTCP:4310 -sTCP:LISTEN` and stop only the
+intended process.
 
 `status` also reports the project's Git connection, last checked Git tag,
 latest submitted tag, published version and deployed version when the platform
@@ -351,12 +354,14 @@ remote tags. Unknown or unchecked values are not inferred from published version
 ## Terminal links
 
 `nexia ps` and `nexia dev` emit OSC 8 hyperlinks for workspace and development
-settings URLs in interactive terminals. `nexia dev` groups the project, scope,
-workspace and actual **Local address** in a startup panel. App tasks use explicit
-`WAITING`, `RUNNING`, `DONE`, `ACTION` and `FAILED` labels with color and icons;
-long-running tasks repeat with elapsed time. Copy the local address into the workspace’s local
-App address field; changing `--port` is reflected in that line. Recognized terminals show short labels;
-unknown terminals retain the full visible URL with the hyperlink destination.
+settings URLs in interactive terminals. `nexia dev` starts with a responsive dot
+logo, then keeps project, scope, workspace, actual **Local address**, and App
+progress in one boxed dashboard. App tasks use explicit `WAITING`, `RUNNING`,
+`DONE`, `ACTION` and `FAILED` labels with color and icons; long-running tasks
+update elapsed time in place instead of appending repeated lines. Copy the local
+address into the workspace's local App address field; changing `--port` is
+reflected in that line. Recognized terminals show short labels; unknown terminals
+retain the full visible URL with the hyperlink destination.
 Piped output, CI, dumb terminals and Apple Terminal retain plain URLs. JSON
 session data keeps the original URL without escape sequences. Click gestures
 depend on the terminal (for example, Command-click in iTerm2); browser opening
