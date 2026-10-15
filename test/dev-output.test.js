@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDevReporter, devFailure, devPanel, devTask } from '../src/dev-output.js';
+import { createDevReporter, devFailure, devPanel, devTask, serverVersionRows } from '../src/dev-output.js';
 import { displayWidth, plain } from '../src/terminal.js';
 
 test('development output remains explicit without color', () => {
@@ -15,6 +15,28 @@ test('development output remains explicit without color', () => {
     ['', { formatted: devTask('people', 'pending', 'Queued for development', stream) }],
   ], stream);
   assert.equal(new Set(panel.split('\n').map(displayWidth)).size, 1);
+});
+
+test('server versions use only the authenticated bounded platform contract', () => {
+  assert.deepEqual(serverVersionRows({ core: '0.8.42', php_sdk: '0.9.3', react_sdk: '0.9.1' }), [
+    ['Server Core', '0.8.42'], ['Core PHP SDK', '0.9.3'], ['Core React SDK', '0.9.1'],
+  ]);
+  assert.deepEqual(serverVersionRows(undefined), []);
+  assert.deepEqual(serverVersionRows({ core: '\u001b[31msecret', php_sdk: '0.9.3', react_sdk: '0.9.1' }), []);
+});
+
+test('server versions are inserted immediately after the CLI version', () => {
+  const writes = [];
+  const timers = { setInterval() { return { unref() {} }; }, clearInterval() {} };
+  const stream = { isTTY: true, columns: 160, write(value) { writes.push(value); } };
+  const reporter = createDevReporter(() => {}, { stream, heartbeatMs: 0, timers });
+  reporter.summary([['CLI version', '0.2.0-alpha.21'], ['Project folder', '/project']]);
+  reporter.summary(serverVersionRows({ core: '0.8.42', php_sdk: '0.9.3', react_sdk: '0.9.1' }), { after: 'CLI version' });
+  reporter.summary([['Apps', 'payroll']]);
+  const panel = plain(writes.at(-1));
+  assert.ok(panel.indexOf('CLI version') < panel.indexOf('Server Core'));
+  assert.ok(panel.indexOf('Core React SDK') < panel.indexOf('Project folder'));
+  reporter.close();
 });
 
 test('development failures are bounded unless verbose', () => {
@@ -92,4 +114,33 @@ test('TTY reporter keeps bounded details below the status box', () => {
     if (noColor === undefined) delete process.env.NO_COLOR;
     else process.env.NO_COLOR = noColor;
   }
+});
+
+test('resolved App failures disappear while build warnings remain', () => {
+  const writes = [];
+  const timers = { setInterval() { return { unref() {} }; }, clearInterval() {} };
+  const stream = { isTTY: true, columns: 160, rows: 30, write(value) { writes.push(value); } };
+  const reporter = createDevReporter(() => {}, { stream, heartbeatMs: 0, timers });
+  reporter.message('people', '[build warning] chunk placement is unchanged');
+  reporter.failure('people', new Error('[SDK_VERSION_MISMATCH] Failed step: PHP dependencies.'));
+  assert.match(plain(writes.at(-1)), /resolve FAILED items first/);
+  assert.equal(reporter.resolve('people'), true);
+  reporter.task('people', 'success', 'Runtime preparation confirmed; previous failure resolved');
+  const resolved = plain(writes.at(-1));
+  assert.match(resolved, /build warning/);
+  assert.match(resolved, /DONE.*previous failure resolved/);
+  assert.doesNotMatch(resolved, /SDK_VERSION_MISMATCH|resolve FAILED items first/);
+  reporter.close();
+});
+
+test('non-TTY output appends an explicit resolution after a prior failure', () => {
+  const output = [];
+  const reporter = createDevReporter(value => output.push(value), { stream: { isTTY: false } });
+  reporter.message('people', '[SDK_VERSION_MISMATCH] Failed step: PHP dependencies.', { failure: true });
+  const resolved = reporter.resolve('people');
+  reporter.task('people', 'success', resolved
+    ? 'Runtime preparation confirmed; previous failure resolved'
+    : 'Runtime preparation confirmed');
+  assert.match(plain(output.at(-1)), /✓ people\s+DONE\s+Runtime preparation confirmed; previous failure resolved/);
+  reporter.close();
 });

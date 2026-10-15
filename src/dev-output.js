@@ -10,6 +10,15 @@ const states = {
   stopped: { icon: '■', label: 'STOPPED', style: 'muted' },
 };
 
+const releaseVersion = value => typeof value === 'string' && value.length <= 80
+  && /^v?\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value);
+
+export function serverVersionRows(versions) {
+  if (!versions || typeof versions !== 'object' || Array.isArray(versions)) return [];
+  const rows = [['Server Core', versions.core], ['Core PHP SDK', versions.php_sdk], ['Core React SDK', versions.react_sdk]];
+  return rows.every(([, version]) => releaseVersion(version)) ? rows : [];
+}
+
 const safeLines = value => String(value).split(/\r?\n/).map(line => plain(line)).filter(Boolean);
 const shorten = (value, limit) => {
   const text = plain(value), marker = '… [truncated]';
@@ -66,6 +75,7 @@ export function createDevReporter(log = console.error, {
 } = {}) {
   const tasks = new Map(), live = Boolean(stream.isTTY && typeof stream.write === 'function');
   let summaryRows = [], detailLines = [], omittedDetails = 0, renderedLines = 0, paused = false;
+  const activeFailures = new Set(), omittedFailures = new Map();
   const outputWidth = () => Math.max(24, Math.min(120, (stream.columns || 122) - 2));
   const clear = () => {
     if (!renderedLines) return;
@@ -95,19 +105,26 @@ export function createDevReporter(log = console.error, {
     const room = Math.max(1, (stream.rows || 40) - panelLines.length - 2);
     const hidden = omittedDetails + Math.max(0, detailLines.length - room);
     const visibleCount = Math.max(0, room - Number(hidden > 0));
-    const visible = visibleCount ? detailLines.slice(-visibleCount) : [];
+    const visible = visibleCount ? detailLines.slice(-visibleCount).map(line => line.value) : [];
     if (hidden) visible.unshift(paint(`… ${hidden} earlier detail line(s) omitted.`, 'muted', stream));
-    const detailTitle = `${paint('Details', 'title', stream)} · resolve ${paint('FAILED', 'error', stream)} items first`;
+    const failed = [...tasks.values()].some(task => task.state === 'error');
+    const detailTitle = failed
+      ? `${paint('Details', 'title', stream)} · resolve ${paint('FAILED', 'error', stream)} items first`
+      : paint('Details', 'title', stream);
     const value = visible.length ? `${panel}\n\n${detailTitle}\n${visible.join('\n')}` : panel;
     stream.write(`${value}\n`);
     renderedLines = value.split('\n').length;
   };
-  const writeLog = value => {
+  const writeLog = (value, { owner, failure = false } = {}) => {
+    if (failure && owner) activeFailures.add(owner);
     if (!live) { log(value); return; }
-    detailLines.push(...String(value).split(/\r?\n/).filter(Boolean));
+    detailLines.push(...String(value).split(/\r?\n/).filter(Boolean).map(line => ({ value: line, owner, failure })));
     if (detailLines.length > 200) {
-      omittedDetails += detailLines.length - 200;
-      detailLines = detailLines.slice(-200);
+      const omitted = detailLines.splice(0, detailLines.length - 200);
+      omittedDetails += omitted.length;
+      for (const line of omitted) {
+        if (line.failure && line.owner) omittedFailures.set(line.owner, (omittedFailures.get(line.owner) || 0) + 1);
+      }
     }
     render();
   };
@@ -131,6 +148,7 @@ export function createDevReporter(log = console.error, {
   const task = (name, state, detail) => {
     const previous = tasks.get(name);
     if (previous?.state === state && previous.detail === detail) return;
+    if (state === 'error') activeFailures.add(name);
     const timestamp = now();
     tasks.set(name, { state, detail, startedAt: timestamp, reportedAt: timestamp });
     if (live) render(); else log(devTask(name, state, detail, stream));
@@ -138,7 +156,17 @@ export function createDevReporter(log = console.error, {
 
   return {
     task,
-    summary(rows) {
+    summary(rows, { after } = {}) {
+      if (!rows.length) return;
+      if (after !== undefined) {
+        const labels = new Set(rows.map(([label]) => label));
+        const retained = summaryRows.filter(([label]) => !labels.has(label));
+        const index = retained.findIndex(([label]) => label === after);
+        retained.splice(index < 0 ? retained.length : index + 1, 0, ...rows);
+        summaryRows = retained;
+        if (live) render(); else log(devPanel('Nexia development', rows, stream));
+        return;
+      }
       const merged = new Map(summaryRows.map(row => [row[0], row[1]]));
       for (const [label, value] of rows) merged.set(label, value);
       summaryRows = [...merged];
@@ -146,8 +174,15 @@ export function createDevReporter(log = console.error, {
     },
     pause({ retain = false } = {}) { paused = true; if (live && !retain) clear(); },
     resume() { paused = false; render(); },
+    resolve(name) {
+      const resolved = activeFailures.delete(name);
+      detailLines = detailLines.filter(line => !(line.failure && line.owner === name));
+      omittedDetails -= omittedFailures.get(name) || 0;
+      omittedFailures.delete(name);
+      return resolved;
+    },
     panel(title, rows) { writeLog(devPanel(title, rows, stream)); },
-    message(name, value, { verbose = false } = {}) {
+    message(name, value, { verbose = false, failure = false } = {}) {
       const visible = visibleLines(value, { verbose });
       const lines = visible.map(line => {
         const level = line.match(/^\[[^\]]+\s+(error|fatal|critical|alert|emergency|warning|warn)\]/)?.[1];
@@ -155,7 +190,7 @@ export function createDevReporter(log = console.error, {
         const marker = style === 'error' ? '✕' : style === 'warning' ? '!' : '·';
         return formatDetail(marker, name, line, style);
       });
-      if (lines.length) writeLog(lines.join('\n'));
+      if (lines.length) writeLog(lines.join('\n'), { owner: name, failure });
     },
     failure(name, error, { verbose = false, next, summary } = {}) {
       const lines = safeLines(devFailure(error, { verbose }));
@@ -164,7 +199,7 @@ export function createDevReporter(log = console.error, {
       const details = lines.map(line => formatDetail('✕', name, line, 'error'));
       if (summary || (live && paused)) details.unshift(formatDetail('✕', name, headline, 'error'));
       if (next) details.push(formatDetail('→', name, `Next: ${plain(next)}`, 'warning'));
-      if (details.length) writeLog(details.join('\n'));
+      if (details.length) writeLog(details.join('\n'), { owner: name, failure: true });
     },
     close() { if (timer) timers.clearInterval(timer); },
   };
