@@ -67,7 +67,7 @@ export async function installCli(version, { root = packageRoot, platform = proce
 }
 
 export async function updateCli(input, options = {}, {
-  automatic = false, current, getLatest = latestVersion, installVersion = installCli,
+  automatic = false, fresh = false, current, getLatest = latestVersion, installVersion = installCli,
   cacheFile = path.join(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'update.json'),
   now = Date.now(), env = process.env, log = console.error, onChecked = () => {},
   installedGlobally = path.normalize(packageRoot).replace(/[\\/]$/, '').endsWith(path.join('node_modules', '@nexia', 'cli')),
@@ -79,13 +79,15 @@ export async function updateCli(input, options = {}, {
     try { cache = JSON.parse(await readFile(cacheFile, 'utf8')) || {}; } catch {}
   }
   const recent = value => Number.isFinite(value) && value <= now && now - value < day;
-  let latest = automatic && recent(cache.checkedAt) && parts(cache.latest) ? cache.latest : null;
-  let checkFailed = automatic && recent(cache.checkedAt) && !latest;
+  const recentCheck = automatic && recent(cache.checkedAt);
+  let latest = recentCheck && parts(cache.latest) ? cache.latest : null;
+  let checkFailed = recentCheck && !latest;
   if (automatic && recent(cache.snoozedAt)) {
     onChecked({ current, latest, updateAvailable: Boolean(latest && isNewer(latest, current)), checkFailed });
     return false;
   }
-  if (!latest && !(automatic && recent(cache.checkedAt))) {
+  if (fresh) { latest = null; checkFailed = false; }
+  if (!latest && !(recentCheck && !fresh)) {
     try { latest = await getLatest(); }
     catch (error) {
       checkFailed = true;
