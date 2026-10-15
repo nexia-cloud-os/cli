@@ -27,7 +27,10 @@ async function start() {
   current.on('event', async event => {
     if (closing || watcher !== current) return;
     if (event.code === 'START') { failed = false; cycle++; process.send?.({ phase: 'building' }); }
-    if (event.code === 'ERROR') { console.error(event.error?.stack || event.error?.message || 'Frontend build failed.'); failed = true; cycle++; process.send?.({ phase: 'failed' }); }
+    if (event.code === 'ERROR') {
+      const detail = String(event.error?.stack || event.error?.message || 'Frontend build failed.').slice(0, 8192);
+      console.error(detail); failed = true; cycle++; process.send?.({ phase: 'failed', detail: detail.split(/\r?\n/, 1)[0].slice(0, 240) });
+    }
     if (event.code === 'END' && !failed) {
       try {
         const completedCycle = cycle;

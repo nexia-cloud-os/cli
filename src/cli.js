@@ -18,6 +18,7 @@ import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
 import { Cancelled, createInput, language, message } from './input.js';
 import { appTargets, appPlan, generatorPlan, generatorArguments, planSummary, findApp, isUuid } from './scaffold.js';
+import { createDevReporter, devFailure, devTask } from './dev-output.js';
 
 const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 const log = value => console.error(value);
@@ -89,7 +90,7 @@ async function review(input, options, title, makePlan) {
   }
 }
 
-let input, parsed;
+let input, parsed, devReporter;
 try {
   parsed = parseCommand(process.argv.slice(2));
   let { name, argument, options } = parsed;
@@ -104,6 +105,10 @@ try {
   }
   else {
     input = createInput(options);
+    if (name === 'dev') {
+      devReporter = createDevReporter(log);
+      devReporter.task('startup', 'running', 'Checking CLI version and project…');
+    }
     if (groups[name]) {
       const child = await input.choice('command', message('Choose a task', '작업을 선택하세요'), groups[name].map(child => ({ value: child, label: commands[`${name} ${child}`].description[0] })), undefined, { hint: `nexia ${name} <${groups[name].join('|')}>` });
       name += ` ${child}`;
@@ -237,10 +242,17 @@ try {
       if (!directory) throw new InputError('Run nexia connect from your project folder, then nexia dev.');
       let selectedApps;
       if (workspace) {
+        devReporter.task('startup', 'running', 'Discovering project Apps…');
         const { apps, errors } = await discoverApps(workspace.root);
+        devReporter.task('startup', 'success', `Found ${apps.length} App${apps.length === 1 ? '' : 's'}`);
         selectedApps = await configuredDevApps(workspace, apps, options.app, input);
-        log(`Project development: ${workspace.root}\nScope: ${selectedApps?.join(', ') || `all Apps (${apps.map(app => app.name).join(', ') || 'waiting for Apps'})`}`);
-        for (const error of errors) log(`${error.directory}: ${error.message}`);
+        const selectedNames = selectedApps ? apps.filter(app => selectedApps.includes(app.key)).map(app => app.name) : apps.map(app => app.name);
+        devReporter.panel('Nexia development plan', [
+          ['Project folder', workspace.root],
+          ['Apps', selectedNames.join(', ') || 'Waiting for Apps'],
+          ['Mode', selectedApps ? 'Selected Apps' : 'All Apps (dynamic)'],
+        ]);
+        for (const error of errors) devReporter.failure(path.basename(error.directory), error, { verbose: options.verbose === true });
       }
       input.close();
       const shutdown = new AbortController(), stop = () => shutdown.abort();
@@ -248,7 +260,7 @@ try {
       let session;
       try {
         session = await startDevSession(directory, { port, projectId: workspace?.project_id, stop });
-        const devOptions = { verbose: options.verbose === true, signal: shutdown.signal, port, container: options.container === true, app: selectedApps, onStatus: value => session.update(value) };
+        const devOptions = { verbose: options.verbose === true, signal: shutdown.signal, port, container: options.container === true, app: selectedApps, reporter: devReporter, log, onStatus: value => session.update(value) };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
     } else if (name.startsWith('db ')) {
@@ -313,6 +325,11 @@ try {
 } catch (error) {
   const code = error.code || (error.status ? 'PLATFORM_ERROR' : 'OPERATION_FAILED');
   if (parsed?.options.json || process.argv.includes('--json')) console.log(JSON.stringify({ error: { code, message: error.message } }));
-  else console.error(`Nexia [${code}]: ${error.message}\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`);
+  else if (parsed?.name === 'dev') {
+    const lines = devFailure(error, { verbose: parsed.options.verbose === true }).split('\n');
+    console.error(devTask('nexia dev', 'error', `[${code}] ${lines.shift()}`));
+    for (const line of lines) console.error(`│ ${line}`);
+    console.error('└ Troubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors');
+  } else console.error(`Nexia [${code}]: ${error.message}\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`);
   process.exitCode = error.exitCode || 1;
-} finally { input?.close(); }
+} finally { devReporter?.close(); input?.close(); }

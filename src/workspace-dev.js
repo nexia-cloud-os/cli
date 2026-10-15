@@ -1,5 +1,5 @@
-import { terminalLink } from './terminal-link.js';
 import { message } from './input.js';
+import { createDevReporter } from './dev-output.js';
 import path from 'node:path';
 import { retryDevRead } from './dev-retry.js';
 import { MAX_DEV_APPS, filterDevApps } from './dev-selection.js';
@@ -14,13 +14,16 @@ import { startNativePreview } from './native-preview.js';
 
 const exists = file => lstat(file).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
 
-export async function workspaceDev(workspace, { signal, verbose = false, port = 4310, container = false, app: selector, log = console.log, onStatus = () => {} } = {}) {
+export async function workspaceDev(workspace, { signal, verbose = false, port = 4310, container = false, app: selector, log = console.log, onStatus = () => {}, reporter = null } = {}) {
+  const ownReporter = !reporter;
+  const output = reporter || createDevReporter(log);
+  output.task('workspace', 'running', 'Connecting to project…');
   const config = await readConnection();
   const readStatus = () => retryDevRead(async () => {
     const current = await readConnection();
     if (current.token !== config.token || current.endpoint !== config.endpoint) throw new Error('Login changed. Restart nexia dev.');
     return request(config, 'connection');
-  }, { signal, log });
+  }, { signal, log: value => output.message('workspace', value, { verbose }) });
   let connection = await readStatus();
   if (!connection) return;
   if (config.endpoint !== workspace.endpoint || connection.status !== 'connected' || connection.project?.id !== workspace.project_id) {
@@ -29,7 +32,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
   if (!connection.capabilities?.personal_sandboxes) throw new Error('This platform must be upgraded to support project development with personal sandboxes.');
   if (!connection.sandbox) {
     if (!(await discoverApps(workspace.root)).apps.length) {
-      log('Watching for the first App before preparing a personal sandbox.');
+      output.task('workspace', 'pending', 'Waiting for the first App before preparing a sandbox');
       while (!signal?.aborted && !(await discoverApps(workspace.root)).apps.length) {
         await delay(1000, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
       }
@@ -38,7 +41,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     connection = await request(config, 'sandbox', { method: 'POST', body: {} });
   }
   while (connection.sandbox?.status === 'provisioning' && !signal?.aborted) {
-    log('Preparing your personal sandbox…');
+    output.task('workspace', 'running', 'Preparing personal sandbox…');
     await delay(5000, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
     if (signal?.aborted) return;
     const selected = await readConnection();
@@ -47,15 +50,31 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     if (!connection) return;
   }
   if (connection.sandbox?.status !== 'active') throw new Error('Your sandbox needs attention. Open the developer console to renew or recover it; data was retained.');
+  output.task('workspace', 'success', 'Personal sandbox ready');
   const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
   const launch = new URL(connection.sandbox.launch_url);
   if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
   const preview = await startNativePreview(null, { workspaceOrigin, port, container, apps: new Map() });
   launch.searchParams.set('preview', preview.url);
   onStatus({ status: 'watching', workspace_url: launch.href });
-  log(`Project: ${connection.project.name}\nNexia workspace: ${terminalLink(launch.href, 'Open workspace')}\n${message('Local App address (copy)', '로컬 앱 주소 (복사용)')}: ${preview.url}\nWatching App folders. Create or clone Apps here; Ctrl+C stops local development without deleting data.`);
+  output.panel('Nexia project development', [
+    ['Project', connection.project.name],
+    ['Scope', selector ? [selector].flat().join(', ') : 'All selected local Apps'],
+    ['Workspace', { link: launch.href, label: 'Open workspace' }],
+    [message('Local address', '로컬 주소'), preview.url],
+    ['Stop', 'Ctrl+C stops local development; sandbox data is retained'],
+  ]);
   const workers = new Map(), messages = new Map(), retryAt = new Map();
-  const report = (key, message) => { if (messages.get(key) !== message) { messages.set(key, message); log(message); } };
+  const report = (key, name, state, detail) => {
+    const value = `${state}:${detail}`;
+    if (messages.get(key) !== value) { messages.set(key, value); output.task(name, state, detail); }
+  };
+  const reportFailure = (key, name, error, next) => {
+    const value = `error:${error.code || ''}:${error.message}`;
+    if (messages.get(key) === value) return;
+    messages.set(key, value);
+    output.failure(name, error, { verbose, next });
+  };
   let nextRegistration = 0;
   try {
     while (!signal?.aborted) {
@@ -64,46 +83,54 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
         throw new Error('Project or login changed. Restart dev for the intended project.');
       }
       const discovered = await discoverApps(workspace.root);
-      for (const error of discovered.errors) report(error.directory, `${path.basename(error.directory)}: ${error.message}`);
+      for (const error of discovered.errors) {
+        reportFailure(error.directory, path.basename(error.directory), error);
+      }
       const apps = filterDevApps(discovered.apps, selector);
       if (apps.length > MAX_DEV_APPS) throw new Error(`A project development connection supports at most ${MAX_DEV_APPS} local Apps. Restart dev to select Apps, or repeat --app.`);
-      if (selector && apps.length === 0) report('selection', `Waiting for App ${selector}.`);
+      if (selector && apps.length === 0) report('selection', 'apps', 'pending', `Waiting for ${[selector].flat().join(', ')}`);
+      for (const app of apps) if (!workers.has(app.directory) && !messages.has(`queued:${app.directory}`)) {
+        messages.set(`queued:${app.directory}`, 'queued');
+        output.task(app.name, 'pending', 'Queued for local and remote development');
+      }
       for (const [directory, worker] of workers) {
         if (!apps.some(app => app.directory === directory && app.key === worker.key)) {
           worker.controller.abort(); await worker.done; workers.delete(directory);
-          report(directory, `${path.basename(directory)}: local watch removed; remote data retained.`);
+          report(directory, path.basename(directory), 'stopped', 'Local watch removed; remote data retained');
         }
       }
       for (const app of apps) {
         if (workers.has(app.directory) || signal?.aborted || Date.now() < (retryAt.get(app.directory) ?? 0)) continue;
         // Do not capture the middle of a clone or a dependency install.
         if (await sourceIsChanging(app.directory)) {
-          report(app.directory, `${app.name}: waiting for Git to finish cloning, merging or rebasing.`); continue;
+          report(app.directory, app.name, 'running', 'Waiting for Git to finish cloning, merging or rebasing…'); continue;
         }
         if (await exists(path.join(app.directory, 'vite.config.mjs')) && !await exists(path.join(app.directory, 'node_modules/vite/dist/node/index.js'))) {
-          report(app.directory, `${app.name}: waiting for frontend dependencies. Run npm install in this App.`); continue;
+          report(app.directory, app.name, 'warning', `Frontend dependencies missing — run npm install in ${app.name}`); continue;
         }
         if (Date.now() < nextRegistration) continue;
         // Stay below the platform's 10 registrations/minute. Runtime polling is bounded for 20 Apps.
         nextRegistration = Date.now() + 7000;
         retryAt.set(app.directory, Date.now() + Math.max(14000, apps.length * 7000));
         try {
+          output.task(app.name, 'running', 'Registering App…');
           const local = path.join(app.directory, '.nexia');
           await mkdir(local, { recursive: true });
           if ((await lstat(local)).isSymbolicLink()) throw new Error('App configuration must not be a symbolic link.');
           const projectFile = path.join(local, 'project.json');
           if (!await exists(projectFile)) await writeFile(projectFile, JSON.stringify({ endpoint: config.endpoint, project_id: workspace.project_id }) + '\n', { flag: 'wx' });
           const before = await readFile(path.join(app.directory, 'nexia.json'), 'utf8');
-          await registerApp(app.directory, { log: message => report(app.directory, `${app.name}: ${message}`) });
+          await registerApp(app.directory, { log: () => {} });
           if (before !== await readFile(path.join(app.directory, 'nexia.json'), 'utf8')) throw new Error('App metadata changed during registration; waiting for a stable definition.');
+          output.task(app.name, 'success', 'App registration confirmed');
           const controller = new AbortController();
           const worker = { key: app.key, controller, done: null };
           workers.set(app.directory, worker);
           worker.done = nativeDev(app.directory, { verbose, signal: controller.signal, previewHost: preview, interval: 10000,
-            log: message => log(`${app.name}: ${message}`),
-          }).catch(error => report(app.directory, `${app.name}: [${error.code || 'APP_DEVELOPMENT_FAILED'}] ${error.message}\nKeep the App folder and .nexia state. Resolve the error before restarting dev.\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`));
+            reporter: output, taskName: app.name, log: value => output.message(app.name, value, { verbose }),
+          }).catch(error => reportFailure(app.directory, app.name, error, 'Keep the App folder and .nexia state, resolve the error, then restart nexia dev.'));
         } catch (error) {
-          report(app.directory, `${app.name}: ${error.message}`);
+          reportFailure(app.directory, app.name, error);
           if (error.status === 429) nextRegistration = Date.now() + error.retryAfterMs;
           if ([401, 403].includes(error.status)) throw error;
         }
@@ -114,5 +141,6 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     for (const worker of workers.values()) worker.controller.abort();
     await Promise.allSettled([...workers.values()].map(worker => worker.done));
     await preview.close();
+    if (ownReporter) output.close();
   }
 }

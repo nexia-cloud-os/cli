@@ -1,13 +1,26 @@
 import { StringDecoder } from 'node:string_decoder';
 import { plain, paint } from './terminal.js';
 
-export function devLog(log, source, level, message) {
+const styleForLevel = level => {
+  if (['error', 'fatal', 'critical', 'alert', 'emergency'].includes(level)) return 'error';
+  if (['warning', 'warn'].includes(level)) return 'warning';
+  return 'muted';
+};
+
+export function devLog(log, source, level, message, { verbose = false } = {}) {
   // A slow pipe must not grow Node's terminal write queue indefinitely.
   if (process.stdout.writableLength > 65536 || process.stderr.writableLength > 65536) return;
-  const color = ['error', 'fatal', 'critical', 'alert', 'emergency', 'warning', 'warn'].includes(level) ? 'warning' : 'muted';
-  const lines = String(message).slice(0, 8192).split(/\r?\n/).slice(0, 40);
+  const color = styleForLevel(level);
+  const limit = verbose ? 8192 : 1200;
+  const lineLimit = verbose ? 40 : 8;
+  const widthLimit = verbose ? 1200 : 360;
+  const lines = String(message).slice(0, limit).split(/\r?\n/).slice(0, lineLimit);
   const prefix = `[${source} ${level}]`;
-  for (const line of lines) log(`${paint(prefix, color, process.stderr)} ${plain(line)}`);
+  for (const line of lines) {
+    const clean = plain(line);
+    const visible = clean.length <= widthLimit ? clean : `${clean.slice(0, widthLimit - 14)}… [truncated]`;
+    log(`${paint(prefix, color, process.stderr)} ${visible}`);
+  }
 }
 
 export async function receiveBrowserLogs(req, res, app) {
@@ -28,22 +41,34 @@ export async function receiveBrowserLogs(req, res, app) {
   for (const event of events) {
     if (!app.verbose && !['warn', 'error'].includes(event.level)) continue;
     app.logCount++;
-    if (app.logCount <= 120) devLog(app.log, 'browser', event.level, event.message);
-    else if (app.logCount === 121) devLog(app.log, 'browser', 'warn', 'Log limit reached (120/minute). Further messages remain in the browser console.');
+    if (app.logCount <= 120) devLog(app.log, 'browser', event.level, event.message, { verbose: app.verbose });
+    else if (app.logCount === 121) devLog(app.log, 'browser', 'warn', 'Log limit reached (120/minute). Further messages remain in the browser console.', { verbose: app.verbose });
   }
   res.writeHead(204).end();
 }
 
 // Keep at most 8 KiB of a partial line; newline-free build output cannot grow a readline buffer.
-export function pipeBuildLogs(stream, log, level) {
+export function pipeBuildLogs(stream, log, level, { verbose = false } = {}) {
   const decoder = new StringDecoder('utf8');
-  let pending = '', dropping = false, minute = 0, count = 0;
+  let pending = '', dropping = false, minute = 0, count = 0, blockLevel = level, viteReporter = false, summarizedImports = false;
   const emit = line => {
+    const clean = plain(line).trim();
+    if (!clean) { blockLevel = level; viteReporter = false; return; }
+    if (!verbose && /^\[plugin(?::|\s+)vite:reporter\]$/.test(clean)) { viteReporter = true; return; }
+    if (!verbose && (viteReporter || clean.startsWith('(!)')) && clean.includes('dynamically imported by') && clean.includes('statically imported')) {
+      if (!summarizedImports) devLog(log, 'build', 'warning', 'Vite found mixed static/dynamic imports; chunk placement is unchanged. Re-run with --verbose for file details.');
+      summarizedImports = true;
+      viteReporter = false;
+      return;
+    }
+    viteReporter = false;
+    if (/^(?:error(?: during build)?[: ]|\[vite[^\]]*\]\s*(?:internal server )?error|rolluperror|syntaxerror)/i.test(clean)) blockLevel = 'error';
+    else if (/^(?:warning[: ]|warn[: ]|\(!\))/i.test(clean)) blockLevel = 'warning';
     const now = Math.floor(Date.now() / 60000);
     if (minute !== now) { minute = now; count = 0; }
     if (count >= 121) return;
-    if (count++ === 120) devLog(log, 'build', 'warning', 'Log limit reached (120/minute). Further build messages are omitted.');
-    else devLog(log, 'build', level, line);
+    if (count++ === 120) devLog(log, 'build', 'warning', 'Log limit reached (120/minute). Further build messages are omitted.', { verbose });
+    else devLog(log, 'build', blockLevel, clean, { verbose });
   };
   stream.on('data', chunk => {
     // Process bounded slices even if a producer hands us an unusually large chunk.
