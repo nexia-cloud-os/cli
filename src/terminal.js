@@ -4,7 +4,7 @@ export const plain = value => stripVTControlCharacters(String(value)).replace(/[
 export function paint(value, style, stream = process.stdout, env = process.env) {
   const text = plain(value);
   if (!stream.isTTY || env.TERM === 'dumb' || Object.hasOwn(env, 'NO_COLOR')) return text;
-  return `\x1b[${{ title: '1', accent: '36', muted: '2', warning: '33' }[style]}m${text}\x1b[0m`;
+  return `\x1b[${{ title: '1', accent: '36', muted: '2', warning: '33', success: '32', error: '31' }[style]}m${text}\x1b[0m`;
 }
 export function fit(value, columns) {
   let result = '', width = 0;

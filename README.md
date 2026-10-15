@@ -351,15 +351,20 @@ remote tags. Unknown or unchecked values are not inferred from published version
 ## Terminal links
 
 `nexia ps` and `nexia dev` emit OSC 8 hyperlinks for workspace and development
-settings URLs in interactive terminals. `nexia dev` also prints the actual
-**Local App address (copy)** as plain text, including its listening port, on its own line at startup
-and in the development-off notice. Copy this address into the workspace’s local
+settings URLs in interactive terminals. `nexia dev` groups the project, scope,
+workspace and actual **Local address** in a startup panel. App tasks use explicit
+`WAITING`, `RUNNING`, `DONE`, `ACTION` and `FAILED` labels with color and icons;
+long-running tasks repeat with elapsed time. Copy the local address into the workspace’s local
 App address field; changing `--port` is reflected in that line. Recognized terminals show short labels;
 unknown terminals retain the full visible URL with the hyperlink destination.
 Piped output, CI, dumb terminals and Apple Terminal retain plain URLs. JSON
 session data keeps the original URL without escape sequences. Click gestures
 depend on the terminal (for example, Command-click in iTerm2); browser opening
 is always initiated by the user.
+
+Build and runtime logs remain prefixed with their App and source. Default output
+collapses repeated Vite chunk-placement warnings and bounds long diagnostics;
+use `nexia dev --verbose` when the complete file-level build detail is needed.
 
 ### Preparation error details
 
