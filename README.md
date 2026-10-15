@@ -356,7 +356,7 @@ remote tags. Unknown or unchecked values are not inferred from published version
 `nexia ps` and `nexia dev` emit OSC 8 hyperlinks for workspace and development
 settings URLs in interactive terminals. `nexia dev` starts with a responsive dot
 logo, then keeps project, scope, workspace, actual **Local address**, and App
-progress in one boxed dashboard. App tasks use explicit `WAITING`, `RUNNING`,
+progress in one boxed dashboard. App tasks use explicit `WAITING`, `PROCESSING`,
 `DONE`, `ACTION` and `FAILED` labels with color and icons; long-running tasks
 update elapsed time in place instead of appending repeated lines. Copy the local
 address into the workspace's local App address field; changing `--port` is

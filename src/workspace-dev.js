@@ -67,11 +67,11 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     const value = `${state}:${detail}`;
     if (messages.get(key) !== value) { messages.set(key, value); output.task(name, state, detail); }
   };
-  const reportFailure = (key, name, error, next) => {
+  const reportFailure = (key, name, error, { next, summary } = {}) => {
     const value = `error:${error.code || ''}:${error.message}`;
     if (messages.get(key) === value) return;
     messages.set(key, value);
-    output.failure(name, error, { verbose, next });
+    output.failure(name, error, { verbose, next, summary });
   };
   let nextRegistration = 0;
   try {
@@ -101,7 +101,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
         if (workers.has(app.directory) || signal?.aborted || Date.now() < (retryAt.get(app.directory) ?? 0)) continue;
         // Do not capture the middle of a clone or a dependency install.
         if (await sourceIsChanging(app.directory)) {
-          report(app.directory, app.name, 'running', 'Waiting for Git to finish cloning, merging or rebasing…'); continue;
+          report(app.directory, app.name, 'pending', 'Waiting for Git to finish cloning, merging or rebasing…'); continue;
         }
         if (await exists(path.join(app.directory, 'vite.config.mjs')) && !await exists(path.join(app.directory, 'node_modules/vite/dist/node/index.js'))) {
           report(app.directory, app.name, 'warning', `Frontend dependencies missing — run npm install in ${app.name}`); continue;
@@ -126,7 +126,10 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
           workers.set(app.directory, worker);
           worker.done = nativeDev(app.directory, { verbose, signal: controller.signal, previewHost: preview, interval: 10000,
             reporter: output, taskName: app.name, log: value => output.message(app.name, value, { verbose }),
-          }).catch(error => reportFailure(app.directory, app.name, error, 'Keep the App folder and .nexia state, resolve the error, then restart nexia dev.'));
+          }).catch(error => reportFailure(app.directory, app.name, error, {
+            summary: 'Restart nexia dev required',
+            next: 'Keep the App folder and .nexia state, resolve the error, then restart nexia dev.',
+          }));
         } catch (error) {
           reportFailure(app.directory, app.name, error);
           if (error.status === 429) nextRegistration = Date.now() + error.retryAfterMs;
