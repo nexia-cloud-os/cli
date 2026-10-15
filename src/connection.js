@@ -6,8 +6,8 @@ import { randomBytes, createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-const root = () => process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia');
-const configFile = () => path.join(root(), 'connection.json');
+export const configDirectory = () => process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia');
+const configFile = () => path.join(configDirectory(), 'connection.json');
 const defaultEndpoint = 'https://developers.nexia.to';
 
 export function validateEndpoint(value) {
@@ -25,8 +25,8 @@ export async function readConnection() {
 }
 
 export async function saveConnection(config) {
-  await mkdir(root(), { recursive: true, mode: 0o700 });
-  await chmod(root(), 0o700);
+  await mkdir(configDirectory(), { recursive: true, mode: 0o700 });
+  await chmod(configDirectory(), 0o700);
   const temporary = `${configFile()}.${randomBytes(8).toString('hex')}`;
   await writeFile(temporary, JSON.stringify(config) + '\n', { mode: 0o600, flag: 'wx' });
   await rename(temporary, configFile());
@@ -105,7 +105,7 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
   if (projectName === undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId || '')) throw new Error('Use nexia login <project-id> from your project page.');
   if (projectName !== undefined) projectName = projectName.trim();
   const current = await readConnection();
-  const recoveryFile = recoveryKey ? path.join(root(), `pairing-${createHash('sha256').update(`${current.endpoint}:${recoveryKey}`).digest('hex')}.json`) : null;
+  const recoveryFile = recoveryKey ? path.join(configDirectory(), `pairing-${createHash('sha256').update(`${current.endpoint}:${recoveryKey}`).digest('hex')}.json`) : null;
   let pairing;
   if (recoveryFile) {
     try {
@@ -117,7 +117,7 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
   if (!pairing) {
     pairing = await request(current, 'pair', { method: 'POST', body: projectName === undefined ? { project_id: projectId } : { project_name: projectName }, authenticated: false });
     if (recoveryFile) {
-      await mkdir(root(), { recursive: true, mode: 0o700 });
+      await mkdir(configDirectory(), { recursive: true, mode: 0o700 });
       await writeFile(recoveryFile, JSON.stringify({ project_name: projectName, project_id: projectId, pairing }), { mode: 0o600, flag: 'wx' });
     }
   }
