@@ -35,3 +35,17 @@ test('TTY reporter redraws one boxed dashboard instead of appending heartbeat li
   assert.match(writes.at(-1), /DONE/);
   assert.ok(writes.filter(value => value.includes('\x1b[J')).length >= 2);
 });
+
+test('TTY reporter can retain its dashboard while an interactive picker is open', () => {
+  const writes = [];
+  const timers = { setInterval() { return { unref() {} }; }, clearInterval() {} };
+  const stream = { isTTY: true, write(value) { writes.push(value); } };
+  const reporter = createDevReporter(() => {}, { stream, heartbeatMs: 0, timers });
+  reporter.summary([['CLI version', '0.2.0-alpha.15 · up to date']]);
+  const beforePause = writes.length;
+  reporter.pause({ retain: true });
+  assert.equal(writes.length, beforePause);
+  reporter.resume();
+  assert.match(writes.at(-1), /CLI version/);
+  reporter.close();
+});

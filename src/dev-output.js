@@ -120,7 +120,7 @@ export function createDevReporter(log = console.error, {
       summaryRows = [...merged];
       if (live) render(); else log(devPanel('Nexia development', rows, stream));
     },
-    pause() { paused = true; if (live) clear(); },
+    pause({ retain = false } = {}) { paused = true; if (live && !retain) clear(); },
     resume() { paused = false; render(); },
     panel(title, rows) { writeLog(devPanel(title, rows, stream)); },
     message(name, value, { verbose = false } = {}) {
