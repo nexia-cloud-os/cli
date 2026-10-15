@@ -59,6 +59,17 @@ test('skip continues the command and cached version avoids another lookup', asyn
   assert.equal(calls.lookups, 2);
 });
 
+test('automatic check refreshes a cached current version and discovers a new release', async t => {
+  const { input, settings, calls } = await fixture(t);
+  await mkdir(path.dirname(settings.cacheFile), { recursive: true });
+  await writeFile(settings.cacheFile, JSON.stringify({ checkedAt: settings.now - 1, latest: settings.current, failed: false }));
+  const statuses = [];
+  assert.equal(await updateCli(input, {}, { ...settings, fresh: true, onChecked: status => statuses.push(status) }), false);
+  assert.equal(calls.lookups, 1);
+  assert.equal(calls.questions.length, 1);
+  assert.deepEqual(statuses, [{ current: '0.2.0-alpha.7', latest: '0.2.0-alpha.10', updateAvailable: true, checkFailed: false }]);
+});
+
 test('later snoozes 24 hours while an explicit update bypasses snooze/cache', async t => {
   const { input, settings, calls } = await fixture(t, 'later');
   await updateCli(input, {}, settings);
