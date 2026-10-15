@@ -77,7 +77,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     await rename(temporary, path.join(local, 'runtime.json'));
     state = next;
   }
-  let lastStatus;
+  let lastStatus, quietDigest = null, platformCheckedAt = 0;
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
@@ -103,6 +103,14 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           || currentProject.project_id !== scope.project_id || currentApp.id !== scope.app_id) {
           throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
         }
+        // Keep local edit detection responsive while reducing unchanged remote status reads.
+        if (browserRuntime && quietDigest && Date.now() - platformCheckedAt < Math.min(15000, interval * 3)
+            && (!initialConnection.capabilities?.runtime_writers || Date.now() - writerCheckedAt < 30000)
+            && (await sourceSnapshot(directory)).digest === quietDigest) {
+          await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
+        platformCheckedAt = Date.now();
         const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
         if (databaseOperation) {
           if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
@@ -324,6 +332,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           // Persisting legacy metadata can yield to the build worker. Recheck
           // before exposing an entry whose files may now be changing.
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { continue; }
+          quietDigest = snapshot.digest;
           browserRuntime = candidateRuntime && { ...candidateRuntime, ...(build?.snapshot() ? { frontend_generation: build.snapshot() } : {}) };
           if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
             await runtimeLogs?.close();
