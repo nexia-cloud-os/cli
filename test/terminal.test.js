@@ -38,7 +38,8 @@ test('help includes every command in task groups and color respects plain output
   assert.match(paint('Done', 'success', { isTTY: true }, {}), /\x1b\[32m/);
   assert.match(paint('Failed', 'error', { isTTY: true }, {}), /\x1b\[31m/);
   assert.equal(fit('ab한글cd', 6), 'ab한');
-  assert.equal(displayWidth('ab한✓'), 6);
+  assert.equal(displayWidth('ab한✓'), 5);
+  assert.equal(displayWidth('✓ ◆ ○ ✕ …'), 9);
 });
 
 test('single selection handles arrows, safe default, cancellation and restores the terminal', async t => {

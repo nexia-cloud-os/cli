@@ -111,10 +111,10 @@ export function createDevReporter(log = console.error, {
     }
     render();
   };
-  const formatDetail = (branch, name, value, style) => {
-    const prefix = `${branch} ${plain(name)}  `;
+  const formatDetail = (marker, name, value, style) => {
+    const prefix = `${marker} ${plain(name)}  `;
     const detail = shorten(value, Math.max(20, outputWidth() - displayWidth(prefix)));
-    return `${paint(branch, style, stream)} ${paint(name, 'title', stream)}  ${paint(detail, style, stream)}`;
+    return `${paint(marker, style, stream)} ${paint(name, 'title', stream)}  ${paint(detail, style, stream)}`;
   };
   const timer = stream.isTTY && heartbeatMs > 0 ? timers.setInterval(() => {
     const current = now();
@@ -149,10 +149,11 @@ export function createDevReporter(log = console.error, {
     panel(title, rows) { writeLog(devPanel(title, rows, stream)); },
     message(name, value, { verbose = false } = {}) {
       const visible = visibleLines(value, { verbose });
-      const lines = visible.map((line, index) => {
+      const lines = visible.map(line => {
         const level = line.match(/^\[[^\]]+\s+(error|fatal|critical|alert|emergency|warning|warn)\]/)?.[1];
         const style = styleForLevel(level);
-        return formatDetail(index ? '│' : '└', name, line, style);
+        const marker = style === 'error' ? '✕' : style === 'warning' ? '!' : '·';
+        return formatDetail(marker, name, line, style);
       });
       if (lines.length) writeLog(lines.join('\n'));
     },
@@ -160,9 +161,9 @@ export function createDevReporter(log = console.error, {
       const lines = safeLines(devFailure(error, { verbose }));
       const headline = lines.shift() || 'Unknown failure.';
       task(name, 'error', headline);
-      const details = lines.map(line => formatDetail('│', name, line, 'error'));
+      const details = lines.map(line => formatDetail('✕', name, line, 'error'));
       if (live && paused) details.unshift(formatDetail('✕', name, headline, 'error'));
-      if (next) details.push(formatDetail('└', name, `Next: ${plain(next)}`, 'warning'));
+      if (next) details.push(formatDetail('→', name, `Next: ${plain(next)}`, 'warning'));
       if (details.length) writeLog(details.join('\n'));
     },
     close() { if (timer) timers.clearInterval(timer); },
