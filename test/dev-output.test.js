@@ -72,6 +72,8 @@ test('TTY reporter keeps bounded details below the status box', () => {
     assert.ok(text.indexOf('Nexia development') < text.indexOf('Details'));
     assert.ok(text.indexOf('Details') < text.indexOf('[build warning]'));
     assert.match(text, /Details · resolve FAILED items first/);
+    assert.match(text, /\n! people  \[build warning\]/);
+    assert.doesNotMatch(text.slice(text.indexOf('Details')), /^[│└]/m);
     assert.match(frame, /\x1b\[1mpeople\x1b\[0m/);
     assert.match(frame, /\x1b\[33m\[build warning\]/);
     assert.ok(text.split('\n').every(line => line.length <= 120));
