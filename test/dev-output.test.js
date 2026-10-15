@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDevReporter, devFailure, devPanel, devTask } from '../src/dev-output.js';
+import { plain } from '../src/terminal.js';
 
 test('development output remains explicit without color', () => {
   const stream = { isTTY: false };
@@ -48,4 +49,30 @@ test('TTY reporter can retain its dashboard while an interactive picker is open'
   reporter.resume();
   assert.match(writes.at(-1), /CLI version/);
   reporter.close();
+});
+
+test('TTY reporter keeps bounded details below the status box', () => {
+  const term = process.env.TERM, noColor = process.env.NO_COLOR;
+  process.env.TERM = 'xterm-256color';
+  delete process.env.NO_COLOR;
+  const writes = [];
+  const stream = { isTTY: true, columns: 180, rows: 30, write(value) { writes.push(value); } };
+  try {
+    const reporter = createDevReporter(() => {}, { stream, heartbeatMs: 0 });
+    reporter.summary([['CLI version', '0.2.0-alpha.16 · up to date']]);
+    reporter.task('people', 'error', 'Automatic development resume was not confirmed because the acknowledgement was not confirmed.');
+    reporter.message('people', `[build warning] ${'mixed static and dynamic imports '.repeat(8)}`);
+    const frame = writes.at(-1), text = frame.split('\n').map(plain).join('\n');
+    assert.ok(text.indexOf('Nexia development') < text.indexOf('Details'));
+    assert.ok(text.indexOf('Details') < text.indexOf('[build warning]'));
+    assert.match(text, /Details · resolve FAILED items first/);
+    assert.match(frame, /\x1b\[1mpeople\x1b\[0m/);
+    assert.match(frame, /\x1b\[33m\[build warning\]/);
+    assert.ok(text.split('\n').every(line => line.length <= 120));
+    reporter.close();
+  } finally {
+    process.env.TERM = term;
+    if (noColor === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = noColor;
+  }
 });

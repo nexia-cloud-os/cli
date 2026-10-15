@@ -7,6 +7,7 @@ export function paint(value, style, stream = process.stdout, env = process.env) 
   const brand = /^(truecolor|24bit)$/i.test(env.COLORTERM || '') ? '38;2;0;104;255' : '94';
   return `\x1b[${{ title: '1', accent: '36', muted: '2', warning: '33', success: '32', error: '31', white: '97', brand }[style]}m${text}\x1b[0m`;
 }
+export const displayWidth = value => [...plain(value)].reduce((width, character) => width + (character.codePointAt(0) < 128 ? 1 : 2), 0);
 export function fit(value, columns) {
   let result = '', width = 0;
   for (const character of plain(value)) {

@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { stripVTControlCharacters } from 'node:util';
 import { createInput, Cancelled } from '../src/input.js';
 import { helpText, commands } from '../src/commands.js';
-import { paint, fit } from '../src/terminal.js';
+import { displayWidth, paint, fit } from '../src/terminal.js';
 import { banner } from '../src/banner.js';
 
 test('development banner keeps the dot logo proportional and responsive', () => {
@@ -38,6 +38,7 @@ test('help includes every command in task groups and color respects plain output
   assert.match(paint('Done', 'success', { isTTY: true }, {}), /\x1b\[32m/);
   assert.match(paint('Failed', 'error', { isTTY: true }, {}), /\x1b\[31m/);
   assert.equal(fit('ab한글cd', 6), 'ab한');
+  assert.equal(displayWidth('ab한✓'), 6);
 });
 
 test('single selection handles arrows, safe default, cancellation and restores the terminal', async t => {
