@@ -499,3 +499,10 @@ preparation request automatically. An unchanged failed source is not replayed.
 Uncertain outcomes still require review; after that approval, restart `nexia dev`.
 Use Developers to stop or resume remote development execution. These controls do
 not approve `needs_review`. Preserve `.nexia`, data and migration history.
+
+Quiet development sessions keep checking local source at the normal interval but
+read unchanged remote status at most every 15 seconds. Source changes and writer
+lease renewal bypass that delay. Empty runtime log responses back off from 2 to
+10 seconds; new output restores the normal interval. Cancellation remains immediate.
+With wake-capable Core/Manager versions, a server-side idle sleep does not close
+`nexia dev` or require a manual resume; the next real App request wakes the runtime.
