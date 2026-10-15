@@ -18,11 +18,12 @@ test('development banner keeps the dot logo proportional and responsive', () => 
   assert.equal(banner({}, {}), '');
   const dimensions = columns => {
     const rows = stripVTControlCharacters(banner({ ...terminal, columns }, {})).split('\n').slice(1, -1);
-    return { width: Math.max(...rows.map(row => [...row].length)), height: rows.length };
+    return { width: Math.max(...rows.map(row => [...row.trimStart()].length)), height: rows.length };
   };
-  const narrow = dimensions(60), wide = dimensions(120);
+  const narrow = dimensions(60), wide = dimensions(120), extraWide = dimensions(200);
   assert.ok(narrow.width <= 60 && wide.width <= 120);
   assert.ok(narrow.width < wide.width && narrow.height < wide.height);
+  assert.ok(extraWide.width <= 120 && extraWide.height <= 13);
 });
 
 test('help includes every command in task groups and color respects plain output', () => {

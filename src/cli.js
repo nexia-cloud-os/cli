@@ -118,7 +118,11 @@ try {
     }
     if (name === 'update') {
       await updateCli(input, options);
-    } else if (await updateCli(input, options, { automatic: true })) {
+    } else if (await updateCli(input, options, { automatic: true, onChecked: ({ current, latest, updateAvailable, checkFailed }) => {
+      const status = checkFailed ? `${current} · update check unavailable`
+        : updateAvailable ? `${current} · ${latest} available` : `${current} · up to date`;
+      if (devReporter) devReporter.summary([['CLI version', status]]);
+    } })) {
       // Restart explicitly so the requested operation never runs with the old loaded modules.
     } else if (name === 'setup') {
       const generatorsOnly = await input.boolean('devtools', message('Install App generators only? Choose No to also install/upgrade PHP and Composer (macOS).', '앱 생성 도구만 설치할까요? 아니요를 선택하면 PHP·Composer도 설치/업그레이드합니다 (macOS).'), false);
@@ -247,7 +251,7 @@ try {
         devReporter.task('startup', 'running', 'Discovering project Apps…');
         const { apps, errors } = await discoverApps(workspace.root);
         devReporter.task('startup', 'success', `Found ${apps.length} App${apps.length === 1 ? '' : 's'}`);
-        devReporter.pause();
+        devReporter.pause({ retain: true });
         selectedApps = await configuredDevApps(workspace, apps, options.app, input);
         const selectedNames = selectedApps ? apps.filter(app => selectedApps.includes(app.key)).map(app => app.name) : apps.map(app => app.name);
         devReporter.summary([

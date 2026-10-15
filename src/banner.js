@@ -95,7 +95,7 @@ const sourceColumns = (symbolPixels[0].length + 8 + wordmarkPixels[0].length) / 
 export function banner(stream = process.stderr, env = process.env) {
   if (!stream.isTTY || env.TERM === 'dumb') return '';
   const columns = stream.columns || 80;
-  const scale = Math.min(0.8, Math.max(8, columns - 4) / sourceColumns);
+  const scale = Math.min(0.62, Math.max(8, columns - 4) / sourceColumns);
   const symbolRows = encode(resize(symbolPixels, scale));
   const wordmarkRows = encode(resize(wordmarkPixels, scale));
   const symbolWidth = Math.max(...symbolRows.map(row => [...row].length));

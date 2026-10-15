@@ -28,22 +28,32 @@ test('SemVer ordering handles prereleases, release versions, metadata and invali
 });
 
 test('registry request is bounded and validates the package and version', async () => {
+  const urls = [];
   assert.equal(await latestVersion(async (url, options) => {
-    assert.equal(url, 'https://registry.npmjs.org/@nexia%2fcli/alpha');
+    urls.push(url);
     assert.equal(options.redirect, 'error');
     assert.ok(options.signal instanceof AbortSignal);
     return { ok: true, json: async () => ({ name: '@nexia/cli', version: '0.2.0-alpha.10' }) };
   }), '0.2.0-alpha.10');
+  assert.deepEqual(urls, [
+    'https://registry.npmjs.org/@nexia%2fcli/alpha',
+    'https://registry.npmjs.org/@nexia%2fcli/0.2.0-alpha.10',
+  ]);
   for (const data of [{ name: 'other', version: '1.0.0' }, { name: '@nexia/cli', version: '--bad' }]) await assert.rejects(latestVersion(async () => ({ ok: true, json: async () => data })), /Invalid/);
   await assert.rejects(latestVersion(async () => ({ ok: false, status: 503 })), /503/);
+  await assert.rejects(latestVersion(async url => url.endsWith('/alpha')
+    ? { ok: true, json: async () => ({ name: '@nexia/cli', version: '0.2.0-alpha.10' }) }
+    : { ok: false, status: 404 }), /not installable yet/);
 });
 
 test('skip continues the command and cached version avoids another lookup', async t => {
   const { input, settings, calls } = await fixture(t);
-  assert.equal(await updateCli(input, {}, settings), false);
+  const statuses = [];
+  assert.equal(await updateCli(input, {}, { ...settings, onChecked: status => statuses.push(status) }), false);
   assert.equal(await updateCli(input, {}, settings), false);
   assert.equal(calls.lookups, 1);
   assert.equal(calls.questions.length, 2);
+  assert.deepEqual(statuses, [{ current: '0.2.0-alpha.7', latest: '0.2.0-alpha.10', updateAvailable: true, checkFailed: false }]);
   assert.deepEqual(calls.installs, []);
   await updateCli(input, {}, { ...settings, now: settings.now + day });
   assert.equal(calls.lookups, 2);
@@ -79,10 +89,13 @@ test('automation, dry runs, explicit yes and source checkouts never auto-check',
 
 test('network failures are cached and fail open only for automatic checks', async t => {
   const { input, settings, calls } = await fixture(t);
+  const statuses = [];
   settings.getLatest = async () => { calls.lookups++; throw new Error('offline'); };
-  assert.equal(await updateCli(input, {}, settings), false);
-  assert.equal(await updateCli(input, {}, settings), false);
+  assert.equal(await updateCli(input, {}, { ...settings, onChecked: status => statuses.push(status) }), false);
+  assert.equal(await updateCli(input, {}, { ...settings, onChecked: status => statuses.push(status) }), false);
   assert.equal(calls.lookups, 1);
+  assert.equal(statuses.length, 2);
+  assert.ok(statuses.every(status => status.current === '0.2.0-alpha.7' && status.latest === null && status.checkFailed));
   await assert.rejects(updateCli(input, {}, { ...settings, automatic: false }), /offline/);
   assert.deepEqual(calls.installs, []);
 });

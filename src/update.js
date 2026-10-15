@@ -34,10 +34,15 @@ export function isNewer(candidate, current) {
 }
 
 export async function latestVersion(fetcher = fetch) {
-  const response = await fetcher('https://registry.npmjs.org/@nexia%2fcli/alpha', { redirect: 'error', signal: AbortSignal.timeout(2000) });
+  const options = () => ({ redirect: 'error', signal: AbortSignal.timeout(2000) });
+  const response = await fetcher('https://registry.npmjs.org/@nexia%2fcli/alpha', options());
   if (!response.ok) throw new Error(`npm registry: HTTP ${response.status}`);
   const data = await response.json();
   if (data.name !== '@nexia/cli' || !parts(data.version)) throw new Error('Invalid CLI version from npm registry.');
+  const exact = await fetcher(`https://registry.npmjs.org/@nexia%2fcli/${encodeURIComponent(data.version)}`, options());
+  if (!exact.ok) throw new Error(`npm registry: ${data.version} is not installable yet (HTTP ${exact.status})`);
+  const published = await exact.json();
+  if (published.name !== '@nexia/cli' || published.version !== data.version) throw new Error('Invalid CLI release from npm registry.');
   return data.version;
 }
 
@@ -64,7 +69,7 @@ export async function installCli(version, { root = packageRoot, platform = proce
 export async function updateCli(input, options = {}, {
   automatic = false, current, getLatest = latestVersion, installVersion = installCli,
   cacheFile = path.join(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'update.json'),
-  now = Date.now(), env = process.env, log = console.error,
+  now = Date.now(), env = process.env, log = console.error, onChecked = () => {},
   installedGlobally = path.normalize(packageRoot).replace(/[\\/]$/, '').endsWith(path.join('node_modules', '@nexia', 'cli')),
 } = {}) {
   if (automatic && (!input.interactive || env.CI || options.json || options['no-interactive'] || options['dry-run'] || options.yes || !installedGlobally)) return false;
@@ -74,14 +79,22 @@ export async function updateCli(input, options = {}, {
     try { cache = JSON.parse(await readFile(cacheFile, 'utf8')) || {}; } catch {}
   }
   const recent = value => Number.isFinite(value) && value <= now && now - value < day;
-  if (automatic && recent(cache.snoozedAt)) return false;
   let latest = automatic && recent(cache.checkedAt) && parts(cache.latest) ? cache.latest : null;
+  let checkFailed = automatic && recent(cache.checkedAt) && !latest;
+  if (automatic && recent(cache.snoozedAt)) {
+    onChecked({ current, latest, updateAvailable: Boolean(latest && isNewer(latest, current)), checkFailed });
+    return false;
+  }
   if (!latest && !(automatic && recent(cache.checkedAt))) {
     try { latest = await getLatest(); }
-    catch (error) { if (!automatic) throw new Error(`Could not check CLI updates: ${error.message}. Retry nexia update or run ${manual}.`); }
-    cache = { checkedAt: now, latest };
+    catch (error) {
+      checkFailed = true;
+      if (!automatic) throw new Error(`Could not check CLI updates: ${error.message}. Retry nexia update or run ${manual}.`);
+    }
+    cache = { checkedAt: now, latest, failed: checkFailed };
     if (automatic) await saveCache();
   }
+  onChecked({ current, latest, updateAvailable: Boolean(latest && isNewer(latest, current)), checkFailed });
   if (!latest || !isNewer(latest, current)) {
     if (!automatic) log(message(`No newer alpha release (installed: ${current}).`, `새 alpha 버전이 없습니다 (설치 버전: ${current}).`));
     return false;
