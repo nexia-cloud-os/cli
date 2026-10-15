@@ -112,7 +112,8 @@ export function createInput(options = {}, { input = process.stdin, output = proc
       const lines = [`${effective().length}/${max} ${message('selected', '선택')} ${warning}`];
       for (let index = start; index < start + count; index++) {
         if (configure && index === 1) {
-          lines.push(`${index === cursor ? '>' : ' '} [${configured ? 'x' : ' '}] ${message('Config Apps (nexia dev config)', 'Config 설정 (nexia dev config)')}${!saved.size || configError ? message(' — setup required', ' — 설정 필요') : ''}`);
+          const setup = !saved.size || configError ? message(' — setup required (Enter setup)', ' — 설정 필요 (Enter로 설정)') : ' (nexia dev config)';
+          lines.push(`${index === cursor ? '>' : ' '} [${configured ? 'x' : ' '}] ${message('Config Apps', 'Config 설정')}${setup}`);
           continue;
         }
         const choice = choices[index - 1 - Number(configure && index > 1)];
@@ -143,7 +144,7 @@ export function createInput(options = {}, { input = process.stdin, output = proc
         input.removeListener('error', onError);
         input.setRawMode(wasRaw);
         if (!wasFlowing) input.pause();
-        output.write('\n');
+        if (renderedLines) output.write(`\x1b[${renderedLines + 2}A\r\x1b[J`);
         if (error) reject(error); else resolve(value);
       };
       const onEnd = () => finish(new Cancelled());
@@ -151,8 +152,12 @@ export function createInput(options = {}, { input = process.stdin, output = proc
       const onKey = (text, key = {}) => {
         warning = '';
         if (key.ctrl && ['c', 'd'].includes(key.name) || key.name === 'escape') return onEnd();
-        if (configure && cursor === 1 && (key.name === 'space' || text === ' ')) {
-          if (configError || !saved.size) warning = configError || message('Run nexia dev config first', '먼저 nexia dev config를 실행하세요');
+        if (configure && cursor === 1 && (key.name === 'space' || text === ' ' || key.name === 'return')) {
+          if (configError || !saved.size) return finish(null, { configure: true });
+          if (key.name === 'return') {
+            if (effective().length) return finish(null, configured && configAll ? null : effective());
+            warning = message('Select at least one App', '앱을 하나 이상 선택하세요');
+          }
           else if (!configured && new Set([...selected, ...saved]).size > max) warning = message('Limit reached', '최대 개수 도달');
           else {
             configured = !configured; all = false;

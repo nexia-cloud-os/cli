@@ -191,12 +191,13 @@ test('configuration editor preselects saved identities or All Apps', async () =>
 });
 
 
-test('unconfigured Config is not checked and manual selection remains available', async () => {
+test('unconfigured Config opens setup and manual selection remains available', async () => {
   const p = picker(3, 20, { configure: true });
   p.key('space');
-  assert.match(p.rendered(), /nexia dev config/);
-  p.key('down'); p.key('space'); p.key('return');
-  assert.deepEqual(await p.result, ['key-0']);
+  assert.deepEqual(await p.result, { configure: true });
+  const q = picker(3, 20, { configure: true });
+  q.key('down'); q.key('space'); q.key('return');
+  assert.deepEqual(await q.result, ['key-0']);
 });
 
 test('Config cannot be enabled when its union with extra Apps exceeds the maximum', async () => {

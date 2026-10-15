@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
 import { setup } from './setup.js';
 import { updateCli } from './update.js';
+import { banner } from './banner.js';
 import { readDocs, formatDocs } from './docs.js';
 import { recentSubmissions, selectSubmission, formatSubmissions } from './submissions.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
@@ -106,6 +107,7 @@ try {
   else {
     input = createInput(options);
     if (name === 'dev') {
+      if (process.stderr.isTTY && !process.env.CI && !options.json) log(banner(process.stderr));
       devReporter = createDevReporter(log);
       devReporter.task('startup', 'running', 'Checking CLI version and project…');
     }
@@ -213,7 +215,7 @@ try {
       if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new InputError('--port must be an integer from 1 to 65535.');
       const sessions = name === 'stop' ? await stopDevSessions(root, port) : await listDevSessions(root);
       output(options, { root, sessions }, name === 'ps' ? formatSessions(sessions) : sessions.length
-        ? sessions.map(session => `${session.port}: ${session.status}`).join('\n') + '\nOnly local development stops; sandbox data is retained.'
+        ? sessions.map(session => `${session.port}: ${session.status}${session.root && session.root !== root ? ` (${path.basename(session.root)})` : ''}`).join('\n') + '\nOnly local development stops; sandbox data is retained.'
         : 'No tracked local development sessions found. Older CLI sessions require Ctrl+C or manual port inspection.');
       if (name === 'stop' && sessions.some(session => session.status === 'unreachable')) process.exitCode = 1;
     } else if (name === 'check') {
@@ -245,14 +247,27 @@ try {
         devReporter.task('startup', 'running', 'Discovering project Apps…');
         const { apps, errors } = await discoverApps(workspace.root);
         devReporter.task('startup', 'success', `Found ${apps.length} App${apps.length === 1 ? '' : 's'}`);
+        devReporter.pause();
         selectedApps = await configuredDevApps(workspace, apps, options.app, input);
         const selectedNames = selectedApps ? apps.filter(app => selectedApps.includes(app.key)).map(app => app.name) : apps.map(app => app.name);
-        devReporter.panel('Nexia development plan', [
+        devReporter.summary([
           ['Project folder', workspace.root],
           ['Apps', selectedNames.join(', ') || 'Waiting for Apps'],
           ['Mode', selectedApps ? 'Selected Apps' : 'All Apps (dynamic)'],
+          [message('Local address', '로컬 주소'), port ? `http://127.0.0.1:${port}` : 'Assigned automatically'],
+          ['Stop', 'Ctrl+C stops local development; sandbox data is retained'],
         ]);
+        devReporter.resume();
         for (const error of errors) devReporter.failure(path.basename(error.directory), error, { verbose: options.verbose === true });
+      } else {
+        devReporter.task('startup', 'success', 'App project found');
+        devReporter.summary([
+          ['App folder', directory],
+          [message('Local address', '로컬 주소'), port ? `http://127.0.0.1:${port}` : 'Assigned automatically'],
+          ['Frontend', 'Preparing build/watch'],
+          ['Database', 'Migrations are manual: nexia db migrate'],
+          ['Stop', 'Ctrl+C stops local development; sandbox data is retained'],
+        ]);
       }
       input.close();
       const shutdown = new AbortController(), stop = () => shutdown.abort();
@@ -326,10 +341,16 @@ try {
   const code = error.code || (error.status ? 'PLATFORM_ERROR' : 'OPERATION_FAILED');
   if (parsed?.options.json || process.argv.includes('--json')) console.log(JSON.stringify({ error: { code, message: error.message } }));
   else if (parsed?.name === 'dev') {
-    const lines = devFailure(error, { verbose: parsed.options.verbose === true }).split('\n');
-    console.error(devTask('nexia dev', 'error', `[${code}] ${lines.shift()}`));
-    for (const line of lines) console.error(`│ ${line}`);
-    console.error('└ Troubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors');
+    if (devReporter) devReporter.failure('nexia dev', new Error(`[${code}] ${error.message}`), {
+      verbose: parsed.options.verbose === true,
+      next: 'https://developers.nexia.to/docs/troubleshooting-common-installation-errors',
+    });
+    else {
+      const lines = devFailure(error, { verbose: parsed.options.verbose === true }).split('\n');
+      console.error(devTask('nexia dev', 'error', `[${code}] ${lines.shift()}`));
+      for (const line of lines) console.error(`│ ${line}`);
+      console.error('└ Troubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors');
+    }
   } else console.error(`Nexia [${code}]: ${error.message}\nTroubleshooting: https://developers.nexia.to/docs/troubleshooting-common-installation-errors`);
   process.exitCode = error.exitCode || 1;
 } finally { devReporter?.close(); input?.close(); }
