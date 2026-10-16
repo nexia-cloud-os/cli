@@ -137,7 +137,7 @@ try {
       }
     } else if (name === 'update') {
       await updateCli(input, options);
-    } else if (await updateCli(input, options, { automatic: true, onChecked: ({ current, latest, updateAvailable, checkFailed }) => {
+    } else if (await updateCli(input, options, { automatic: true, fresh: name === 'dev', onChecked: ({ current, latest, updateAvailable, checkFailed }) => {
       const status = checkFailed ? `${current} · update check unavailable`
         : updateAvailable ? `${current} · ${latest} available` : `${current} · up to date`;
       if (devReporter) devReporter.summary([['CLI version', status]]);

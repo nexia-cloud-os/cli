@@ -13,7 +13,7 @@ import { syncSource } from './sync.js';
 import { readExecutionSelection, selectExecution } from './apps.js';
 import { startNativePreview } from './native-preview.js';
 import { startFrontendBuild } from './frontend-build.js';
-import { devPanel, devTask } from './dev-output.js';
+import { devPanel, devTask, serverVersionRows } from './dev-output.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
@@ -56,6 +56,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   }, { signal, log: detailLog, interval });
   if (!initialConnection) return;
   if (initialConnection.status !== 'connected' || initialConnection.project?.id !== scope.project_id) throw new Error('The linked project needs an approved connection.');
+  const versionRows = serverVersionRows(initialConnection.platform_versions);
+  if (reporter && !taskName) reporter.summary(versionRows, { after: 'CLI version' });
   if (initialConnection.capabilities?.explicit_development_migrations !== true) {
     throw new Error('The platform needs an update for explicit development migrations. nexia dev was not started because this platform may automatically migrate on source changes.');
   }
@@ -77,7 +79,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     await rename(temporary, path.join(local, 'runtime.json'));
     state = next;
   }
-  let lastStatus;
+  let lastStatus, quietDigest = null, platformCheckedAt = 0;
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
@@ -103,6 +105,14 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           || currentProject.project_id !== scope.project_id || currentApp.id !== scope.app_id) {
           throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
         }
+        // Keep local edit detection responsive while reducing unchanged remote status reads.
+        if (browserRuntime && quietDigest && Date.now() - platformCheckedAt < Math.min(15000, interval * 3)
+            && (!initialConnection.capabilities?.runtime_writers || Date.now() - writerCheckedAt < 30000)
+            && (await sourceSnapshot(directory)).digest === quietDigest) {
+          await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
+        platformCheckedAt = Date.now();
         const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
         if (databaseOperation) {
           if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
@@ -116,7 +126,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             browserRuntime = null;
             const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
             if (lastStatus !== status) {
-              if (reporter) task('running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
+              if (reporter) task(databaseOperation.status === 'queued' ? 'pending' : 'running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
               else log(`Database ${databaseOperation.database_command}: ${databaseOperation.status}. Source watching will resume after this operation finishes.`);
             }
             lastStatus = status;
@@ -155,6 +165,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           if (!previewHost) {
             const rows = [
               ['App', identity.key],
+              ...versionRows,
               ['Workspace', { link: launch.href, label: 'Open workspace' }],
               [message('Local address', '로컬 주소'), preview.url],
               ['Frontend', build ? 'Build/watch running' : 'Serving dist/frontend'],
@@ -256,11 +267,12 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           const status = `${operation.id}:${phase}`;
           if (lastStatus !== status) {
             if (reporter) {
-              let state = 'running';
-              let detail = `Runtime preparation ${phase}…`;
+              let state = phase === 'queued' ? 'pending' : 'running';
+              let detail = phase === 'queued' ? 'Platform queue has not started runtime preparation…' : `Runtime preparation ${phase}…`;
               if (phase === 'completed') {
+                const resolved = reporter.resolve?.(name) === true;
                 state = 'success';
-                detail = 'Runtime preparation confirmed';
+                detail = resolved ? 'Runtime preparation confirmed; previous failure resolved' : 'Runtime preparation confirmed';
               } else if (['failed', 'needs_review'].includes(phase)) {
                 state = 'error';
                 detail = `Runtime preparation ${phase.replace('_', ' ')}`;
@@ -268,7 +280,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
                 state = 'warning';
               }
               task(state, detail);
-              if (operation.failure) reporter.message(name, preparationFailureDetails(operation.failure, operation.recovery_check).trim(), { verbose });
+              if (operation.failure) reporter.message(name, preparationFailureDetails(operation.failure, operation.recovery_check).trim(), { verbose, failure: true });
             } else {
               log(['stopping', 'stopped'].includes(phase)
                 ? `App execution ${phase}: ${operation.id}. Source and data retained.`
@@ -324,6 +336,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           // Persisting legacy metadata can yield to the build worker. Recheck
           // before exposing an entry whose files may now be changing.
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { continue; }
+          quietDigest = snapshot.digest;
           browserRuntime = candidateRuntime && { ...candidateRuntime, ...(build?.snapshot() ? { frontend_generation: build.snapshot() } : {}) };
           if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
             await runtimeLogs?.close();
