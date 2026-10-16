@@ -83,3 +83,32 @@ test('native snapshot supports a complete App and retains file and byte ceilings
   for (let i = 0; i < 4; i++) await writeFile(path.join(root, 'src', `${i}.php`), Buffer.alloc(2 * 1024 * 1024, 32));
   await assert.rejects(sourceSnapshot(root), /16 MiB total/);
 });
+
+
+test('native snapshot retains Vitest configuration and existing test sources without widening private paths', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-vitest-source-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  await mkdir(path.join(root, 'tests/frontend'), { recursive: true });
+  await mkdir(path.join(root, 'resources/js'), { recursive: true });
+  await writeFile(path.join(root, 'tests/frontend/setup.tsx'), 'export {};');
+  await writeFile(path.join(root, 'resources/js/Page.test.tsx'), 'export {};');
+  await writeFile(path.join(root, '.env'), 'PRIVATE=excluded');
+  await writeFile(path.join(root, 'vitest.config.private'), 'excluded');
+  await writeFile(path.join(root, 'private-setup.ts'), 'excluded');
+  const config = `export default { test: { environment: 'jsdom', setupFiles: ['./tests/frontend/setup.tsx'], include: ['resources/js/**/*.test.{ts,tsx}'], maxWorkers: 2 } };`;
+  for (const extension of ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts']) {
+    const name = `vitest.config.${extension}`;
+    await writeFile(path.join(root, name), config);
+    const snapshot = await sourceSnapshot(root);
+    assert.deepEqual(snapshot.files.map(file => file.path), ['composer.json', 'resources/js/Page.test.tsx', 'tests/frontend/setup.tsx', name]);
+    assert.equal(Buffer.from(snapshot.files.find(file => file.path === name).content, 'base64').toString(), config);
+    await writeFile(path.join(root, name), `${config} // changed`);
+    const changed = await sourceSnapshot(root);
+    assert.notEqual(changed.digest, snapshot.digest);
+    assert.notEqual(runtimeSourceDigest(changed), runtimeSourceDigest(snapshot));
+    await rm(path.join(root, name));
+  }
+  await symlink(path.join(root, '.env'), path.join(root, 'vitest.config.ts'));
+  await assert.rejects(sourceSnapshot(root), /symlinks/);
+});

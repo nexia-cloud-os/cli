@@ -4,7 +4,7 @@ import { lstat, readdir, open, realpath, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 const roots = new Set(['src', 'database', 'resources', 'routes', 'config', 'tests', 'public']);
-const files = new Set(['composer.json', 'composer.lock', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'vite.config.ts', 'vite.config.js', 'vite.config.mjs', 'tsconfig.json', 'phpunit.xml', 'nexia.json']);
+const files = new Set(['composer.json', 'composer.lock', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'vite.config.ts', 'vite.config.js', 'vite.config.mjs', 'vitest.config.js', 'vitest.config.mjs', 'vitest.config.cjs', 'vitest.config.ts', 'vitest.config.mts', 'vitest.config.cts', 'tsconfig.json', 'phpunit.xml', 'nexia.json']);
 const extensions = new Set(['.php', '.json', '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.html', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff', '.woff2', '.yaml', '.yml', '.xml']);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
