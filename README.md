@@ -576,3 +576,51 @@ Run `nexia test --frontend` to execute the App’s installed Vitest runner direc
 using its own configuration and setup. `--filter <pattern>` selects test names.
 This mode needs no PHP, Core checkout, login, or database; `--database` and
 `--testsuite` apply only to PHP tests. Test failures and empty suites fail the command.
+
+### Inspect a blocked development operation
+
+Use the operation ID printed by `nexia dev` or `nexia db status`:
+
+```sh
+nexia recover <operation-id>
+nexia recover <operation-id> --status
+```
+
+The first command asks the platform to inspect the **existing** execution. The
+second only reads progress. Neither replays App code nor changes its request ID.
+The output separates execution state, inspection progress, and permission to
+retry. Correct the reported source or SDK requirement, then retry explicitly only
+when the platform confirms it is safe. This is not App publication reapproval.
+Older platforms that lack recovery support require a platform update; deleting
+`.nexia` does not resolve an uncertain execution.
+
+If inspection offers `preserve_and_replace`, an explicit alternative is:
+
+```sh
+nexia recover <operation-id> --preserve-and-replace --confirm-preserve
+```
+
+This stops **all Apps in that development sandbox**, preserves its existing data
+and evidence in isolation, and provisions an **empty** replacement. It does not
+copy or reset the old database, retry the uncertain operation, or automatically
+start App code. Check recovery status until the replacement is ready.
+
+SDK warnings identify actually used deprecated frontend aliases and their
+replacement APIs. Repeated watcher warnings are shown once per symbol. A newer
+SDK release alone does not mean an API is deprecated. No removal release is
+claimed when the SDK has not scheduled one; type-only and PHP annotations are
+not detected by the emitted-JavaScript import check.
+
+After preservation, export that App's retained data without operator access:
+
+```sh
+nexia recover <operation-id> --export-data ./preserved-app.jsonl.gz
+```
+
+The first call queues an export. Repeat the command when ready to download it;
+the CLI verifies its digest and never overwrites an existing file. The private
+JSONL gzip contains App table metadata, rows and retained source revisions, not
+other Apps, platform tables or credentials. It is a data export, not an automatic
+database restore. Export is bounded to 2 GiB uncompressed and ten minutes; a
+failed export leaves the original isolated data intact. Preserved sandboxes and
+sources are excluded from automatic deletion.

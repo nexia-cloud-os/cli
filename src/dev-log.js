@@ -50,9 +50,15 @@ export async function receiveBrowserLogs(req, res, app) {
 // Keep at most 8 KiB of a partial line; newline-free build output cannot grow a readline buffer.
 export function pipeBuildLogs(stream, log, level, { verbose = false } = {}) {
   const decoder = new StringDecoder('utf8');
+  const deprecatedSdkWarnings = new Set();
   let pending = '', dropping = false, minute = 0, count = 0, blockLevel = level, viteReporter = false, summarizedImports = false;
   const emit = line => {
     const clean = plain(line).trim();
+    const deprecated = /\[NEXIA_SDK_DEPRECATED\] (allowsManualAppFallback|isRetryableHandoffFailure):/.exec(clean);
+    if (deprecated) {
+      if (deprecatedSdkWarnings.has(deprecated[1])) return;
+      deprecatedSdkWarnings.add(deprecated[1]);
+    }
     if (!clean) { blockLevel = level; viteReporter = false; return; }
     if (!verbose && /^\[plugin(?::|\s+)vite:reporter\]$/.test(clean)) { viteReporter = true; return; }
     if (!verbose && (viteReporter || clean.startsWith('(!)')) && clean.includes('dynamically imported by') && clean.includes('statically imported')) {

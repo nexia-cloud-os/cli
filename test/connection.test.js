@@ -155,7 +155,7 @@ test('preparation conflicts distinguish waiting from review and reject unsafe di
       assert.equal(error.status, 409);
       assert.match(error.message, /missing: 2026_10_14_payroll.php/);
       assert.match(error.message, /Details and recovery: https:\/\/developers.example\/projects\//);
-      assert.match(error.message, status === 'needs_review' ? /administrator must inspect/ : /Wait for this preparation/);
+      assert.match(error.message, status === 'needs_review' ? /automatic outcome inspection: nexia recover/ : /Wait for this preparation/);
       assert.doesNotMatch(error.message, /test-secret/);
       return true;
     });
