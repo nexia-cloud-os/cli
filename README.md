@@ -257,6 +257,46 @@ must connect it in Developers first. Submission does not create tags, push code,
 publish or install an App. Use the returned ID with `submit status`; cancel/retry
 are subject to server state and authorization. New source requires a new tag.
 
+### Submission receipts and next actions
+
+App developers verify the App, merge the release through their repository's PR
+workflow, push its version tag, submit it, and address review feedback. In the
+official workspace, task PRs target `develop`, then a release PR promotes
+`develop` to `main` before tagging. Nexia administrators approve and publish;
+operators deploy. Customer installation remains separate.
+
+From an App or subdirectory, use `nexia submit --tag v1.0.0`. From the connected
+project root, omitting `--app` opens an App picker when several Apps exist; one
+App is selected automatically, and no Apps yields an error. Noninteractive
+selection with multiple Apps requires an explicit target:
+
+```sh
+nexia submit --app people --tag v1.0.0 --no-interactive --yes --json
+nexia submit list
+nexia submit status
+```
+
+Git tag creation and push still run in the App's own repository. The project
+root is not a shared Git repository. Status without an ID opens a submission
+picker in a terminal and returns a list without one.
+
+Matching Core submission receipts include `submission_reused`: `true` means
+an existing submission was returned, including request-ID recovery or a tag
+already received by automatic submission. HTTP 202 and the existing submission
+ID are preserved. Deploy Core before this CLI to enable explicit duplicate
+notices; absent this field, the CLI does not claim a newly created submission.
+
+Status shows check results, analysis progress when available, review notes and
+the next action. Waiting builds need no repeated submission. Retry is offered
+only for a confirmed retryable source failure; use `nexia submit retry` to choose
+it. Uncertain builds require operator reconciliation. Rejected or cancelled
+submissions and changed source need a new version tag. Moving an already
+submitted tag to different code causes a version conflict; the accepted commit
+remains fixed. Recover a lost response with the original tag and `--request-id`.
+
+Approved means awaiting publication. Published does not prove deployment or
+installation: inspect `nexia status` and confirm availability with the operator.
+
 ## Automation and recovery
 
 `--no-interactive` prevents prompts. Non-TTY and `--json` do the same. Required

@@ -2,6 +2,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readConnection, request, openLoginBrowser } from './connection.js';
+import { formatSubmission } from './submissions.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
@@ -57,6 +58,6 @@ export async function submitTag(directory, tag, requestId = randomUUID(), { log 
   const result = await request(config, 'v2/submissions', { method: 'POST', body: { app_id: app.id, tag, request_id: requestId } });
   if (!uuid(result.submission?.id) || result.submission.tag !== tag || result.submission.version !== tag.slice(1)
     || !/^[a-f0-9]{40}$/.test(result.submission.commit_sha)) throw new Error('Invalid submission acknowledgement. Check Console before retrying.');
-  log(`${tag}: ${result.submission.status}\nSubmission: ${result.submission.id}\nCommit: ${result.submission.commit_sha}\nCheck: nexia submit status ${result.submission.id}\nReview requested; publication and installation are separate.`);
+  log(formatSubmission(result));
   return result;
 }
