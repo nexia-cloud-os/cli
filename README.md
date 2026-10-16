@@ -109,6 +109,11 @@ nexia make page Summary --label-ko '요약' --no-record --no-navigation
 nexia help make resource
 ```
 
+After creation, enter the App directory, install its PHP and frontend dependencies,
+and run `nexia test` and `nexia test --frontend`. Generated tests and configuration
+belong to that App; they do not boot Core or require a Core checkout. Resource and
+page generation use the same independently installed PHP devtools package.
+
 App settings: `--name`, `--vendor`, `--family`, `--key`, `--display-name`,
 `--table-prefix`, repeatable `--prerequisite`. App folders must be new direct
 children. Existing destinations are preserved, including during `--dry-run`.
@@ -251,6 +256,46 @@ missing, interactive submission opens Developers for approval. Automated callers
 must connect it in Developers first. Submission does not create tags, push code,
 publish or install an App. Use the returned ID with `submit status`; cancel/retry
 are subject to server state and authorization. New source requires a new tag.
+
+### Submission receipts and next actions
+
+App developers verify the App, merge the release through their repository's PR
+workflow, push its version tag, submit it, and address review feedback. In the
+official workspace, task PRs target `develop`, then a release PR promotes
+`develop` to `main` before tagging. Nexia administrators approve and publish;
+operators deploy. Customer installation remains separate.
+
+From an App or subdirectory, use `nexia submit --tag v1.0.0`. From the connected
+project root, omitting `--app` opens an App picker when several Apps exist; one
+App is selected automatically, and no Apps yields an error. Noninteractive
+selection with multiple Apps requires an explicit target:
+
+```sh
+nexia submit --app people --tag v1.0.0 --no-interactive --yes --json
+nexia submit list
+nexia submit status
+```
+
+Git tag creation and push still run in the App's own repository. The project
+root is not a shared Git repository. Status without an ID opens a submission
+picker in a terminal and returns a list without one.
+
+Matching Core submission receipts include `submission_reused`: `true` means
+an existing submission was returned, including request-ID recovery or a tag
+already received by automatic submission. HTTP 202 and the existing submission
+ID are preserved. Deploy Core before this CLI to enable explicit duplicate
+notices; absent this field, the CLI does not claim a newly created submission.
+
+Status shows check results, analysis progress when available, review notes and
+the next action. Waiting builds need no repeated submission. Retry is offered
+only for a confirmed retryable source failure; use `nexia submit retry` to choose
+it. Uncertain builds require operator reconciliation. Rejected or cancelled
+submissions and changed source need a new version tag. Moving an already
+submitted tag to different code causes a version conflict; the accepted commit
+remains fixed. Recover a lost response with the original tag and `--request-id`.
+
+Approved means awaiting publication. Published does not prove deployment or
+installation: inspect `nexia status` and confirm availability with the operator.
 
 ## Automation and recovery
 
@@ -506,3 +551,76 @@ lease renewal bypass that delay. Empty runtime log responses back off from 2 to
 10 seconds; new output restores the normal interval. Cancellation remains immediate.
 With wake-capable Core/Manager versions, a server-side idle sleep does not close
 `nexia dev` or require a manual resume; the next real App request wakes the runtime.
+
+### Independent App tests
+
+Run `nexia test` inside an App with its development dependencies installed
+(`composer install --no-scripts`). The command runs Pest or PHPUnit directly,
+using the App's `phpunit.xml` or `phpunit.xml.dist` and local SDK dependencies.
+It does not install or boot Nexia Core, authenticate, or run Composer scripts.
+From a connected project, use `--app <key>` or run all discovered Apps.
+
+Use `nexia test --database` for persistence tests. Docker starts a disposable
+PostgreSQL 17 container with an ephemeral loopback port and memory-backed data,
+then removes it on success, failure or cancellation. Tests receive
+`NEXIA_TEST_DB_PORT` and standard `DB_*` settings. App-owned test fixtures must
+use these values for their isolated schemas and apply their own migrations.
+The command never applies migrations to a development or production sandbox.
+
+`--filter <pattern>` and `--testsuite <name>` select a narrower check. The App's
+PHPUnit configuration defines the coverage; excluded legacy tests and actual
+container-to-platform integration are not established by this local run.
+A failing or empty selection returns a nonzero exit status.
+
+Run `nexia test --frontend` to execute the App’s installed Vitest runner directly,
+using its own configuration and setup. `--filter <pattern>` selects test names.
+This mode needs no PHP, Core checkout, login, or database; `--database` and
+`--testsuite` apply only to PHP tests. Test failures and empty suites fail the command.
+
+### Inspect a blocked development operation
+
+Use the operation ID printed by `nexia dev` or `nexia db status`:
+
+```sh
+nexia recover <operation-id>
+nexia recover <operation-id> --status
+```
+
+The first command asks the platform to inspect the **existing** execution. The
+second only reads progress. Neither replays App code nor changes its request ID.
+The output separates execution state, inspection progress, and permission to
+retry. Correct the reported source or SDK requirement, then retry explicitly only
+when the platform confirms it is safe. This is not App publication reapproval.
+Older platforms that lack recovery support require a platform update; deleting
+`.nexia` does not resolve an uncertain execution.
+
+If inspection offers `preserve_and_replace`, an explicit alternative is:
+
+```sh
+nexia recover <operation-id> --preserve-and-replace --confirm-preserve
+```
+
+This stops **all Apps in that development sandbox**, preserves its existing data
+and evidence in isolation, and provisions an **empty** replacement. It does not
+copy or reset the old database, retry the uncertain operation, or automatically
+start App code. Check recovery status until the replacement is ready.
+
+SDK warnings identify actually used deprecated frontend aliases and their
+replacement APIs. Repeated watcher warnings are shown once per symbol. A newer
+SDK release alone does not mean an API is deprecated. No removal release is
+claimed when the SDK has not scheduled one; type-only and PHP annotations are
+not detected by the emitted-JavaScript import check.
+
+After preservation, export that App's retained data without operator access:
+
+```sh
+nexia recover <operation-id> --export-data ./preserved-app.jsonl.gz
+```
+
+The first call queues an export. Repeat the command when ready to download it;
+the CLI verifies its digest and never overwrites an existing file. The private
+JSONL gzip contains App table metadata, rows and retained source revisions, not
+other Apps, platform tables or credentials. It is a data export, not an automatic
+database restore. Export is bounded to 2 GiB uncompressed and ten minutes; a
+failed export leaves the original isolated data intact. Preserved sandboxes and
+sources are excluded from automatic deletion.

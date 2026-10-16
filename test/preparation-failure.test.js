@@ -4,11 +4,13 @@ import { preparationFailureDetails } from '../src/preparation-failure.js';
 
 const mismatch = { code: 'SDK_VERSION_MISMATCH', stage: 'dependencies', required_sdk: '^0.8.6 || ^0.9.0', installed_sdk: 'v0.8.4' };
 
-test('SDK mismatch identifies server versus App versions and the responsible support path', () => {
+test('SDK mismatch identifies server versus App versions and the developer recovery path', () => {
   const message = preparationFailureDetails(mismatch);
   assert.match(message, /App requires PHP SDK: \^0\.8\.6 \|\| \^0\.9\.0/);
   assert.match(message, /Server PHP SDK: v0\.8\.4/);
-  assert.match(message, /Contact developer support/);
+  assert.match(message, /then run nexia check/);
+  assert.match(message, /Do not lower the required version range without verifying compatibility/);
+  assert.match(message, /the platform runtime must be updated/);
   assert.match(message, /Local composer install or deleting \.nexia will not change/);
   assert.doesNotMatch(message, /restart nexia dev|safe to retry/i);
 });

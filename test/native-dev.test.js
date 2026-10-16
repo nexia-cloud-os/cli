@@ -334,7 +334,7 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   const last = JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8'));
   delete last.operation_id;
   await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify(last));
-  await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /requires operator review/);
+  await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /automatic outcome inspection: nexia recover/);
   assert.equal(operations.size, 3);
 });
 
@@ -386,7 +386,7 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
   await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox, request_id: requestId, revision_id: revision, digest: 'a'.repeat(64), writer_generation: 1, selection_revision: 1 }));
   await writeFile(path.join(root, 'composer.json'), '{}');
   if (oldState === 'unreviewed') {
-    await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /requires operator review/);
+    await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /automatic outcome inspection: nexia recover/);
     assert.deepEqual(submissions, [requestId]);
     return;
   }
@@ -471,7 +471,7 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
           assert.equal(error.code, outcome === 'failed' && !started ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED');
           assert.match(error.message, new RegExp(`App preparation ${outcome}: ${operations[0].id}`));
           assert.ok(error.message.includes(`/projects/${project}/development#project-apps`));
-          assert.match(error.message, outcome === 'failed' && !started ? /restart nexia dev/ : /requires operator review/);
+          assert.match(error.message, outcome === 'failed' && !started ? /restart nexia dev/ : /automatic outcome inspection: nexia recover/);
           if (outcome === 'failed' && started) {
             assert.match(error.message, /SDK_VERSION_MISMATCH/);
             assert.match(error.message, /Server PHP SDK: v0.8.4/);

@@ -14,7 +14,7 @@ test('tag submission uses only remote source and retired deploy never sends a re
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-submit-'));
   const project = randomUUID(), app = randomUUID(), id = randomUUID(), requestId = randomUUID();
   const calls = [];
-  let submitted;
+  let submitted, submissionReused = false;
   const submission = { id, developer_project_id: project, tag: 'v1.2.0', version: '1.2.0', commit_sha: 'a'.repeat(40), status: 'waiting', retryable: false };
   const server = createServer(async (req, res) => {
     calls.push(req.url);
@@ -23,7 +23,7 @@ test('tag submission uses only remote source and retired deploy never sends a re
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/developer-api/connection') res.end(JSON.stringify({ status: 'connected', project: { id: project }, sandbox: null }));
     else if (req.url === `/developer-api/v2/apps/${app}/repository`) res.end(JSON.stringify({ repository: { full_name: 'example/app', status: 'connected' } }));
-    else if (req.url === '/developer-api/v2/submissions') { submitted = input; res.end(JSON.stringify({ submission })); }
+    else if (req.url === '/developer-api/v2/submissions') { submitted = input; res.end(JSON.stringify({ submission, submission_reused: submissionReused })); }
     else if (req.url === `/developer-api/v2/submissions/${id}`) res.end(JSON.stringify({ submission }));
     else if (req.url === `/developer-api/v2/submissions/${id}/cancel`) res.end(JSON.stringify({ submission: { ...submission, status: 'cancelled' } }));
     else if (req.url === `/developer-api/v2/submissions/${id}/retry`) { res.statusCode = 409; res.end('{}'); }
@@ -46,6 +46,13 @@ test('tag submission uses only remote source and retired deploy never sends a re
   assert.equal(calls.length, 0);
   assert.match((await run(['submit', '--yes', '--tag', 'v1.2.0', '--request-id', requestId])).stderr, /v1.2.0: waiting/);
   assert.deepEqual(submitted, { app_id: app, tag: 'v1.2.0', request_id: requestId });
+  submissionReused = true;
+  const duplicate = await run(['submit', '--yes', '--tag', 'v1.2.0']);
+  assert.match(duplicate.stderr, /Already submitted/);
+  assert.doesNotMatch(duplicate.stderr, /Review requested|Submission received/);
+  const json = JSON.parse((await run(['submit', '--yes', '--tag', 'v1.2.0', '--json'])).stdout);
+  assert.equal(json.submission_reused, true);
+  assert.equal(json.submission.id, id);
   assert.match((await run(['submit', 'status', id])).stdout, /waiting/);
   assert.match((await run(['submit', 'cancel', id, '--yes'])).stdout, /cancelled/);
   await assert.rejects(run(['submit', 'retry', id, '--yes']), /409/);

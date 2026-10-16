@@ -114,3 +114,15 @@ test('quiet log polling backs off and new output restores the fast interval', as
   assert.ok(times[2] - times[1] >= 65, 'second quiet response backs off again');
   assert.ok(times[3] - times[2] >= 15, 'new output resumes the base interval');
 });
+
+test('actual SDK deprecation warnings appear once per symbol across watcher rebuilds', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { pipeBuildLogs } = await import('../src/dev-log.js');
+  const stream = new PassThrough(), output = [];
+  pipeBuildLogs(stream, line => output.push(line), 'warning');
+  const warning = '[NEXIA_SDK_DEPRECATED] allowsManualAppFallback: use permitsManualFallback. Removal version is not scheduled.';
+  stream.write(warning + '\n' + warning + '\n');
+  stream.end('[NEXIA_SDK_DEPRECATED] isRetryableHandoffFailure: use isRetryableFailure. Removal version is not scheduled.\n');
+  assert.equal(output.length, 2);
+  assert.match(output[0], /Removal version is not scheduled/);
+});

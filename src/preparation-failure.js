@@ -23,7 +23,7 @@ export function preparationFailureDetails(failure, check) {
       && typeof failure.required_sdk === 'string' && /^[0-9vVxX*^~<>=| .+\-]{1,160}$/.test(failure.required_sdk)
       && typeof failure.installed_sdk === 'string' && /^v?\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(failure.installed_sdk)
       && failure.installed_sdk.length <= 80) {
-    return `[SDK_VERSION_MISMATCH] ${stage}\nApp requires PHP SDK: ${failure.required_sdk}\nServer PHP SDK: ${failure.installed_sdk}\nThe platform runtime does not satisfy this App's composer.json. Contact developer support with these versions and the operation ID to confirm a compatible runtime. Local composer install or deleting .nexia will not change the server SDK.\n`;
+    return `[SDK_VERSION_MISMATCH] ${stage}\nApp requires PHP SDK: ${failure.required_sdk}\nServer PHP SDK: ${failure.installed_sdk}\nThe platform runtime does not satisfy this App's composer.json. Adjust App code and dependencies to APIs supported by the server SDK, then run nexia check. Do not lower the required version range without verifying compatibility. If the App needs newer APIs, the platform runtime must be updated. This is not an administrator approval request. Local composer install or deleting .nexia will not change the server SDK.\n`;
   }
   if (failure.code === 'DEPENDENCY_BUILD_FAILED' && failure.stage === 'dependencies') {
     return `[DEPENDENCY_BUILD_FAILED] ${stage}\nCheck composer.json against the supported PHP dependencies. If it matches, contact developer support with the operation ID to inspect the server build. Private build output is not exposed.\n`;
@@ -32,8 +32,8 @@ export function preparationFailureDetails(failure, check) {
     const causes = {
       DATABASE_MIGRATION_REQUIRED: 'This App database has not been migrated. Run nexia db migrate from the App directory, or nexia db migrate --app <folder-or-key> from the project. Keep nexia dev running; no administrator review is needed.',
       APPLIED_MIGRATION_SOURCE_MISMATCH: 'The database already contains migrations that are missing or changed in this source. Restore the original applied files or switch to the current source; add a new migration for further changes.',
-      MIGRATION_OUTCOME_UNCERTAIN: 'An earlier nontransactional migration has an unconfirmed outcome. An administrator must inspect its actual database effects before retrying.',
-      MIGRATION_OWNERSHIP_MISMATCH: 'Migration ownership does not match this App. An administrator must inspect the database allocation.',
+      MIGRATION_OUTCOME_UNCERTAIN: 'An earlier nontransactional migration has an unconfirmed outcome. Run nexia recover <operation-id> to inspect its actual database effects before retrying.',
+      MIGRATION_OWNERSHIP_MISMATCH: 'Migration ownership does not match this App. Run nexia recover <operation-id> to inspect the database allocation; keep the existing data.',
     };
     if (!Object.hasOwn(causes, failure.code)) return '';
     const files = Array.isArray(check?.migrations) ? check.migrations.slice(0, 10)
@@ -58,4 +58,21 @@ export function preparationLocation(operation, endpoint) {
   const revision = new RegExp(`^${uuid}$`).test(operation.source_revision_id ?? '')
     ? `Source revision: ${operation.source_revision_id}\n` : '';
   return `${revision}Details and recovery: ${new URL(path, endpoint).href}\n`;
+}
+
+/** Retry is granted only by an authoritative completed inspection, never by a timeout. */
+export function preparationRecoveryGuidance(operation, recovery) {
+  const id = operation?.id;
+  if (typeof id !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) return 'Keep the original operation ID and data.';
+  if (operation.status === 'completed') return 'Execution completed; no retry is needed.';
+  if (operation.retry_allowed === true && recovery?.status !== 'checking' && recovery?.status !== 'blocked') {
+    return operation.database_command
+      ? 'Retry is allowed after correcting the reported issue. Run the original nexia db command explicitly; keep the old request record.'
+      : 'Retry is allowed after correcting the reported issue. Restart nexia dev in the same project folder.';
+  }
+  if (recovery?.status === 'checking') return `Inspection is in progress. Check nexia recover ${id} --status; do not replay this operation.`;
+  if (recovery?.status === 'blocked' && recovery.next_action === 'retry_inspection') return `Inspection could not finish. Keep the operation and data, then request inspection again with nexia recover ${id}; do not replay App execution.`;
+  if (recovery?.status === 'blocked' && recovery.next_action === 'preserve_and_replace') return `The outcome is uncertain; the same execution will not be replayed. To stop all sandbox Apps, preserve old data in isolation and create an empty sandbox, explicitly run nexia recover ${id} --preserve-and-replace --confirm-preserve.`;
+  if (recovery?.status === 'blocked') return `The outcome is not yet safe to retry. Preserve data and check nexia recover ${id} --status for the next action.`;
+  return `Request an automatic outcome inspection: nexia recover ${id}. This is not App publication approval; no execution is replayed.`;
 }

@@ -32,6 +32,11 @@
 - `nexia make resource`, `nexia make page`, `nexia check`, `nexia db migrate`,
   `nexia db seed` and `nexia submit --tag <tag>` work from an App or subdirectory.
   From this project use `--app <folder-or-key>` or the target selection prompt.
+- `nexia test` runs the selected App’s independent PHP tests without Core or login.
+  Use `--database` for a disposable local PostgreSQL database (Docker required),
+  and `--filter` or `--testsuite` for focused checks. Run `nexia test --frontend`
+  for the App’s standalone frontend tests. The App owns both test configs;
+  this does not replace sandbox permission and workflow verification.
 - `nexia check` from this root checks all Apps. `nexia dev` from root or App
   directories offers Space/arrow-key selection of up to 20 Apps on one port.
   Use `--app people,payroll` or repeat `--app` to skip prompting. All Apps mode also watches
@@ -44,8 +49,9 @@
   project’s local watchers; `--port <port>` selects one session. Sandbox data is retained.
 - `nexia dev config` saves default development Apps for this project. Later
   `nexia dev` offers All Apps, Config Apps, and individual Apps; `--app` skips the picker.
-- `nexia status`, `nexia db status`, and `nexia submit status <id>` report
-  connection, database operation, and submission state respectively.
+- `nexia status`, `nexia db status`, and `nexia submit status` report
+  connection, database operation, and submission state respectively. Use
+  `nexia submit list` to list submissions; status without an ID offers selection.
 - For automation use `--no-interactive` and explicit required values; `--yes`
   accepts the final mutation confirmation. Neither bypasses authorization.
 
@@ -57,7 +63,9 @@
   and refresh. Local preview, source checks and queued operations are not proof
   of runtime success. Ctrl+C stops local watching without deleting data.
 - Submit an existing pushed Git tag only when requested. Submission, review,
-  publication and customer installation are distinct. On response loss, reuse
+  publication, operator deployment and customer installation are distinct.
+  Existing submissions are reused; changed code needs a new version tag. Never
+  move a submitted tag. On response loss, reuse
   the printed request ID; do not reset data to resolve a pending operation.
 - Do not commit, push, submit, reset or send messages without authorization.
   Prepare sanitized reports for developer review before sending them to

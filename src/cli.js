@@ -6,14 +6,16 @@ import { setup } from './setup.js';
 import { updateCli } from './update.js';
 import { banner } from './banner.js';
 import { readDocs, formatDocs } from './docs.js';
-import { recentSubmissions, selectSubmission, formatSubmissions } from './submissions.js';
+import { recentSubmissions, selectSubmission, formatSubmissions, formatSubmission } from './submissions.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
 import { configuredDevApps, configureDevApps } from './dev-selection.js';
 import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
+import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
+import { recoverOperation, formatRecovery } from './recovery.js';
 import { runDatabaseOperation } from './database-operations.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
@@ -116,7 +118,25 @@ try {
       name += ` ${child}`;
       validateOptions(name, options);
     }
-    if (name === 'update') {
+    if (name === 'test') {
+      const targets = await appTargets(options, input, { all: true });
+      input.close();
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      process.once('SIGINT', abort);
+      process.once('SIGTERM', abort);
+      try {
+        for (const directory of targets) {
+          if (controller.signal.aborted) break;
+          try { await testApp(directory, options, { signal: controller.signal, log }); }
+          catch (error) { process.exitCode = error.exitCode || 1; log(error.message); }
+        }
+        if (controller.signal.aborted) process.exitCode = 130;
+      } finally {
+        process.removeListener('SIGINT', abort);
+        process.removeListener('SIGTERM', abort);
+      }
+    } else if (name === 'update') {
       await updateCli(input, options);
     } else if (await updateCli(input, options, { automatic: true, fresh: name === 'dev', onChecked: ({ current, latest, updateAvailable, checkFailed }) => {
       const status = checkFailed ? `${current} · update check unavailable`
@@ -140,7 +160,8 @@ try {
       });
       input.close();
       await initLaravelApp(plan.directory, { ...plan.values, dryRun: options['dry-run'] });
-      console.log(`${options['dry-run'] ? 'Plan' : 'Created'}: ${plan.directory}\nNext: install App dependencies (composer install --no-scripts, npm install), then nexia dev.`);
+      console.log(`${options['dry-run'] ? 'Plan' : 'Created'}: ${plan.directory}`);
+      if (!options['dry-run']) console.log(`Next: cd ${JSON.stringify(plan.directory)}, install App dependencies (composer install --no-scripts, npm install), then run nexia test and nexia test --frontend. Start nexia dev for sandbox verification.`);
     } else if (name.startsWith('make ')) {
       const kind = name.split(' ')[1];
       let originalArgument = argument, selectedDirectory;
@@ -197,6 +218,11 @@ try {
       }
       await saveConnection({ endpoint: config.endpoint });
       console.log(message('CLI signed out. Resume from the project folder: nexia login → nexia status → nexia dev.', 'CLI 로그아웃 완료. 프로젝트 폴더에서 nexia login → nexia status → nexia dev로 다시 시작하세요.'));
+    } else if (name === 'recover') {
+      if (!isUuid(argument || '')) throw new InputError('Use nexia recover <operation-id>. No change was made.');
+      const { config } = await submissionContext();
+      const result = await recoverOperation(config, argument, { statusOnly: options.status === true, preserveAndReplace: options['preserve-and-replace'] === true, confirmPreserve: options['confirm-preserve'] === true, exportData: options['export-data'] });
+      output(options, result, formatRecovery(result, config.endpoint));
     } else if (name === 'status') {
       const workspace = await findWorkspace(process.cwd()), currentApp = await findApp(), config = await readConnection();
       let connection = null;
@@ -336,7 +362,7 @@ try {
           if (action !== 'status') await input.confirm(`${action}: ${selected.label || selected.id}\nSubmission: ${selected.id}`);
           const result = await request(config, `v2/submissions/${selected.id}${action === 'status' ? '' : `/${action}`}`, action === 'status' ? undefined : { method: 'POST', body: {} });
           if (result.submission?.id !== selected.id) throw new Error('Platform returned a different submission.');
-          output(options, result, `${result.submission.tag}: ${result.submission.status}\nSubmission: ${selected.id}\n${result.submission.failure || ''}\n${result.submission.retryable ? `Retry: nexia submit retry ${selected.id}` : 'Code changes require a new version tag.'}`);
+          output(options, result, formatSubmission(result));
         }
       }
     }

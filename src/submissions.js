@@ -38,3 +38,59 @@ export async function selectSubmission(config, input, { appId, action = 'status'
     else return { id, label: label(result.submissions.find(row => row.id === id)) };
   }
 }
+
+export function formatSubmission(result) {
+  const { submission, review, build } = result;
+  const lines = [];
+  if (result.submission_reused === true) lines.push('Already submitted. Showing the existing submission; no new submission was created.');
+  else if (result.submission_reused === false) lines.push('Submission received for review.');
+  lines.push(`${submission.tag}: ${submission.status}`, `Submission: ${submission.id}`);
+  if (submission.commit_sha) lines.push(`Commit: ${submission.commit_sha}`);
+  if (submission.failure) lines.push(`Failure: ${submission.failure}`);
+  if (build?.review_note) lines.push(`Review note: ${build.review_note}`);
+  if (review) {
+    lines.push(`Review: ${review.status}`);
+    for (const check of review.checks ?? []) lines.push(`  ${check.title || check.key}: ${check.status}`);
+    if (review.analysis_progress) lines.push(`Analysis: ${review.analysis_progress.completed}/${review.analysis_progress.total}`);
+  }
+  let next;
+  switch (submission.status) {
+    case 'waiting':
+      next = 'Source collection or an earlier submission is pending. Check status later; do not submit again.';
+      break;
+    case 'queued':
+    case 'building':
+    case 'running':
+      next = 'Build is pending or running. Check status later; do not submit again.';
+      break;
+    case 'built':
+      next = review?.ready_for_human_review
+        ? 'Checks passed. Await administrator review; approval and publication are separate.'
+        : 'Checks are incomplete. Inspect the checks and feedback in Developers before retrying or changing code.';
+      break;
+    case 'approved':
+      next = 'Approved. Await administrator publication; this does not confirm deployment.';
+      break;
+    case 'published':
+      next = 'Published. Check nexia status or contact the operator for deployment availability; publication does not confirm deployment or installation.';
+      break;
+    case 'failed':
+      next = submission.retryable
+        ? `Retry the existing submission: nexia submit retry ${submission.id}`
+        : 'Inspect the failure in Developers. Code changes need a new version tag; contact support for uncertain build outcomes.';
+      break;
+    case 'needs_review':
+      next = 'Contact developer support to reconcile the build outcome. Do not reset data or submit duplicate work.';
+      break;
+    case 'rejected':
+      next = 'Read the review feedback in Developers, address it, and submit a new version tag. Do not move the old tag.';
+      break;
+    case 'cancelled':
+      next = 'This submission is cancelled. Submit a new version tag to request another review.';
+      break;
+    default:
+      next = 'Inspect the current submission in Developers before taking further action.';
+  }
+  lines.push(`Next: ${next}`, `Check: nexia submit status ${submission.id}`);
+  return lines.map(plain).join('\n');
+}
