@@ -109,6 +109,11 @@ nexia make page Summary --label-ko '요약' --no-record --no-navigation
 nexia help make resource
 ```
 
+After creation, enter the App directory, install its PHP and frontend dependencies,
+and run `nexia test` and `nexia test --frontend`. Generated tests and configuration
+belong to that App; they do not boot Core or require a Core checkout. Resource and
+page generation use the same independently installed PHP devtools package.
+
 App settings: `--name`, `--vendor`, `--family`, `--key`, `--display-name`,
 `--table-prefix`, repeatable `--prerequisite`. App folders must be new direct
 children. Existing destinations are preserved, including during `--dry-run`.
@@ -506,3 +511,28 @@ lease renewal bypass that delay. Empty runtime log responses back off from 2 to
 10 seconds; new output restores the normal interval. Cancellation remains immediate.
 With wake-capable Core/Manager versions, a server-side idle sleep does not close
 `nexia dev` or require a manual resume; the next real App request wakes the runtime.
+
+### Independent App tests
+
+Run `nexia test` inside an App with its development dependencies installed
+(`composer install --no-scripts`). The command runs Pest or PHPUnit directly,
+using the App's `phpunit.xml` or `phpunit.xml.dist` and local SDK dependencies.
+It does not install or boot Nexia Core, authenticate, or run Composer scripts.
+From a connected project, use `--app <key>` or run all discovered Apps.
+
+Use `nexia test --database` for persistence tests. Docker starts a disposable
+PostgreSQL 17 container with an ephemeral loopback port and memory-backed data,
+then removes it on success, failure or cancellation. Tests receive
+`NEXIA_TEST_DB_PORT` and standard `DB_*` settings. App-owned test fixtures must
+use these values for their isolated schemas and apply their own migrations.
+The command never applies migrations to a development or production sandbox.
+
+`--filter <pattern>` and `--testsuite <name>` select a narrower check. The App's
+PHPUnit configuration defines the coverage; excluded legacy tests and actual
+container-to-platform integration are not established by this local run.
+A failing or empty selection returns a nonzero exit status.
+
+Run `nexia test --frontend` to execute the App’s installed Vitest runner directly,
+using its own configuration and setup. `--filter <pattern>` selects test names.
+This mode needs no PHP, Core checkout, login, or database; `--database` and
+`--testsuite` apply only to PHP tests. Test failures and empty suites fail the command.

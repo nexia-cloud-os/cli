@@ -33,6 +33,17 @@ test('CLI owns prompts and delegates existing generator flags without reading lo
   assert.deepEqual(calls[0].slice(1), ['make:page', await realpath(app), 'Summary', '--label-ko', '요약', '--without-record', '--without-navigation', '--dry-run', '--no-interaction']);
   assert.deepEqual(calls[1].slice(1), ['make:page', await realpath(app), 'Summary', '--label-ko', '요약', '--without-record', '--without-navigation', '--no-interaction']);
   assert.equal(await readFile(path.join(root, 'config/connection.json'), 'utf8'), expired);
+  result = await invoke(['make', 'resource', 'Request', '--label-ko', '신청', '--record-owner', 'tenant', '--no-navigation', '--yes']);
+  assert.equal(result.code, 0, result.output);
+  const resourceCalls = (await readFile(log, 'utf8')).trim().split('\n').map(JSON.parse).slice(-2);
+  assert.deepEqual(resourceCalls[0].slice(1), ['make:resource', await realpath(app), 'Request', '--label-ko', '신청', '--label-ko-plural', '신청', '--record-owner', 'tenant', '--without-navigation', '--dry-run', '--no-interaction']);
+  assert.deepEqual(resourceCalls[1].slice(1), resourceCalls[0].slice(1).filter(value => value !== '--dry-run'));
+  result = await invoke(['create', 'app', 'sample', '--vendor', 'example', '--family', 'work', '--dry-run', '--yes'], bin, root);
+  assert.equal(result.code, 0, result.output);
+  const appCall = JSON.parse((await readFile(log, 'utf8')).trim().split('\n').at(-1));
+  assert.deepEqual(appCall.slice(1), ['make:app', 'Sample', '--directory', path.join(await realpath(root), 'sample'), '--vendor', 'example', '--family', 'work', '--key', 'sample', '--table-prefix', 'sample', '--display-name', 'Sample', '--dry-run', '--no-interaction']);
+  assert.doesNotMatch(result.output, /install App dependencies/);
+
   await writeFile(path.join(app, 'nexia-app'), '<?php // must not run', { mode: 0o755 });
   result = await invoke(['make', 'resource', 'Request', '--label-ko', '신청', '--yes'], app);
   assert.equal(result.code, 1); assert.match(result.output, /independently installed/);
