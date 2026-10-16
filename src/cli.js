@@ -15,6 +15,7 @@ import { startDevSession, listDevSessions, stopDevSessions, formatSessions } fro
 import { workspaceDev } from './workspace-dev.js';
 import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
+import { recoverOperation, formatRecovery } from './recovery.js';
 import { runDatabaseOperation } from './database-operations.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
@@ -217,6 +218,11 @@ try {
       }
       await saveConnection({ endpoint: config.endpoint });
       console.log(message('CLI signed out. Resume from the project folder: nexia login → nexia status → nexia dev.', 'CLI 로그아웃 완료. 프로젝트 폴더에서 nexia login → nexia status → nexia dev로 다시 시작하세요.'));
+    } else if (name === 'recover') {
+      if (!isUuid(argument || '')) throw new InputError('Use nexia recover <operation-id>. No change was made.');
+      const { config } = await submissionContext();
+      const result = await recoverOperation(config, argument, { statusOnly: options.status === true, preserveAndReplace: options['preserve-and-replace'] === true, confirmPreserve: options['confirm-preserve'] === true, exportData: options['export-data'] });
+      output(options, result, formatRecovery(result, config.endpoint));
     } else if (name === 'status') {
       const workspace = await findWorkspace(process.cwd()), currentApp = await findApp(), config = await readConnection();
       let connection = null;
