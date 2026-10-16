@@ -47,6 +47,7 @@ export function formatSubmission(result) {
   lines.push(`${submission.tag}: ${submission.status}`, `Submission: ${submission.id}`);
   if (submission.commit_sha) lines.push(`Commit: ${submission.commit_sha}`);
   if (submission.failure) lines.push(`Failure: ${submission.failure}`);
+  if (submission.failure === 'test_recipe_mismatch') lines.push('App checks stopped before execution because the platform test environment versions did not match. No App code change or new tag is needed.');
   if (build?.review_note) lines.push(`Review note: ${build.review_note}`);
   if (review) {
     lines.push(`Review: ${review.status}`);
@@ -75,9 +76,15 @@ export function formatSubmission(result) {
       next = 'Published. Check nexia status or contact the operator for deployment availability; publication does not confirm deployment or installation.';
       break;
     case 'failed':
-      next = submission.retryable
-        ? `Retry the existing submission: nexia submit retry ${submission.id}`
-        : 'Inspect the failure in Developers. Code changes need a new version tag; contact support for uncertain build outcomes.';
+      if (submission.retryable && submission.retry_ready === false) {
+        next = submission.retry_blocked_reason === 'artifact_toolchain_not_ready'
+          ? 'The platform test environment correction is pending. Check this submission again after it is applied; do not submit again.'
+          : 'Retry is not ready. Check the submission in Developers before taking further action.';
+      } else {
+        next = submission.retryable
+          ? `Retry the existing submission: nexia submit retry ${submission.id}${submission.failure === 'test_recipe_mismatch' ? ' (no administrator approval required)' : ''}`
+          : 'Inspect the failure in Developers. Code changes need a new version tag; contact support for uncertain build outcomes.';
+      }
       break;
     case 'needs_review':
       next = 'Contact developer support to reconcile the build outcome. Do not reset data or submit duplicate work.';
