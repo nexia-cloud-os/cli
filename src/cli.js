@@ -13,6 +13,7 @@ import { repository, submitTag, isVersionTag } from './repository.js';
 import { configuredDevApps, configureDevApps } from './dev-selection.js';
 import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
+import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
 import { runDatabaseOperation } from './database-operations.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
@@ -116,7 +117,25 @@ try {
       name += ` ${child}`;
       validateOptions(name, options);
     }
-    if (name === 'update') {
+    if (name === 'test') {
+      const targets = await appTargets(options, input, { all: true });
+      input.close();
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      process.once('SIGINT', abort);
+      process.once('SIGTERM', abort);
+      try {
+        for (const directory of targets) {
+          if (controller.signal.aborted) break;
+          try { await testApp(directory, options, { signal: controller.signal, log }); }
+          catch (error) { process.exitCode = error.exitCode || 1; log(error.message); }
+        }
+        if (controller.signal.aborted) process.exitCode = 130;
+      } finally {
+        process.removeListener('SIGINT', abort);
+        process.removeListener('SIGTERM', abort);
+      }
+    } else if (name === 'update') {
       await updateCli(input, options);
     } else if (await updateCli(input, options, { automatic: true, onChecked: ({ current, latest, updateAvailable, checkFailed }) => {
       const status = checkFailed ? `${current} · update check unavailable`
@@ -140,7 +159,8 @@ try {
       });
       input.close();
       await initLaravelApp(plan.directory, { ...plan.values, dryRun: options['dry-run'] });
-      console.log(`${options['dry-run'] ? 'Plan' : 'Created'}: ${plan.directory}\nNext: install App dependencies (composer install --no-scripts, npm install), then nexia dev.`);
+      console.log(`${options['dry-run'] ? 'Plan' : 'Created'}: ${plan.directory}`);
+      if (!options['dry-run']) console.log(`Next: cd ${JSON.stringify(plan.directory)}, install App dependencies (composer install --no-scripts, npm install), then run nexia test and nexia test --frontend. Start nexia dev for sandbox verification.`);
     } else if (name.startsWith('make ')) {
       const kind = name.split(' ')[1];
       let originalArgument = argument, selectedDirectory;

@@ -15,6 +15,7 @@ export const commands = {
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
   dev: { description: ['Choose All Apps, configured Apps, or individual Apps (up to 20)', '전체·Config 설정·개별 앱 선택 (최대 20개)'], options: ['app', 'port', 'container', 'verbose'] },
   'dev config': { description: ['Config Apps: save the default development selection', 'Config Apps: 기본 개발 앱 선택 저장'], options: ['app', 'yes'] },
+  test: { description: ['Run the App’s independent test suite', 'App의 독립 테스트 실행'], options: ['app', 'frontend', 'database', 'filter', 'testsuite'] },
   check: { description: ['Check this App, or all Apps from the project root', '현재 앱 또는 프로젝트 루트의 전체 앱 검사'], options: ['app'] },
   ps: { description: ['List local development sessions, ports and Apps', '로컬 개발 세션·포트·앱 조회'], options: ['json'] },
   stop: { description: ['Stop local development for this project; retain sandbox data', '현재 프로젝트의 로컬 개발 종료·샌드박스 데이터 보존'], options: ['port', 'json'] },
@@ -29,8 +30,12 @@ export const commands = {
   'submit retry': { argument: 'submission-id', description: ['Retry a retryable submission', '재시도 가능한 제출 재요청'], options: ['json', 'yes'] },
 };
 export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'seed', 'status'] };
-export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'navigation', 'record']);
+export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'database', 'frontend', 'navigation', 'record']);
 export const optionDescriptions = {
+  frontend: 'Run the App’s Vitest frontend tests',
+  database: 'Start and remove a disposable PostgreSQL database for this run',
+  filter: 'Run tests matching this PHPUnit/Pest filter or Vitest test name',
+  testsuite: 'Run one suite declared in the App’s phpunit.xml',
   page: 'Recent submission page (20 per page)',
   locale: 'Document language: en or ko (default: en)',
   app: 'App folder name or key', name: 'Project display name or App code name',
@@ -106,7 +111,7 @@ export function helpText(name = '') {
     ? [{ title: [name, name], names: groups[name].map(child => `${name} ${child}`) }]
     : [
       { title: ['Start & connect', '시작·연결'], names: ['setup', 'update', 'create project', 'connect', 'login', 'logout', 'status'] },
-      { title: ['Build & develop', '생성·개발'], names: ['create app', 'make resource', 'make page', 'dev', 'dev config', 'check', 'ps', 'stop'] },
+      { title: ['Build & develop', '생성·개발'], names: ['create app', 'make resource', 'make page', 'dev', 'dev config', 'check', 'test', 'ps', 'stop'] },
       { title: ['Sandbox database', '샌드박스 데이터'], names: ['db migrate', 'db seed', 'db status'] },
       { title: ['Submit & review', '제출·심사'], names: ['submit', 'submit list', 'submit status', 'submit cancel', 'submit retry'] },
       { title: ['Documentation', '개발 문서'], names: ['docs', 'docs search', 'docs read'] },

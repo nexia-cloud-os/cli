@@ -32,6 +32,11 @@
 - `nexia make resource`, `nexia make page`, `nexia check`, `nexia db migrate`,
   `nexia db seed` and `nexia submit --tag <tag>` work from an App or subdirectory.
   From this project use `--app <folder-or-key>` or the target selection prompt.
+- `nexia test` runs the selected App’s independent PHP tests without Core or login.
+  Use `--database` for a disposable local PostgreSQL database (Docker required),
+  and `--filter` or `--testsuite` for focused checks. Run `nexia test --frontend`
+  for the App’s standalone frontend tests. The App owns both test configs;
+  this does not replace sandbox permission and workflow verification.
 - `nexia check` from this root checks all Apps. `nexia dev` from root or App
   directories offers Space/arrow-key selection of up to 20 Apps on one port.
   Use `--app people,payroll` or repeat `--app` to skip prompting. All Apps mode also watches
