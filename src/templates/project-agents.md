@@ -49,8 +49,9 @@
   project’s local watchers; `--port <port>` selects one session. Sandbox data is retained.
 - `nexia dev config` saves default development Apps for this project. Later
   `nexia dev` offers All Apps, Config Apps, and individual Apps; `--app` skips the picker.
-- `nexia status`, `nexia db status`, and `nexia submit status <id>` report
-  connection, database operation, and submission state respectively.
+- `nexia status`, `nexia db status`, and `nexia submit status` report
+  connection, database operation, and submission state respectively. Use
+  `nexia submit list` to list submissions; status without an ID offers selection.
 - For automation use `--no-interactive` and explicit required values; `--yes`
   accepts the final mutation confirmation. Neither bypasses authorization.
 
@@ -62,7 +63,9 @@
   and refresh. Local preview, source checks and queued operations are not proof
   of runtime success. Ctrl+C stops local watching without deleting data.
 - Submit an existing pushed Git tag only when requested. Submission, review,
-  publication and customer installation are distinct. On response loss, reuse
+  publication, operator deployment and customer installation are distinct.
+  Existing submissions are reused; changed code needs a new version tag. Never
+  move a submitted tag. On response loss, reuse
   the printed request ID; do not reset data to resolve a pending operation.
 - Do not commit, push, submit, reset or send messages without authorization.
   Prepare sanitized reports for developer review before sending them to

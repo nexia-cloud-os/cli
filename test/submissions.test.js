@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recentSubmissions, selectSubmission, formatSubmissions } from '../src/submissions.js';
+import { recentSubmissions, selectSubmission, formatSubmissions, formatSubmission } from '../src/submissions.js';
 
 test('recent submissions support paging, selection and noninteractive listing without writes', async t => {
   const original = globalThis.fetch;
@@ -30,4 +30,42 @@ test('recent submissions support paging, selection and noninteractive listing wi
   assert.ok(calls.every(call => call.options.method === 'GET'));
   await assert.rejects(recentSubmissions(config, { page: 0 }), /--page/);
   await assert.rejects(recentSubmissions({ ...config, project: { id: 'another-project' } }), /Invalid submission list/);
+});
+
+test('submission receipts distinguish new, reused and older-server acknowledgements', () => {
+  const submission = { id: 'receipt-id', tag: 'v1.0.0', status: 'waiting' };
+  assert.match(formatSubmission({ submission, submission_reused: true }), /Already submitted.*no new submission/);
+  assert.match(formatSubmission({ submission, submission_reused: false }), /Submission received for review/);
+  assert.doesNotMatch(formatSubmission({ submission }), /Already submitted|Submission received/);
+});
+
+test('submission guidance follows state without suggesting unsafe retries or claiming deployment', () => {
+  const result = (status, extra = {}) => formatSubmission({ submission: { id: 'receipt-id', tag: 'v1.0.0', status, ...extra } });
+  for (const status of ['waiting', 'queued', 'building', 'running']) {
+    assert.match(result(status), /do not submit again/);
+    assert.doesNotMatch(result(status), /new version tag|submit retry/);
+  }
+  assert.match(result('failed', { retryable: true }), /nexia submit retry receipt-id/);
+  assert.doesNotMatch(result('failed', { retryable: false }), /nexia submit retry/);
+  assert.match(result('needs_review'), /reconcile.*Do not reset/);
+  assert.match(result('approved'), /Await administrator publication/);
+  assert.match(result('published'), /does not confirm deployment or installation/);
+  for (const status of ['rejected', 'cancelled']) assert.match(result(status), /new version tag/);
+  assert.match(result('future-state'), /Inspect the current submission/);
+});
+
+test('status includes check progress and review notes, with terminal control characters removed', () => {
+  const result = { submission: { id: 'receipt-id', tag: 'v1.0.0', status: 'built' },
+    build: { review_note: '\u001b[31mFix permissions\u001b[0m' },
+    review: { status: 'checks_incomplete', ready_for_human_review: false,
+      checks: [{ key: 'app_php_tests', title: 'App PHP tests', status: 'failed' }],
+      analysis_progress: { completed: 2, total: 4 } } };
+  const output = formatSubmission(result);
+  assert.match(output, /App PHP tests: failed/);
+  assert.match(output, /Analysis: 2\/4/);
+  assert.match(output, /Review note: Fix permissions/);
+  assert.doesNotMatch(output, /\u001b/);
+  assert.match(output, /Checks are incomplete/);
+  result.review.ready_for_human_review = true;
+  assert.match(formatSubmission(result), /Await administrator review/);
 });

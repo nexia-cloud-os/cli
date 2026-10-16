@@ -6,7 +6,7 @@ import { setup } from './setup.js';
 import { updateCli } from './update.js';
 import { banner } from './banner.js';
 import { readDocs, formatDocs } from './docs.js';
-import { recentSubmissions, selectSubmission, formatSubmissions } from './submissions.js';
+import { recentSubmissions, selectSubmission, formatSubmissions, formatSubmission } from './submissions.js';
 import { initLaravelApp, runDevtools, installDevtools } from './devtools.js';
 import { readConnection, setEndpoint, login, request, saveConnection, validateEndpoint } from './connection.js';
 import { repository, submitTag, isVersionTag } from './repository.js';
@@ -356,7 +356,7 @@ try {
           if (action !== 'status') await input.confirm(`${action}: ${selected.label || selected.id}\nSubmission: ${selected.id}`);
           const result = await request(config, `v2/submissions/${selected.id}${action === 'status' ? '' : `/${action}`}`, action === 'status' ? undefined : { method: 'POST', body: {} });
           if (result.submission?.id !== selected.id) throw new Error('Platform returned a different submission.');
-          output(options, result, `${result.submission.tag}: ${result.submission.status}\nSubmission: ${selected.id}\n${result.submission.failure || ''}\n${result.submission.retryable ? `Retry: nexia submit retry ${selected.id}` : 'Code changes require a new version tag.'}`);
+          output(options, result, formatSubmission(result));
         }
       }
     }
