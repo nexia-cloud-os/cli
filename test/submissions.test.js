@@ -69,3 +69,19 @@ test('status includes check progress and review notes, with terminal control cha
   result.review.ready_for_human_review = true;
   assert.match(formatSubmission(result), /Await administrator review/);
 });
+
+
+test('preflight retry guidance waits for corrected toolchain and preserves submission identity', () => {
+  const submission = { id: 'original-id', tag: 'v1.0.0', status: 'failed', failure: 'test_recipe_mismatch',
+    retryable: true, retry_ready: false, retry_blocked_reason: 'artifact_toolchain_not_ready' };
+  const blocked = formatSubmission({ submission });
+  assert.match(blocked, /stopped before execution/);
+  assert.match(blocked, /No App code change or new tag is needed/);
+  assert.match(blocked, /correction is pending/);
+  assert.doesNotMatch(blocked, /nexia submit retry/);
+  assert.match(blocked, /nexia submit status original-id/);
+  const ready = formatSubmission({ submission: { ...submission, retry_ready: true, retry_blocked_reason: null } });
+  assert.match(ready, /nexia submit retry original-id/);
+  assert.match(ready, /no administrator approval required/);
+  assert.doesNotMatch(ready, /correction is pending/);
+});
