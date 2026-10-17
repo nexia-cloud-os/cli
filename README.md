@@ -63,8 +63,9 @@ an App repository. Project/App instructions are created without overwriting your
 | `check` | Inspect App source; no remote runtime verification |
 | `status` | Inspect authentication, project, folder and sandbox |
 | `db migrate` | Request an App sandbox migration |
-| `db seed [key]` | Run this App's declared development data |
-| `db status` | Inspect the App database operation |
+| `db seed [key]` | Run an App Seeder or named fixture |
+| `db rollback/reset/refresh/fresh` | Explicit development migration lifecycle |
+| `db status` | Show migration files, batches and diagnostics |
 | `submit` | Submit an existing Git version tag for review |
 | `submit list [--page N]` | List recent submissions for this project or App |
 | `submit status\|cancel\|retry [id]` | Choose a recent submission, or use an explicit ID |
@@ -250,9 +251,13 @@ Do not commit `.nexia/` or copy the private global CLI credential file.
 
 ## Database and submission
 
-`nexia dev` watches source without applying migrations or initialization. Keep it running while writing migration files. From the App folder in another terminal, run `nexia db migrate` when ready. The command uploads the current local source, pins that revision, and waits for completion; the watcher then resumes. A new App waits for its first explicit migration without administrator review. Already-applied migration files remain immutable: add a new migration for later changes.
+`nexia dev` watches source without applying migrations or initialization. Keep it running while writing migration files. From the App folder in another terminal, run `nexia db migrate` when ready. The command uploads the current local source, pins that revision, and waits for completion; the watcher then resumes. A new App waits for its first explicit migration without administrator review. Development migrations can be rolled back, edited and run again. Published migration files remain immutable; add new files for published version upgrades.
 
-Database commands target only this App's active sandbox. Run migrations before `db seed`; seeding does not implicitly migrate. Recover a lost response using the printed `--request-id`, which keeps the original source revision even after local edits. `db status` reports the latest operation. Unconfirmed database effects still require operator inspection.
+From the project root, DB commands run all Apps sequentially; `--app=people` selects one, and an App folder selects that App. A failed App does not skip later Apps; any failure produces a nonzero exit code. `db status` lists migration files, batches and changed/missing/interrupted diagnostics, plus the last command. Status does not boot App PHP or initialize its schema. `db rollback` reverses the last batch (`--step` or `--batch` selects a range), `db reset` runs every `down()`, `db refresh` rolls back then migrates, and `db fresh` erases only the selected development schemas before migrating. Destructive commands confirm all selected Apps once.
+
+`db migrate --step` records one batch per file. `--pretend` on migrate/rollback/reset previews SQL with literal values redacted. `db seed` runs the App DatabaseSeeder; use `--class` for an App-owned Seeder class. `db seed <key>` retains declared fixture behavior. `db fresh --seed` and `db refresh --seed` run a Seeder afterwards. Other database connections and paths cannot be passed through.
+
+Keep `nexia dev` running while correcting errors. Use `migrate → status → rollback → edit → migrate`. Editing an applied file does not replay it automatically. If a nontransactional migration fails, inspect its effects, repair the App database, then run migrate explicitly; source changes and administrator approval are not prerequisites. Successful rollback cannot be assumed for an unrecorded failed file. `fresh` is optional and deletes data. A lost response can be queried with the original `--request-id` (one App only), preserving the original source and options. New commands require matching CLI, Core and Manager versions.
 
 Commit and push source and the intended version tag with Git yourself. From the
 App run `nexia check`, then `nexia submit --tag v1.0.0`. If repository connection is

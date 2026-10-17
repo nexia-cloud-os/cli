@@ -54,6 +54,13 @@ export function formatSubmission(result) {
     for (const check of review.checks ?? []) {
       lines.push(`  ${check.title || check.key}: ${check.status}`);
       if (['failed', 'error', 'blocked'].includes(check.status)) {
+        if (check.key === 'migration_history') {
+          for (const finding of (check.details?.findings ?? []).slice(0, 100)) {
+            if (typeof finding.migration === 'string' && /^[A-Za-z0-9_-]{1,255}$/.test(finding.migration) && ['changed', 'removed'].includes(finding.reason)) {
+              lines.push(`    ${finding.migration}.php: ${finding.reason} since publication`);
+            }
+          }
+        }
         for (const field of ['stage', 'reason', 'failure_code']) {
           const value = check.details?.[field];
           if (typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value)) lines.push(`    ${field}: ${value}`);

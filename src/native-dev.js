@@ -153,7 +153,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         if (databaseOperation) {
           if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
               || databaseOperation.developer_sandbox_id !== scope.sandbox_id
-              || !['migrate', 'seed', 'reset'].includes(databaseOperation.database_command)
+              || !['migrate', 'seed', 'reset', 'rollback', 'rollback_all', 'refresh', 'fresh', 'seeder', 'status'].includes(databaseOperation.database_command)
               || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(databaseOperation.status)) {
             throw new Error('Platform returned a conflicting App database operation.');
           }
