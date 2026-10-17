@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { nativeDev } from '../src/native-dev.js';
 
 for (const safeFailure of [false, true]) test(safeFailure
-  ? 'safe preparation failure waits for corrected Backend source without replaying unchanged work'
+  ? 'stopped App execution failure accepts corrected source without administrator approval'
   : 'frontend-only edits reuse a completed runtime and the next Backend edit uploads complete source', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-frontend-reuse-'));
   const previousConfig = process.env.NEXIA_CONFIG_HOME;
@@ -37,14 +37,14 @@ for (const safeFailure of [false, true]) test(safeFailure
       const operation = { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
         developer_project_id: project, developer_sandbox_id: sandbox, status: safeFailure && operations.size === 0 ? 'failed' : 'completed',
         ...(safeFailure && operations.size === 0 ? { retry_allowed: true, started_at: new Date().toISOString(),
-          failure: { code: 'DEPENDENCY_BUILD_FAILED', stage: 'dependencies' } } : {}) };
+          stopped_at: new Date().toISOString(), failure: { code: 'PREPARATION_FAILED', stage: 'serve' } } : {}) };
       operations.set(operation.id, operation);
       result = { operation };
     } else if (req.url.includes('/v2/runtime-operations/')) {
       const operation = operations.get(req.url.split('/').at(-1));
       if (++polls === 2) await writeFile(path.join(root, 'resources/js/Page.tsx'), 'frontend-only change');
       if (polls === 5) {
-        assert.equal(sources.length, 1, 'frontend edits must not upload or prepare again');
+        assert.equal(sources.length, 2, 'frontend source still synchronizes while execution is unchanged');
         assert.equal(operations.size, 1);
         await writeFile(path.join(root, 'src/Handler.php'), '<?php // backend change');
       }
@@ -86,7 +86,7 @@ for (const safeFailure of [false, true]) test(safeFailure
   const deadline = setTimeout(() => shutdown.abort(), 5000);
   try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {} }); }
   finally { clearTimeout(deadline); }
-  assert.equal(sources.length, 2);
+  assert.equal(sources.length, 3);
   assert.equal(operations.size, 2);
   const frontend = sources[1].files.find(file => file.path === 'resources/js/Page.tsx');
   assert.equal(Buffer.from(frontend.content, 'base64').toString(), 'frontend-only change');
@@ -116,7 +116,7 @@ for (const expired of [true, false]) {
         payload = { selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
       } else if (req.url.endsWith('/v2/sources')) {
         uploads++;
-        assert.equal(submissions.length, 1, 'resolve the old request before changing source');
+        assert.equal(submissions.length, uploads === 1 ? 0 : 1, 'sync source without replacing the original request');
         payload = { revision: { id: restoredRevision, digest: input.source.digest, file_count: input.source.files.length } };
       } else if (req.url.endsWith('/v2/runtime-operations') && req.method === 'POST') {
         submissions.push(input);
@@ -153,15 +153,15 @@ for (const expired of [true, false]) {
     const deadline = setTimeout(() => shutdown.abort(), 3000);
     try {
       const run = nativeDev(directory, { port: 0, interval: 1, signal: shutdown.signal, reporter: {
-        task(name, state, detail) { tasks.push({ name, state, detail }); if (detail.includes('Platform queue has not started')) shutdown.abort(); },
+        task(name, state, detail) { tasks.push({ name, state, detail }); if (detail.includes('Platform queue has not started') || detail.includes('Watching for changes')) shutdown.abort(); },
         message() {},
         summary() {},
       } });
-      if (expired) await run;
-      else await assert.rejects(run, /HTTP 410/);
+      await run;
+      if (!expired) assert.ok(tasks.some(task => task.detail.includes('HTTP 410')));
     } finally { clearTimeout(deadline); }
     const saved = JSON.parse(await readFile(path.join(directory, '.nexia/runtime.json'), 'utf8'));
-    assert.equal(uploads, expired ? 1 : 0);
+    assert.equal(uploads, expired ? 2 : 1);
     assert.equal(submissions.length, expired ? 2 : 1);
     if (expired) {
       assert.ok(tasks.some(task => task.state === 'pending' && task.detail === 'Platform queue has not started runtime preparation…'));
@@ -334,7 +334,14 @@ test('native dev resumes an ambiguous request and serializes changed source afte
   const last = JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8'));
   delete last.operation_id;
   await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify(last));
-  await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /automatic outcome inspection: nexia recover/);
+  const failedWatch = new AbortController();
+  const failedDeadline = setTimeout(() => failedWatch.abort(), 5000);
+  t.after(() => clearTimeout(failedDeadline));
+  let failureReported = false;
+  await nativeDev(root, { port: 0, interval: 1, signal: failedWatch.signal, log: message => {
+    if (message.includes('Watching for changes')) { failureReported = true; failedWatch.abort(); }
+  } });
+  assert.equal(failureReported, true);
   assert.equal(operations.size, 3);
 });
 
@@ -352,7 +359,7 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
     let payload;
     if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true, runtime_writers: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
     else if (req.url.endsWith('/v2/sources')) {
-      assert.equal(submissions.length, 1, 'recover the old request before uploading current source');
+      assert.equal(submissions.length, 0, 'source synchronization stays independent of pending execution');
       payload = { revision: { id: currentRevision, digest: input.source.digest, file_count: input.source.files.length } };
     }
     else if (req.url.endsWith('/writer')) {
@@ -386,7 +393,13 @@ for (const oldState of ['completed', 'failed', 'reviewed', 'unreviewed']) test(`
   await writeFile(path.join(root, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: app, sandbox_id: sandbox, request_id: requestId, revision_id: revision, digest: 'a'.repeat(64), writer_generation: 1, selection_revision: 1 }));
   await writeFile(path.join(root, 'composer.json'), '{}');
   if (oldState === 'unreviewed') {
-    await assert.rejects(nativeDev(root, { port: 0, interval: 1, log: () => {} }), /automatic outcome inspection: nexia recover/);
+    const deadline = setTimeout(() => abort.abort(), 5000);
+    t.after(() => clearTimeout(deadline));
+    let failureReported = false;
+    await nativeDev(root, { port: 0, interval: 1, signal: abort.signal, log: message => {
+      if (message.includes('Watching for changes')) { failureReported = true; abort.abort(); }
+    } });
+    assert.equal(failureReported, true);
     assert.deepEqual(submissions, [requestId]);
     return;
   }
@@ -417,7 +430,6 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
       else if (req.url.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project,
         sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: pending } };
       else if (req.url.endsWith('/v2/sources')) {
-        assert.equal(pending, false, 'no source replacement before shutdown acknowledgment');
         payload = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
       } else if (req.method === 'POST') {
         assert.equal(pending, false, 'no new operation before shutdown acknowledgment');
@@ -459,7 +471,7 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
     try {
       const run = nativeDev(root, { interval: 1, signal: shutdown.signal,
         previewHost: { attach(_directory, state) { readPreview = state; return { url: 'http://127.0.0.1:4310', close: async () => {} }; } },
-        log(message) { if (message.includes('preparation completed') && ++completed === 2) shutdown.abort(); } });
+        log(message) { if (message.includes('Watching for changes') && outcome !== 'completed') shutdown.abort(); if (message.includes('preparation completed') && ++completed === 2) shutdown.abort(); } });
       if (outcome === 'completed') {
         await run;
         assert.equal(completed, 2);
@@ -467,17 +479,7 @@ for (const [outcome, started] of [['completed', true], ['failed', true], ['faile
         assert.ok(operations[0].stopped_at);
         assert.notEqual(operations[0].request_id, operations[1].request_id);
       } else {
-        await assert.rejects(run, error => {
-          assert.equal(error.code, outcome === 'failed' && !started ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED');
-          assert.match(error.message, new RegExp(`App preparation ${outcome}: ${operations[0].id}`));
-          assert.ok(error.message.includes(`/projects/${project}/development#project-apps`));
-          assert.match(error.message, outcome === 'failed' && !started ? /restart nexia dev/ : /automatic outcome inspection: nexia recover/);
-          if (outcome === 'failed' && started) {
-            assert.match(error.message, /SDK_VERSION_MISMATCH/);
-            assert.match(error.message, /Server PHP SDK: v0.8.4/);
-          }
-          return true;
-        });
+        await run;
         assert.equal(operations.length, 1, 'uncertain failures never retry automatically');
       }
     } finally { clearTimeout(deadline); }
@@ -543,7 +545,7 @@ test('stopped execution recovers source and ambiguous preparation timeouts witho
       if (message.includes('preparation queued')) shutdown.abort();
     } });
   } finally { clearTimeout(deadline); }
-  assert.equal(sourceCalls, 2, 'pending preparation is recovered before syncing further edits');
+  assert.equal(sourceCalls, 3, 'edits synchronize while the ambiguous preparation retains its request');
   assert.equal(submissions.length, 2);
   assert.deepEqual(submissions[0], submissions[1], 'ambiguous acceptance reuses the entire preparation request');
   assert.equal(JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8')).operation_id, operation.id);
@@ -584,6 +586,10 @@ for (const outcome of ['pending', 'denied', 'unavailable']) {
           if (readsAfterResume === 3) shutdown.abort();
         }
         res.end(JSON.stringify({ selection }));
+      } else if (req.url.endsWith('/v2/sources')) {
+        let raw = ''; for await (const chunk of req) raw += chunk;
+        const input = JSON.parse(raw);
+        res.end(JSON.stringify({ revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } }));
       } else { res.writeHead(404).end('{}'); }
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -597,6 +603,7 @@ for (const outcome of ['pending', 'denied', 'unavailable']) {
     await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'fixture-only' }));
     await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
     await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'fixture' }));
+    await writeFile(path.join(root, 'composer.json'), '{}');
     const timeout = setTimeout(() => shutdown.abort(), 3000);
     try {
       const run = nativeDev(root, { port: 0, interval: 1, signal: shutdown.signal, log: value => messages.push(value) });
@@ -605,7 +612,8 @@ for (const outcome of ['pending', 'denied', 'unavailable']) {
         assert.equal(readsAfterResume, 3);
         assert.ok(messages.some(value => /switch pending|전환 대기/.test(value)));
       } else {
-        await assert.rejects(run, error => error.code === 'DEVELOPMENT_RESUME_UNCONFIRMED' && /fixture resume failure/.test(error.message));
+        await run;
+        assert.ok(messages.some(value => value.includes('fixture resume failure') && value.includes('Watching for changes')));
       }
     } finally { clearTimeout(timeout); }
     assert.equal(writes, 1);
@@ -681,6 +689,6 @@ test('first dev waits for explicit migration and file saves never submit databas
     } });
   } finally { clearTimeout(deadline); }
   assert.equal(submissions, 3, 'initial wait, explicit migration recovery, then source-only edit');
-  assert.equal(uploads, 3);
+  assert.equal(uploads, 2, 'completed migration reuses the already uploaded source');
   assert.ok(messages.some(message => message.includes('nexia db migrate')));
 });

@@ -51,7 +51,22 @@ export function formatSubmission(result) {
   if (build?.review_note) lines.push(`Review note: ${build.review_note}`);
   if (review) {
     lines.push(`Review: ${review.status}`);
-    for (const check of review.checks ?? []) lines.push(`  ${check.title || check.key}: ${check.status}`);
+    for (const check of review.checks ?? []) {
+      lines.push(`  ${check.title || check.key}: ${check.status}`);
+      if (['failed', 'error', 'blocked'].includes(check.status)) {
+        if (check.key === 'migration_history') {
+          for (const finding of (check.details?.findings ?? []).slice(0, 100)) {
+            if (typeof finding.migration === 'string' && /^[A-Za-z0-9_-]{1,255}$/.test(finding.migration) && ['changed', 'removed'].includes(finding.reason)) {
+              lines.push(`    ${finding.migration}.php: ${finding.reason} since publication`);
+            }
+          }
+        }
+        for (const field of ['stage', 'reason', 'failure_code']) {
+          const value = check.details?.[field];
+          if (typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value)) lines.push(`    ${field}: ${value}`);
+        }
+      }
+    }
     if (review.analysis_progress) lines.push(`Analysis: ${review.analysis_progress.completed}/${review.analysis_progress.total}`);
   }
   let next;
@@ -89,11 +104,11 @@ export function formatSubmission(result) {
       } else {
         next = submission.retryable
           ? `Retry the existing submission: nexia submit retry ${submission.id}${submission.failure === 'test_recipe_mismatch' ? ' (no administrator approval required)' : ''}`
-          : 'Inspect the failure in Developers. Code changes need a new version tag; contact support for uncertain build outcomes.';
+          : 'Read the failed checks, correct the source, and submit a new version tag. Keep nexia dev running; no administrator permission is needed.';
       }
       break;
     case 'needs_review':
-      next = 'Contact developer support to reconcile the build outcome. Do not reset data or submit duplicate work.';
+      next = 'Await administrator approval or rejection. Keep developing with nexia dev; review does not restrict editing or execution.';
       break;
     case 'rejected':
       next = 'Read the review feedback in Developers, address it, and submit a new version tag. Do not move the old tag.';

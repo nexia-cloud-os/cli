@@ -11,9 +11,9 @@ import { fileURLToPath } from 'node:url';
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
-test('database reset and reference catalog are not exposed as public commands', async () => {
+test('database reset uses the rollback command vocabulary and rejects reference catalog', async () => {
   const { parseCommand } = await import('../src/commands.js');
-  assert.throws(() => parseCommand(['db', 'reset', '--yes']));
+  assert.equal(parseCommand(['db', 'reset', '--yes']).name, 'db reset');
   assert.throws(() => parseCommand(['db', 'references']));
 });
 
@@ -92,7 +92,7 @@ test('db lifecycle rejects a locally linked project that differs from the approv
   const options = { cwd: appRoot, env: { ...process.env, NEXIA_CONFIG_HOME: root } };
   for (const args of [
     ['db', 'status'], ['db', 'migrate', '--yes'], ['db', 'seed', 'sample', '--yes'],
-  ]) await assert.rejects(execute(process.execPath, [cli, ...args], options), /linked to another project/);
+  ]) await assert.rejects(execute(process.execPath, [cli, ...args], options), error => { assert.match(error.stdout, /linked to another project/); return true; });
   assert.deepEqual(calls, Array.from({ length: 3 }, () => ['GET', '/developer-api/connection', '']));
 });
 
@@ -101,4 +101,84 @@ test('explicit database commands reject older platforms before uploading or muta
   await assert.rejects(runDatabaseOperation('/unused', { connection: { capabilities: {} } }, {
     command: 'migrate', requestId: '22222222-2222-4222-8222-222222222222', log: () => {},
   }), /No database request was sent/);
+});
+
+test('project DB commands run all Apps sequentially and retain per-App failures and request identities', async t => {
+  const { randomUUID } = await import('node:crypto');
+  const { bindWorkspace } = await import('../src/workspace.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-db-targets-'));
+  const project = randomUUID(), sandbox = randomUUID();
+  const apps = new Map([['a-broken', randomUUID()], ['people', randomUUID()]]);
+  const sources = new Map(), submitted = [];
+  let endpoint;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const input = raw ? JSON.parse(raw) : null;
+    let result;
+    if (req.url.endsWith('/connection')) {
+      result = { status: 'connected', project: { id: project }, sandbox: { id: sandbox, status: 'active' },
+        capabilities: { explicit_development_migrations: true, development_database_commands: 2 } };
+    } else if (req.url.endsWith('/v2/sources')) {
+      const revision = { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length };
+      sources.set(revision.id, input.app_id);
+      result = { revision };
+    } else if (req.method === 'POST') {
+      const appId = req.url.split('/')[4];
+      assert.equal(sources.get(input.source_revision_id), appId, 'each command uses only its selected App source');
+      submitted.push({ appId, requestId: input.request_id, command: input.command, options: input.options });
+      result = { operation: { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
+        database_command: input.command, database_options: input.options, ...(input.command === 'status' ? { database_result: { command: 'status', migrations: [{ name: '001_first', batch: 1, status: 'ran' }] } } : {}), developer_project_id: project, developer_sandbox_id: sandbox,
+        status: appId === apps.get('a-broken') ? 'failed' : 'completed',
+        ...(appId === apps.get('a-broken') ? { failure: { code: 'PREPARATION_FAILED', stage: 'migrate' } } : {}) } };
+    } else result = { operation: null };
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  endpoint = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  await bindWorkspace(root, { endpoint, project: { id: project, name: 'DB targets' } });
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'fixture-only' }));
+  for (const [key, id] of apps) {
+    const directory = path.join(root, key);
+    await mkdir(path.join(directory, '.nexia'), { recursive: true });
+    await writeFile(path.join(directory, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+    await writeFile(path.join(directory, '.nexia/app.json'), JSON.stringify({ endpoint, id, key }));
+    await writeFile(path.join(directory, 'composer.json'), JSON.stringify({ name: `example/${key}` }));
+    await writeFile(path.join(directory, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: key } }));
+  }
+  const options = { cwd: root, env: { ...process.env, NEXIA_CONFIG_HOME: root } };
+  await assert.rejects(execute(process.execPath, [cli, 'db', 'migrate', '--yes', '--json'], options), error => {
+    const result = JSON.parse(error.stdout);
+    assert.equal(error.code, 1);
+    assert.equal(result.failed, 1);
+    assert.deepEqual(result.results.map(item => [item.app, item.status]), [['a-broken', 'failed'], ['people', 'success']]);
+    assert.match(error.stderr, /Database migrate targets/);
+    return true;
+  });
+  assert.deepEqual(submitted.map(item => item.appId), [...apps.values()]);
+  assert.equal(new Set(submitted.map(item => item.requestId)).size, 2);
+  submitted.length = 0;
+  await execute(process.execPath, [cli, 'db', 'migrate', '--app=people', '--yes'], options);
+  assert.deepEqual(submitted.map(item => item.appId), [apps.get('people')]);
+  submitted.length = 0;
+  await execute(process.execPath, [cli, 'db', 'migrate', '--yes'], { ...options, cwd: path.join(root, 'people') });
+  assert.deepEqual(submitted.map(item => item.appId), [apps.get('people')]);
+  submitted.length = 0;
+  await assert.rejects(execute(process.execPath, [cli, 'db', 'migrate', '--yes', '--request-id', randomUUID()], options), /exactly one App/);
+  assert.equal(submitted.length, 0);
+  for (const [command, flags, wire, dbOptions] of [
+    ['reset', [], 'rollback_all', {}], ['fresh', ['--seed'], 'fresh', { seed: true }],
+    ['rollback', ['--step=2'], 'rollback', { step: 2 }], ['seed', ['--class=Trial\\DatabaseSeeder'], 'seeder', { class: 'Trial\\DatabaseSeeder' }],
+  ]) {
+    await execute(process.execPath, [cli, 'db', command, '--app=people', '--yes', '--json', ...flags], options);
+    assert.equal(submitted.at(-1).command, wire);
+    assert.deepEqual(submitted.at(-1).options, dbOptions);
+  }
+  const status = await execute(process.execPath, [cli, 'db', 'status', '--app=people', '--json'], options);
+  assert.equal(JSON.parse(status.stdout).database_result.migrations[0].batch, 1);
+
 });

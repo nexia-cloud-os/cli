@@ -1,15 +1,19 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request } from './connection.js';
-import { preparationFailureDetails, preparationLocation, preparationRecoveryGuidance } from './preparation-failure.js';
+import { preparationFailureDetails, preparationLocation, preparationNextAction } from './preparation-failure.js';
 import { syncSource } from './sync.js';
 
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 
 /** Apply an explicit, immutable local snapshot; source watching never authorizes migrations. */
-export async function runDatabaseOperation(directory, binding, { command, fixture, requestId, log = console.log, signal }) {
+export async function runDatabaseOperation(directory, binding, { command, options = {}, fixture, requestId, log = console.log, signal }) {
   const { config, app, project, connection } = binding;
   if (connection.capabilities?.explicit_development_migrations !== true) {
     throw new Error('The platform needs an update for explicit development migrations. No database request was sent.');
+  }
+  const modern = connection.capabilities?.development_database_commands === 2;
+  if ((!['migrate', 'seed'].includes(command) || Object.keys(options).length) && !modern) {
+    throw new Error('Update the platform and Manager to use these database commands. No database request was sent.');
   }
   const scope = { endpoint: config.endpoint, project_id: project.project_id, app_id: app.id };
   const route = `v2/apps/${app.id}/database-operations`;
@@ -22,9 +26,10 @@ export async function runDatabaseOperation(directory, binding, { command, fixtur
         || !uuid(operation.source_revision_id) || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(operation.status)) {
       throw new Error('Platform returned a conflicting database operation. Keep the request ID for recovery.');
     }
+    if (JSON.stringify(Object.entries(operation.database_options ?? {}).sort()) !== JSON.stringify(Object.entries(options).sort())) throw new Error('Platform returned different database options.');
     return operation;
   };
-  log(`Database request: ${requestId}. If interrupted, recover with --request-id ${requestId}.`);
+  log(`Database request: ${requestId}. If interrupted, resume waiting with --request-id ${requestId}.`);
   try {
     let operation = (await request(config, `${route}?request_id=${requestId}`, { signal: stopped })).operation;
     if (operation) validate(operation);
@@ -36,7 +41,7 @@ export async function runDatabaseOperation(directory, binding, { command, fixtur
         if (selected.endpoint !== config.endpoint || selected.token !== config.token) throw new Error('Login changed. No database request was sent with the new connection.');
         try {
           const result = await request(config, route, { method: 'POST', signal: stopped, body: {
-            command, ...(fixture ? { fixture_key: fixture } : {}), request_id: requestId,
+            command, ...(modern ? { options } : {}), ...(fixture ? { fixture_key: fixture } : {}), request_id: requestId,
             writer_session: requestId, source_revision_id: revision.id,
           } });
           operation = validate(result.operation);
@@ -66,12 +71,16 @@ export async function runDatabaseOperation(directory, binding, { command, fixtur
     if (operation.status !== 'completed') {
       const next = operation.status === 'failed' && (operation.retry_allowed || !operation.started_at)
         ? 'Fix the reported source error, then run the database command again with a new request ID.'
-        : preparationRecoveryGuidance(operation);
-      throw new Error(`${command}: ${operation.status} (${operation.id}).\n${preparationFailureDetails(operation.failure, operation.recovery_check)}${preparationLocation(operation, config.endpoint)}${next}`);
+        : preparationNextAction(operation);
+      throw Object.assign(new Error(`${command}: ${operation.status} (${operation.id}).\n${preparationFailureDetails(operation.failure, operation.recovery_check)}${preparationLocation(operation, config.endpoint)}${next}${operation.database_result?.error ? `\n${formatDatabaseError(operation.database_result.error)}` : ''}`), { database_result: operation.database_result });
     }
-    return { operation, request_id: requestId };
+    return { operation, request_id: requestId, ...(command === 'status' ? { last_operation: (await request(config, route, { signal: stopped })).operation } : {}), ...(operation.database_result ? { database_result: operation.database_result } : {}) };
   } catch (error) {
-    if (stopped.aborted) throw new Error(`Stopped waiting for database request ${requestId}; it may still be running. Check nexia db status or recover with --request-id ${requestId}.`);
+    if (stopped.aborted) throw new Error(`Stopped waiting for database request ${requestId}; it may still be running. Check nexia db status or resume waiting with --request-id ${requestId}.`);
     throw error;
   }
+}
+
+export function formatDatabaseError(error) {
+  return `${error.file ?? ''}${error.line ? `:${error.line}` : ''}: ${error.kind}${error.object ? ` (${error.object})` : ''}${error.sqlstate ? ` [${error.sqlstate}]` : ''}. ${error.outcome === 'rolled_back' ? 'This migration transaction was rolled back.' : 'The database outcome is not confirmed; inspect the schema before retrying.'}`;
 }
