@@ -96,6 +96,26 @@ test('completed failed checks offer a new immutable attempt only when the server
   }
 });
 
+test('assembly reconciliation waits without replacing the submission or suggesting a premature retry', () => {
+  const submission = { id: 'original-id', tag: 'v1.0.0', status: 'failed', failure: 'assembly_failed',
+    retry_blocked_reason: 'worker_reconciliation' };
+  for (const retryable of [false, true]) {
+    for (const retry_ready of [false, true, undefined]) {
+      const output = formatSubmission({ submission: { ...submission, retryable, retry_ready } });
+      assert.match(output, /Failure: assembly_failed/);
+      assert.match(output, /verifying whether the previous build execution has stopped/);
+      assert.match(output, /do not create a new tag or duplicate submission/);
+      assert.match(output, /nexia submit status original-id/);
+      assert.doesNotMatch(output, /nexia submit retry|correct the source|submit a new version tag/);
+    }
+  }
+  const ready = formatSubmission({ submission: { ...submission, retryable: true, retry_ready: true,
+    retry_kind: 'assembly_rebuild', retry_blocked_reason: null } });
+  assert.match(ready, /Retry the existing submission: nexia submit retry original-id/);
+  const codeFailure = formatSubmission({ submission: { ...submission, retryable: false, retry_blocked_reason: null } });
+  assert.match(codeFailure, /correct the source, and submit a new version tag/);
+});
+
 
 test('submission failures show bounded reasons and human review never asks for development recovery', () => {
   const submission = { id: '22222222-2222-4222-8222-222222222222', status: 'failed', tag: 'v1.0.0' };
