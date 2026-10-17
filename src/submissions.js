@@ -97,7 +97,9 @@ export function formatSubmission(result) {
       next = 'Published. Check nexia status or contact the operator for deployment availability; publication does not confirm deployment or installation.';
       break;
     case 'failed':
-      if (submission.retryable && submission.retry_ready === false) {
+      if (submission.retry_blocked_reason === 'worker_reconciliation') {
+        next = 'The platform is verifying whether the previous build execution has stopped. Check this submission later; do not create a new tag or duplicate submission. No administrator approval is required.';
+      } else if (submission.retryable && submission.retry_ready === false) {
         next = submission.retry_blocked_reason === 'artifact_toolchain_not_ready'
           ? 'The platform test environment correction is pending. Check this submission again after it is applied; do not submit again.'
           : 'Retry is not ready. Check the submission in Developers before taking further action.';
