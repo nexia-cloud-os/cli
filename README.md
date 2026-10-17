@@ -77,6 +77,10 @@ Run `nexia update` to check the npm alpha channel and confirm an update.
 `nexia update --no-interactive --yes` explicitly authorizes installation in automation.
 The installer verifies that this CLI belongs to the active npm global installation,
 installs the exact version shown, and asks you to rerun your original command.
+After installation, the terminal shows a short excerpt from that version's GitHub
+release notes and a link to the full description. `--dry-run` previews the notes
+without installing. Notes describe the target release, not an aggregate of skipped
+versions. Missing notes, timeouts, or GitHub rate limits do not fail the update.
 It does not rerun business operations automatically or use sudo.
 For other package managers, source checkouts, or Windows, use your original
 installation method; npm users can always run `npm install -g @nexia/cli@alpha`.
