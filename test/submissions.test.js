@@ -85,3 +85,13 @@ test('preflight retry guidance waits for corrected toolchain and preserves submi
   assert.match(ready, /no administrator approval required/);
   assert.doesNotMatch(ready, /correction is pending/);
 });
+test('completed failed checks offer a new immutable attempt only when the server confirms readiness', () => {
+  const submission = { id: 'receipt-id', tag: 'v1.0.0', status: 'built', retryable: true, retry_kind: 'toolchain_rebuild', retry_ready: true };
+  assert.match(formatSubmission({ submission }), /nexia submit retry receipt-id/);
+  assert.match(formatSubmission({ submission }), /previous results are preserved/);
+  for (const retry_ready of [false, undefined]) {
+    const output = formatSubmission({ submission: { ...submission, retry_ready } });
+    assert.match(output, /not ready/);
+    assert.doesNotMatch(output, /nexia submit retry/);
+  }
+});

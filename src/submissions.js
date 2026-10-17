@@ -65,6 +65,12 @@ export function formatSubmission(result) {
       next = 'Build is pending or running. Check status later; do not submit again.';
       break;
     case 'built':
+      if (submission.retryable && submission.retry_kind === 'toolchain_rebuild') {
+        next = submission.retry_ready === true
+          ? `Run all checks again with the corrected platform toolchain: nexia submit retry ${submission.id}. The App version, source and previous results are preserved; no administrator approval is required to retry.`
+          : 'The platform test environment is not ready for another attempt. Check this submission later; do not create a new tag or duplicate submission.';
+        break;
+      }
       next = review?.ready_for_human_review
         ? 'Checks passed. Await administrator review; approval and publication are separate.'
         : 'Checks are incomplete. Inspect the checks and feedback in Developers before retrying or changing code.';
