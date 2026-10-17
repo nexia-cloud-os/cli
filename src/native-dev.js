@@ -4,7 +4,7 @@ import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
 import { message } from './input.js';
 import { randomUUID } from 'node:crypto';
-import { preparationFailureDetails, preparationLocation, preparationRecoveryGuidance } from './preparation-failure.js';
+import { preparationFailureDetails, preparationLocation, preparationNextAction } from './preparation-failure.js';
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
@@ -39,12 +39,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   const scope = { endpoint: config.endpoint, project_id: binding.project_id, app_id: identity.id };
   const consoleUrl = new URL(`/projects/${scope.project_id}/development#project-apps`, config.endpoint);
   function preparationFailure(operation) {
-    const retryable = operation.status === 'failed' && (!operation.started_at || operation.retry_allowed === true);
-    const next = retryable
-      ? 'Fix the reported error, wait for shutdown to finish, then restart nexia dev in the same project folder.'
-      : preparationRecoveryGuidance(operation);
-    return Object.assign(new Error(`App preparation ${operation.status}: ${operation.id}.\n${preparationFailureDetails(operation.failure, operation.recovery_check)}${preparationLocation(operation, config.endpoint)}${next} Source, .nexia state and data were retained; no automatic retry was started.\nConsole: ${consoleUrl.href}`), {
-      code: retryable ? 'APP_PREPARATION_FAILED' : 'APP_PREPARATION_REVIEW_REQUIRED',
+    return Object.assign(new Error(`App execution failed: ${operation.id}.\n${preparationFailureDetails(operation.failure, operation.recovery_check)}${preparationLocation(operation, config.endpoint)}${preparationNextAction(operation)}\nConsole: ${consoleUrl.href}`), {
+      code: 'APP_PREPARATION_FAILED',
     });
   }
   if (!uuid(scope.project_id) || !uuid(scope.app_id) || binding.endpoint !== config.endpoint || identity.endpoint !== config.endpoint) throw new Error('App bindings do not match this platform. Run nexia login and project nexia dev.');
@@ -79,7 +75,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     await rename(temporary, path.join(local, 'runtime.json'));
     state = next;
   }
-  let lastStatus, quietDigest = null, platformCheckedAt = 0;
+  let lastStatus, lastDatabaseStatus, quietDigest = null, platformCheckedAt = 0, uploadedSource = null;
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
@@ -93,7 +89,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   try {
     while (!signal?.aborted) {
       try {
-        build?.check();
+        try { build?.check(); }
+        catch (error) { await build.close(); await preview?.close(); build = null; preview = null; connectionChecked = false; throw error; }
         if (runtimeLogs && runtimeLogs.operation !== browserRuntime?.operation_id) {
           await runtimeLogs.close(); runtimeLogs = null;
         }
@@ -103,7 +100,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         const currentApp = await readLocal('app.json');
         if (currentProject.endpoint !== scope.endpoint || currentApp.endpoint !== scope.endpoint
           || currentProject.project_id !== scope.project_id || currentApp.id !== scope.app_id) {
-          throw new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.');
+          throw Object.assign(new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.'), { code: 'APP_BINDING_CHANGED' });
         }
         // Keep local edit detection responsive while reducing unchanged remote status reads.
         if (browserRuntime && quietDigest && Date.now() - platformCheckedAt < Math.min(15000, interval * 3)
@@ -113,34 +110,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           continue;
         }
         platformCheckedAt = Date.now();
-        const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
-        if (databaseOperation) {
-          if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
-              || databaseOperation.developer_sandbox_id !== scope.sandbox_id
-              || !['migrate', 'seed', 'reset'].includes(databaseOperation.database_command)
-              || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(databaseOperation.status)) {
-            throw new Error('Platform returned a conflicting App database operation.');
-          }
-          if (databaseOperation.status === 'needs_review') throw preparationFailure(databaseOperation);
-          if (['queued', 'running'].includes(databaseOperation.status)) {
-            browserRuntime = null;
-            const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
-            if (lastStatus !== status) {
-              if (reporter) task(databaseOperation.status === 'queued' ? 'pending' : 'running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
-              else log(`Database ${databaseOperation.database_command}: ${databaseOperation.status}. Source watching will resume after this operation finishes.`);
-            }
-            lastStatus = status;
-            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
-            continue;
-          }
-        }
-        if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
-          // The same session can safely renew its lease after a lost response.
-          const response = await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession } });
-          if (response.writer?.app_id !== scope.app_id || response.writer.sandbox_id !== scope.sandbox_id
-            || !Number.isSafeInteger(response.writer.generation) || response.writer.generation < 1) throw new Error('Invalid development writer lease.');
-          writer = response.writer;
-          writerCheckedAt = Date.now();
+        const edited = await sourceSnapshot(directory);
+        if (uploadedSource?.revision.digest !== edited.digest) {
+          uploadedSource = await syncSource(directory, { log: () => {}, config, scope });
         }
         if (!connectionChecked) {
           const connection = await request(config, 'connection');
@@ -176,6 +148,39 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           }
           task('running', 'Checking development execution…');
           connectionChecked = true;
+        }
+        const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
+        if (databaseOperation) {
+          if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
+              || databaseOperation.developer_sandbox_id !== scope.sandbox_id
+              || !['migrate', 'seed', 'reset'].includes(databaseOperation.database_command)
+              || !['queued', 'running', 'completed', 'failed', 'needs_review'].includes(databaseOperation.status)) {
+            throw new Error('Platform returned a conflicting App database operation.');
+          }
+          if (['failed', 'needs_review'].includes(databaseOperation.status)) {
+            const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
+            if (lastDatabaseStatus !== status) task('error', preparationFailure(databaseOperation).message);
+            lastDatabaseStatus = status;
+          }
+          if (['queued', 'running'].includes(databaseOperation.status)) {
+            browserRuntime = null;
+            const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
+            if (lastStatus !== status) {
+              if (reporter) task(databaseOperation.status === 'queued' ? 'pending' : 'running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
+              else log(`Database ${databaseOperation.database_command}: ${databaseOperation.status}. Source watching continues while this database operation finishes.`);
+            }
+            lastStatus = status;
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
+          }
+        }
+        if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
+          // The same session can safely renew its lease after a lost response.
+          const response = await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession } });
+          if (response.writer?.app_id !== scope.app_id || response.writer.sandbox_id !== scope.sandbox_id
+            || !Number.isSafeInteger(response.writer.generation) || response.writer.generation < 1) throw new Error('Invalid development writer lease.');
+          writer = response.writer;
+          writerCheckedAt = Date.now();
         }
         // This authenticated endpoint rechecks the connection/project/sandbox each poll.
         let selection = await readExecutionSelection(config, scope);
@@ -230,6 +235,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             if (error.status === 410 && error.platformStatus === 'source_expired' && !state.operation_id) {
               // The server rejected an unbound, expired source; no operation was admitted.
               state = null;
+              uploadedSource = null;
               continue;
             }
             if (error.status === 409 && ['queued', 'running'].includes(error.blockingOperation?.status)
@@ -289,14 +295,15 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             }
             lastStatus = status;
           }
+          if (waitingForMigration && operation.retry_allowed && uploadedSource.revision.digest !== state.digest) cancelled = true;
           if (waitingForMigration && !cancelled && !renewWriter) {
             browserRuntime = null;
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
           }
-          if (operation.status === 'failed' && operation.retry_allowed === true && !waitingForMigration && !cancelled && !renewWriter) {
+          if (['failed', 'needs_review'].includes(operation.status) && operation.retry_allowed === true && !waitingForMigration && !cancelled && !renewWriter) {
             // A repaired source is a NEW request, never a replay of the failed
-            // operation. Only Core's explicit safe-retry attestation permits it.
+            // operation. Core must confirm that execution has stopped first.
             const repaired = await sourceSnapshot(directory);
             if (state.runtime_digest ? runtimeSourceDigest(repaired) !== state.runtime_digest : repaired.digest !== state.digest) cancelled = true;
             else {
@@ -327,7 +334,10 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             || (build && state.runtime_digest === runtimeDigest));
           if (!unchanged || operation?.stopped_at || renewWriter) {
             task('running', 'Uploading changed source…');
-            const { revision, runtime_digest } = await syncSource(directory, { log: () => {}, config, scope });
+            if (uploadedSource?.revision.digest !== snapshot.digest) {
+              uploadedSource = await syncSource(directory, { log: () => {}, config, scope });
+            }
+            const { revision, runtime_digest } = uploadedSource;
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.
             preparationFailed = false;
             await persist({ ...scope, digest: revision.digest, runtime_digest, revision_id: revision.id, request_id: randomUUID(), selection_revision: selection.revision, ...(writer ? { writer_generation: writer.generation } : {}) });
@@ -363,7 +373,17 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
-        if (error.status !== 429) throw error;
+        if ([401, 403].includes(error.status) || error.code === 'APP_BINDING_CHANGED') throw error;
+        if (error.status !== 429) {
+          browserRuntime = null;
+          const status = `error:${error.code || error.status || ''}:${error.message}`;
+          if (lastStatus !== status) {
+            task('error', `${error.message}\nWatching for changes. Fix the error; development stays open.`);
+          }
+          lastStatus = status;
+          await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
         browserRuntime = null;
         if (reporter) task('running', `Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)}s…`);
         else log(`Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)} seconds. Source, data and pending request retained.`);

@@ -128,9 +128,11 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
           worker.done = nativeDev(app.directory, { verbose, signal: controller.signal, previewHost: preview, interval: 10000,
             reporter: output, taskName: app.name, log: value => output.message(app.name, value, { verbose }),
           }).catch(error => reportFailure(app.directory, app.name, error, {
-            summary: 'Restart nexia dev required',
-            next: 'Keep the App folder and .nexia state, resolve the error, then restart nexia dev.',
-          }));
+            summary: 'App execution unavailable; watching continues',
+            next: 'Correct the reported issue. This App will be checked again automatically.',
+          })).finally(() => {
+            if (workers.get(app.directory) === worker) workers.delete(app.directory);
+          });
         } catch (error) {
           reportFailure(app.directory, app.name, error);
           if (error.status === 429) nextRegistration = Date.now() + error.retryAfterMs;

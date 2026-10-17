@@ -16,7 +16,7 @@ test('generated App build starts, rebuilds and stops with one dev watcher', asyn
     await writeFile(path.join(root, 'source.tmp'), content);
     await rename(path.join(root, 'source.tmp'), path.join(root, 'source.txt'));
   };
-  await saveSource('first');
+  await saveSource('broken');
   await writeFile(path.join(viteDir, 'index.js'), `
     const fs = require('node:fs');
     const path = require('node:path');
@@ -47,6 +47,12 @@ test('generated App build starts, rebuilds and stops with one dev watcher', asyn
   const build = await startFrontendBuild(root);
   const manifest = path.join(root, 'dist/frontend/.vite/manifest.json');
   try {
+    for (let i = 0; i < 100 && !build.failed(); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(build.failed(), true, 'initial compilation failure leaves the watcher available');
+    build.check();
+    await saveSource('first');
+    for (let i = 0; i < 100 && !build.ready(); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(build.ready(), true);
     assert.equal(await readFile(manifest, 'utf8'), 'first');
     assert.equal(await readFile(path.join(root, 'dist/frontend/index.js'), 'utf8'), 'first');
     const firstSnapshot = build.snapshot();

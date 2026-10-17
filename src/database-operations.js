@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request } from './connection.js';
-import { preparationFailureDetails, preparationLocation, preparationRecoveryGuidance } from './preparation-failure.js';
+import { preparationFailureDetails, preparationLocation, preparationNextAction } from './preparation-failure.js';
 import { syncSource } from './sync.js';
 
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
@@ -66,7 +66,7 @@ export async function runDatabaseOperation(directory, binding, { command, fixtur
     if (operation.status !== 'completed') {
       const next = operation.status === 'failed' && (operation.retry_allowed || !operation.started_at)
         ? 'Fix the reported source error, then run the database command again with a new request ID.'
-        : preparationRecoveryGuidance(operation);
+        : preparationNextAction(operation);
       throw new Error(`${command}: ${operation.status} (${operation.id}).\n${preparationFailureDetails(operation.failure, operation.recovery_check)}${preparationLocation(operation, config.endpoint)}${next}`);
     }
     return { operation, request_id: requestId };
