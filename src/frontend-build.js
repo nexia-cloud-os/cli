@@ -13,9 +13,7 @@ async function modified(file) {
 export async function startFrontendBuild(directory, { signal, verbose = false, log = console.log, onInvalidate = () => {}, onState = () => {} } = {}) {
   if (!(await modified(path.join(directory, 'vite.config.mjs')))) return null;
   const vite = path.join(directory, 'node_modules', 'vite', 'dist', 'node', 'index.js');
-  if (!(await modified(vite))) throw new Error('Frontend dependencies are missing. Run npm install in this App, then retry nexia dev.');
-  const manifest = path.join(directory, 'dist', 'frontend', '.vite', 'manifest.json');
-  const entry = path.join(directory, 'dist', 'frontend', 'index.js');
+  if (!(await modified(vite))) throw new Error('Frontend dependencies are missing. Run npm install in this App, while nexia dev keeps watching.');
   const worker = fileURLToPath(new URL('./frontend-build-worker.js', import.meta.url));
   const child = spawn(process.execPath, [worker, vite, directory, verbose ? 'verbose' : 'warnings'], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'warning']]) {
@@ -28,7 +26,7 @@ export async function startFrontendBuild(directory, { signal, verbose = false, l
     if (message?.phase === 'ready') { ready = true; failed = false; generation++; snapshot = message.snapshot; onState('ready'); }
   });
   child.once('error', error => { failure = error; });
-  child.once('exit', code => { failure = new Error(`Frontend build watcher stopped (${code}). Restart nexia dev after fixing the build.`); });
+  child.once('exit', code => { failure = new Error(`Frontend build watcher stopped (${code}). The development watcher will restart it automatically.`); });
   const close = async () => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     await new Promise(resolve => {
@@ -36,17 +34,6 @@ export async function startFrontendBuild(directory, { signal, verbose = false, l
       child.kill('SIGTERM');
     });
   };
-  try {
-    const started = Date.now();
-    while (!signal?.aborted) {
-      const current = await modified(manifest);
-      if (ready && current && (await modified(entry))) break;
-      if (failure) throw failure;
-      if (Date.now() - started > 120_000) throw new Error('Frontend build did not finish within two minutes. Check the Vite output.');
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    if (signal?.aborted) await close();
-    else if (failure) throw failure;
-    return signal?.aborted ? null : { close, ready: () => ready, failed: () => failed, generation: () => generation, snapshot: () => snapshot, check: () => { if (failure) throw failure; } };
-  } catch (error) { await close(); throw error; }
+  if (signal?.aborted) { await close(); return null; }
+  return { close, ready: () => ready, failed: () => failed, generation: () => generation, snapshot: () => snapshot, check: () => { if (failure) throw failure; } };
 }

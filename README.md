@@ -323,7 +323,7 @@ input, 130 cancellation. Request acceptance is not job completion.
 After authentication expires, run `nexia login` in the project. On lost project
 creation responses, rerun the same folder/name to resume approval. A saved pending
 approval is not a second project. On a source/build failure, fix the reported
-cause and restart `dev`; do not reset data as a repair shortcut.
+cause while `dev` keeps watching; do not reset data as a repair shortcut.
 
 ## Migration and retained internals
 
@@ -356,15 +356,14 @@ Never point it at a script inside the App being generated/checked.
 Find the exact terminal error in the [CLI troubleshooting guide](https://developers.nexia.to/docs/troubleshooting-common-installation-errors).
 It covers setup, project bindings, Vite/source uploads, HTTP errors, preparation,
 database requests, and submissions. `APP_PREPARATION_FAILED` identifies failures
-that never started or have an approved safe retry; `APP_PREPARATION_REVIEW_REQUIRED`
-requires an operator to verify the outcome. Keep the printed operation ID and
+in App execution; correct the reported cause while source watching stays open. Keep the printed operation ID and
 `.nexia` recovery state. Do not remove and restore App folders to bypass a failure.
 
 `dev` retries temporary connection failures, timeouts and HTTP 502/503/504 while
 synchronizing source or recovering a preparation. An uncertain preparation keeps
 its original request ID, including when local files change. Retry messages name
 the affected request; keep `.nexia` and let the existing process recover.
-Authorization failures and preparations requiring operator review still stop.
+Authorization failures still require valid login and project permission.
 
 Developer support: https://github.com/nexia-cloud-os/developer-support/issues.
 Include sanitized reproduction and package versions, never credentials or data.
@@ -526,28 +525,23 @@ Deploy the matching runtime image and Core API before the CLI. No new dependency
 or external logging service is required.
 
 
-### Preparation errors and recovery
+### Development execution errors
 
-A 409 preparation conflict identifies the blocking operation, its failure and a
-scoped Developers link. That link shows the failed source revision and retained
-evidence; `nexia db status` only shows the latest explicit database command and
-must not be used to conclude that a later development preparation succeeded.
+App errors are reported in the terminal and Developers console while `nexia dev`
+keeps watching and uploading source. Fix the reported code, dependency declaration
+or migration; changed source starts a new preparation after the previous execution
+has stopped. Failed database commands are never automatically replayed: correct
+the issue and run `nexia db migrate` or `nexia db seed <key>` explicitly.
 
-`APPLIED_MIGRATION_SOURCE_MISMATCH` means already-applied migration files are
-missing or changed in the uploaded source. Restore their original contents or
-use the current source, then add new migrations for subsequent changes. The
-matching Core/operator implementation checks stored source against migration
-history before App code runs. Older servers retain their existing diagnostics and
-retry rules. Dependency/catalog failures confirmed before database-capable execution
-can also be retried after correction and shutdown without administrator review.
-`needs_review` is execution recovery, not App publication review: an administrator
-must inspect uncertain database effects before approving another attempt.
+`needs_review` identifies a submitted App awaiting human review. It does not lock
+development. Failed submission checks include reasons; correct the App and submit
+a new Git tag. There is no development recovery command or administrator retry
+approval. Keep `.nexia`, existing data and migration history.
 
-While watching, a changed source after a Core-confirmed safe failure starts a new
-preparation request automatically. An unchanged failed source is not replayed.
-Uncertain outcomes still require review; after that approval, restart `nexia dev`.
-Use Developers to stop or resume remote development execution. These controls do
-not approve `needs_review`. Preserve `.nexia`, data and migration history.
+Applied migration files must retain their original contents. Use new migrations
+for subsequent changes. A partially applied nontransactional migration still
+requires its database effects to be corrected; keeping the watcher open does not
+mean that migration succeeded.
 
 Quiet development sessions keep checking local source at the normal interval but
 read unchanged remote status at most every 15 seconds. Source changes and writer
@@ -581,50 +575,10 @@ using its own configuration and setup. `--filter <pattern>` selects test names.
 This mode needs no PHP, Core checkout, login, or database; `--database` and
 `--testsuite` apply only to PHP tests. Test failures and empty suites fail the command.
 
-### Inspect a blocked development operation
-
-Use the operation ID printed by `nexia dev` or `nexia db status`:
-
-```sh
-nexia recover <operation-id>
-nexia recover <operation-id> --status
-```
-
-The first command asks the platform to inspect the **existing** execution. The
-second only reads progress. Neither replays App code nor changes its request ID.
-The output separates execution state, inspection progress, and permission to
-retry. Correct the reported source or SDK requirement, then retry explicitly only
-when the platform confirms it is safe. This is not App publication reapproval.
-Older platforms that lack recovery support require a platform update; deleting
-`.nexia` does not resolve an uncertain execution.
-
-If inspection offers `preserve_and_replace`, an explicit alternative is:
-
-```sh
-nexia recover <operation-id> --preserve-and-replace --confirm-preserve
-```
-
-This stops **all Apps in that development sandbox**, preserves its existing data
-and evidence in isolation, and provisions an **empty** replacement. It does not
-copy or reset the old database, retry the uncertain operation, or automatically
-start App code. Check recovery status until the replacement is ready.
+### SDK compatibility warnings
 
 SDK warnings identify actually used deprecated frontend aliases and their
 replacement APIs. Repeated watcher warnings are shown once per symbol. A newer
 SDK release alone does not mean an API is deprecated. No removal release is
 claimed when the SDK has not scheduled one; type-only and PHP annotations are
 not detected by the emitted-JavaScript import check.
-
-After preservation, export that App's retained data without operator access:
-
-```sh
-nexia recover <operation-id> --export-data ./preserved-app.jsonl.gz
-```
-
-The first call queues an export. Repeat the command when ready to download it;
-the CLI verifies its digest and never overwrites an existing file. The private
-JSONL gzip contains App table metadata, rows and retained source revisions, not
-other Apps, platform tables or credentials. It is a data export, not an automatic
-database restore. Export is bounded to 2 GiB uncompressed and ten minutes; a
-failed export leaves the original isolated data intact. Preserved sandboxes and
-sources are excluded from automatic deletion.

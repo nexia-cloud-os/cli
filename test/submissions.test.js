@@ -47,7 +47,7 @@ test('submission guidance follows state without suggesting unsafe retries or cla
   }
   assert.match(result('failed', { retryable: true }), /nexia submit retry receipt-id/);
   assert.doesNotMatch(result('failed', { retryable: false }), /nexia submit retry/);
-  assert.match(result('needs_review'), /reconcile.*Do not reset/);
+  assert.match(result('needs_review'), /Keep developing with nexia dev/);
   assert.match(result('approved'), /Await administrator publication/);
   assert.match(result('published'), /does not confirm deployment or installation/);
   for (const status of ['rejected', 'cancelled']) assert.match(result(status), /new version tag/);
@@ -94,4 +94,18 @@ test('completed failed checks offer a new immutable attempt only when the server
     assert.match(output, /not ready/);
     assert.doesNotMatch(output, /nexia submit retry/);
   }
+});
+
+
+test('submission failures show bounded reasons and human review never asks for development recovery', () => {
+  const submission = { id: '22222222-2222-4222-8222-222222222222', status: 'failed', tag: 'v1.0.0' };
+  const output = formatSubmission({ submission, review: { status: 'checks_incomplete', checks: [
+    { key: 'source_integrity', status: 'failed', details: { stage: 'source', reason: 'source_invalid', failure_code: 'private SQL secret' } },
+  ] } });
+  assert.match(output, /source_invalid/);
+  assert.doesNotMatch(output, /private SQL secret/);
+  assert.match(output, /new version tag/);
+  const waiting = formatSubmission({ submission: { ...submission, status: 'needs_review' } });
+  assert.match(waiting, /Keep developing with nexia dev/);
+  assert.doesNotMatch(waiting, /nexia recover/);
 });
