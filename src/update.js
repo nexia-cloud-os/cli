@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { readFile, writeFile, mkdir, realpath, lstat } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { onPath } from './setup.js';
 import { message } from './input.js';
@@ -46,6 +46,18 @@ export async function latestVersion(fetcher = fetch) {
   return data.version;
 }
 
+export async function releaseNotes(version, fetcher = fetch) {
+  if (!parts(version)) throw new Error('Invalid CLI release version.');
+  const response = await fetcher(`https://api.github.com/repos/nexia-cloud-os/cli/releases/tags/v${encodeURIComponent(version)}`, {
+    redirect: 'error', signal: AbortSignal.timeout(2000), headers: { Accept: 'application/vnd.github+json' },
+  });
+  if (!response.ok) throw new Error(`GitHub release: HTTP ${response.status}`);
+  const data = await response.json();
+  if (data.draft || data.tag_name !== `v${version}` || typeof data.body !== 'string') throw new Error('Invalid CLI release notes.');
+  // Release text is remote input; never allow terminal escape sequences or control characters.
+  return stripVTControlCharacters(data.body).replace(/\r\n/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').trim();
+}
+
 export async function installCli(version, { root = packageRoot, platform = process.platform, findNpm = () => onPath('npm'), run = promisify(execFile), start = spawn } = {}) {
   if (!parts(version)) throw new Error('Invalid CLI update version.');
   // shortcut: Windows uses manual npm updates until a native npm launcher is supported.
@@ -67,7 +79,7 @@ export async function installCli(version, { root = packageRoot, platform = proce
 }
 
 export async function updateCli(input, options = {}, {
-  automatic = false, fresh = false, current, getLatest = latestVersion, installVersion = installCli,
+  automatic = false, fresh = false, current, getLatest = latestVersion, installVersion = installCli, getReleaseNotes = releaseNotes,
   cacheFile = path.join(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'update.json'),
   now = Date.now(), env = process.env, log = console.error, onChecked = () => {},
   installedGlobally = path.normalize(packageRoot).replace(/[\\/]$/, '').endsWith(path.join('node_modules', '@nexia', 'cli')),
@@ -109,11 +121,24 @@ export async function updateCli(input, options = {}, {
     if (action !== 'update') return false;
   }
   log(`${summary}\nnpm install -g @nexia/cli@${latest}`);
-  if (options['dry-run']) return false;
+  if (options['dry-run']) { await showReleaseNotes(); return false; }
   input.close();
   await installVersion(latest);
   log(message(`Updated to ${latest}. Run your command again.`, `${latest} 버전으로 업데이트했습니다. 명령을 다시 실행하세요.`));
+  await showReleaseNotes();
   return true;
+
+  async function showReleaseNotes() {
+    let notes;
+    try { notes = await getReleaseNotes(latest); } catch { /* Release notes must not turn a successful update into a failure. */ }
+    const url = `https://github.com/nexia-cloud-os/cli/releases/tag/v${encodeURIComponent(latest)}`;
+    if (!notes) {
+      log(`Release notes unavailable. See: ${url}`);
+      return;
+    }
+    const preview = notes.split('\n').slice(0, 12).join('\n').slice(0, 1600);
+    log(`What's new in ${latest}:\n${preview}${preview.length < notes.length ? '\n…' : ''}\nRelease notes: ${url}`);
+  }
 
   async function saveCache() {
     try {

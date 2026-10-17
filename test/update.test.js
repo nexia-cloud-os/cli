@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isNewer, latestVersion, updateCli, installCli } from '../src/update.js';
+import { isNewer, latestVersion, releaseNotes, updateCli, installCli } from '../src/update.js';
 import { createInput, Cancelled } from '../src/input.js';
 import { parseCommand, helpText } from '../src/commands.js';
 
@@ -15,7 +15,7 @@ async function fixture(t, answer = 'skip', options = {}) {
   const calls = { lookups: 0, installs: [], questions: [], logs: [] };
   const input = createInput(options, { input: { isTTY: true }, output: { isTTY: true, write() {} }, ask: async question => { calls.questions.push(question); return answer; } });
   const settings = { automatic: true, current: '0.2.0-alpha.7', cacheFile: path.join(directory, 'update.json'), now: day * 100, env: {}, installedGlobally: true,
-    getLatest: async () => { calls.lookups++; return '0.2.0-alpha.10'; }, installVersion: async version => { calls.installs.push(version); }, log: text => calls.logs.push(text) };
+    getLatest: async () => { calls.lookups++; return '0.2.0-alpha.10'; }, getReleaseNotes: async () => '- Improved update guidance.', installVersion: async version => { calls.installs.push(version); }, log: text => calls.logs.push(text) };
   return { input, settings, calls };
 }
 
@@ -44,6 +44,54 @@ test('registry request is bounded and validates the package and version', async 
   await assert.rejects(latestVersion(async url => url.endsWith('/alpha')
     ? { ok: true, json: async () => ({ name: '@nexia/cli', version: '0.2.0-alpha.10' }) }
     : { ok: false, status: 404 }), /not installable yet/);
+});
+
+test('release notes validate the target and strip terminal controls', async () => {
+  const version = '0.2.0-alpha.10';
+  const response = data => ({ ok: true, json: async () => data });
+  assert.equal(await releaseNotes(version, async (url, options) => {
+    assert.equal(url, `https://api.github.com/repos/nexia-cloud-os/cli/releases/tags/v${version}`);
+    assert.equal(options.redirect, 'error');
+    assert.ok(options.signal instanceof AbortSignal);
+    return response({ tag_name: `v${version}`, body: '\u001b[31mFixed\u001b[0m\r\n- Safe\u0007' });
+  }), 'Fixed\n- Safe');
+  for (const data of [{ tag_name: 'v1.0.0', body: 'wrong' }, { tag_name: `v${version}`, body: 42 }, { tag_name: `v${version}`, body: 'draft', draft: true }]) {
+    await assert.rejects(releaseNotes(version, async () => response(data)), /Invalid/);
+  }
+  await assert.rejects(releaseNotes('--bad', () => assert.fail('must not fetch')), /Invalid/);
+  await assert.rejects(releaseNotes(version, async () => ({ ok: false, status: 404 })), /404/);
+});
+
+test('successful updates and dry runs display bounded release notes', async t => {
+  for (const dryRun of [false, true]) {
+    const { input, settings, calls } = await fixture(t);
+    await updateCli(input, { 'dry-run': dryRun }, { ...settings, automatic: false, getReleaseNotes: async version => {
+      assert.equal(version, '0.2.0-alpha.10');
+      assert.equal(calls.installs.length, dryRun ? 0 : 1);
+      return '- Fixed update guidance.\n'.repeat(20);
+    } });
+    assert.match(calls.logs.at(-1), /What's new in 0\.2\.0-alpha\.10:/);
+    assert.match(calls.logs.at(-1), /Fixed update guidance/);
+    assert.match(calls.logs.at(-1), /\n…\nRelease notes: https:\/\/github.com\/nexia-cloud-os\/cli\/releases\/tag\/v0.2.0-alpha.10/);
+    assert.equal(calls.logs.at(-1).split('\n').length, 15);
+  }
+});
+
+test('missing or unavailable release notes never fail a successful update', async t => {
+  for (const getReleaseNotes of [async () => '', async () => { throw new Error('offline'); }]) {
+    const { input, settings, calls } = await fixture(t, 'update');
+    assert.equal(await updateCli(input, {}, { ...settings, getReleaseNotes }), true);
+    assert.match(calls.logs.at(-1), /Release notes unavailable/);
+    assert.deepEqual(calls.installs, ['0.2.0-alpha.10']);
+  }
+});
+
+test('skipped updates and failed installations never fetch release notes', async t => {
+  const { input, settings } = await fixture(t);
+  const getReleaseNotes = () => assert.fail('must not fetch');
+  assert.equal(await updateCli(input, {}, { ...settings, getReleaseNotes }), false);
+  await assert.rejects(updateCli(input, {}, { ...settings, automatic: false, getReleaseNotes,
+    installVersion: async () => { throw new Error('npm failed'); } }), /npm failed/);
 });
 
 test('skip continues the command and cached version avoids another lookup', async t => {
