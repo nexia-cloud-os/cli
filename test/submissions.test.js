@@ -109,3 +109,10 @@ test('submission failures show bounded reasons and human review never asks for d
   assert.match(waiting, /Keep developing with nexia dev/);
   assert.doesNotMatch(waiting, /nexia recover/);
 });
+
+
+test('submission migration history failures identify each changed or removed file', () => {
+  const output = formatSubmission({ submission: { id: '22222222-2222-4222-8222-222222222222', status: 'failed', tag: 'v2.0.0' }, review: { checks: [{ key: 'migration_history', status: 'failed', details: { findings: [{ migration: '001_employees', reason: 'changed' }, { migration: '002_sites', reason: 'removed' }] } }] } });
+  assert.match(output, /001_employees.php: changed since publication/);
+  assert.match(output, /002_sites.php: removed since publication/);
+});

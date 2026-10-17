@@ -24,7 +24,7 @@ test('command errors link to troubleshooting without corrupting JSON output', as
 
 test('public commands have no retired aliases and reject unsupported or contradictory options', () => {
   for (const name of ['constructor', 'toString', '__proto__', 'init', 'create-project', 'link-project', 'link', 'validate', 'make:resource', 'make:page', 'sync', 'mcp', 'fixtures', 'resources', 'app', 'apps', 'config', 'doctor', 'deploy', 'submissions']) assert.throws(() => parseCommand([name]));
-  for (const args of [['db', 'reset'], ['make', 'resource', '--navigation', '--no-navigation'], ['make', 'page', '--no-navigation', '--sort', '2'], ['dev', '--profile', 'work'], ['create', 'app', '--force'], ['submit', '--yes=false'], ['dev', '--port=']]) assert.throws(() => parseCommand(args));
+  for (const args of [['db', 'reset', '--database', 'other'], ['make', 'resource', '--navigation', '--no-navigation'], ['make', 'page', '--no-navigation', '--sort', '2'], ['dev', '--profile', 'work'], ['create', 'app', '--force'], ['submit', '--yes=false'], ['dev', '--port=']]) assert.throws(() => parseCommand(args));
   assert.deepEqual(parseCommand(['make', 'page', 'Summary', '--no-record']).options, { record: false });
   assert.deepEqual(parseCommand(['create', 'app', 'people', '--prerequisite', 'one', '--prerequisite=two']).options.prerequisite, ['one', 'two']);
   assert.equal(parseCommand(['help', 'make', 'resource']).options.help, true);
@@ -84,4 +84,14 @@ test('CLI messages and every help page stay English under a Korean terminal loca
   assert.equal(output.prompt, 'Continue?');
   assert.equal(output.cancelled, 'Cancelled');
   assert.doesNotMatch(output.help.join('\n'), /[가-힣]/);
+});
+
+
+test('database options follow each Laravel command and reject foreign connections', () => {
+  assert.equal(parseCommand(['db', 'migrate', '--step']).options.step, true);
+  assert.doesNotMatch(helpText('db migrate'), /--step <value>/);
+  assert.match(helpText('db rollback'), /--step <value>/);
+  assert.equal(parseCommand(['db', 'rollback', '--step=2']).options.step, '2');
+  assert.equal(parseCommand(['db', 'rollback', '--batch=3']).options.batch, '3');
+  for (const args of [['rollback', '--step=0'], ['rollback', '--step=1', '--batch=2'], ['refresh', '--class=Bad'], ['migrate', '--database=other'], ['reset', '--path=../other']]) assert.throws(() => parseCommand(['db', ...args]));
 });

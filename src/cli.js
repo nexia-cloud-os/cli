@@ -303,29 +303,50 @@ try {
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
     } else if (name.startsWith('db ')) {
-      const action = name.split(' ')[1], [directory] = await appTargets(options, input);
-      const binding = await databaseBinding(directory), route = `v2/apps/${binding.app.id}/database-operations`;
-      if (action === 'status') {
-        const result = await request(binding.config, route);
-        output(options, result, result.operation ? `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})` : 'No App database operation has been requested.');
-      } else {
-        let fixture;
-        if (action === 'seed') {
-          if (argument) fixture = await input.text('key', 'Declared fixture key', { value: argument, hint: 'nexia db seed <key>', required: true, validate: value => value.length <= 160 });
-          else {
-            const result = await request(binding.config, 'fixtures');
-            const fixtures = result.apps.find(app => app.app_key === binding.app.key)?.fixtures || [];
-            if (!fixtures.length) throw new InputError('This App exposes no development fixture keys in the active sandbox.');
-            fixture = await input.choice('key', message('Choose development data', '개발 데이터를 선택하세요'), fixtures, undefined, { hint: 'nexia db seed <key>' });
-          }
-        }
-        const id = options['request-id'] || randomUUID();
-        if (!isUuid(id)) throw new InputError('--request-id must be a UUID.');
-        await input.confirm(`App: ${directory}\nDatabase operation: ${action}${fixture ? ` (${fixture})` : ''}\nRequest: ${id}`);
-        input.close();
-        const result = await runDatabaseOperation(directory, binding, { command: action, fixture, requestId: id, log });
-        output(options, result, `${result.operation.database_command}: completed (${result.operation.id})\nDatabase changes applied. nexia dev can remain running.`);
+      const action = name.split(' ')[1], directories = await appTargets(options, input, { all: true });
+      if (options['request-id'] && (!isUuid(options['request-id']) || directories.length !== 1)) {
+        throw new InputError('--request-id requires a UUID and exactly one App. Select that App with --app.');
       }
+      log(`Database ${action} targets:\n${directories.map(directory => `  ${directory}`).join('\n')}`);
+      const plan = [];
+      for (const directory of directories) {
+        try {
+          const binding = await databaseBinding(directory);
+          let fixture;
+          if (action === 'seed' && argument) {
+            fixture = await input.text('key', 'Declared fixture key', { value: argument, hint: 'nexia db seed <key>', required: true, validate: value => value.length <= 160 });
+          }
+          plan.push({ directory, binding, fixture, requestId: options['request-id'] || randomUUID() });
+        } catch (error) {
+          if (error instanceof Cancelled) throw error;
+          plan.push({ directory, error });
+        }
+      }
+      const executable = plan.filter(item => !item.error);
+      if (action !== 'status' && executable.length) {
+        await input.confirm(`Database operation: ${action}${['fresh', 'reset', 'refresh', 'rollback'].includes(action) ? ' — selected App data may be deleted' : ''}\n${executable.map(item => `App: ${item.binding.app.key}${item.fixture ? ` (${item.fixture})` : ''}\nRequest: ${item.requestId}`).join('\n')}`);
+      }
+      input.close();
+      const results = [];
+      for (const item of plan) {
+        const app = item.binding?.app.key || path.basename(item.directory);
+        try {
+          if (item.error) throw item.error;
+          const result = await runDatabaseOperation(item.directory, item.binding, { command: action === 'reset' ? 'rollback_all' : action === 'seed' && !item.fixture ? 'seeder' : action, options: Object.fromEntries(['step', 'batch', 'pretend', 'seed', 'class'].filter(key => options[key] !== undefined).map(key => [key, ['step', 'batch'].includes(key) && typeof options[key] === 'string' ? Number(options[key]) : options[key]])), fixture: item.fixture, requestId: item.requestId, log: value => log(`[${app}] ${value}`) });
+          results.push({ app, directory: item.directory, status: 'success', ...result });
+        } catch (error) {
+          if (error instanceof Cancelled) throw error;
+          results.push({ app, directory: item.directory, status: 'failed', ...(item.requestId ? { request_id: item.requestId } : {}),
+            ...(error.database_result ? { database_result: error.database_result } : {}),
+            error: { code: error.code || (error.status ? 'PLATFORM_ERROR' : 'OPERATION_FAILED'), message: error.message } });
+        }
+      }
+      const failed = results.filter(result => result.status === 'failed').length;
+      const summary = results.map(result => result.database_result?.statements?.length ? `${result.app}:\n${result.database_result.statements.join('\n')}` : result.database_result?.migrations ? `${result.app}:${result.database_result.inventory_complete === false ? '\nApp migration declarations could not be loaded. Showing database history and conventional migration files; custom pending paths may be incomplete.' : ''}\nStatus  Batch Migration\n${result.database_result.migrations.map(row => `${row.status === 'ran' ? 'Ran' : 'Pending'}  ${row.batch ?? '-'}  ${row.name}${row.diagnostic ? ` (${row.diagnostic})` : ''}`).join('\n')}` : result.error ? `${result.app}: failed — ${result.error.message}`
+        : `${result.app}: ${result.operation ? `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})` : 'No App database operation has been requested.'}`).join('\n');
+      output(options, { ...(results.length === 1 ? results[0] : {}), command: action, results, failed },
+        `${summary}${action === 'status' ? results.filter(row => row.last_operation).map(row => `\n${row.app}: last command ${row.last_operation.database_command} — ${row.last_operation.status}${row.last_operation.database_result?.error ? ` (${row.last_operation.database_result.error.kind})` : ''}`).join('') : ''}\n${results.length - failed} succeeded, ${failed} failed.`);
+      if (failed) process.exitCode = 1;
     } else if (name === 'submit') {
       const [directory] = await appTargets(options, input);
       const tag = await input.text('tag', message('Existing Git version tag (e.g. v1.0.0)', '기존 Git 버전 태그 (예: v1.0.0)'), { required: true, validate: isVersionTag });

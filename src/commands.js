@@ -20,18 +20,25 @@ export const commands = {
   ps: { description: ['List local development sessions, ports and Apps', '로컬 개발 세션·포트·앱 조회'], options: ['json'] },
   stop: { description: ['Stop local development for this project; retain sandbox data', '현재 프로젝트의 로컬 개발 종료·샌드박스 데이터 보존'], options: ['port', 'json'] },
   status: { description: ['Show authentication, project and sandbox status', '인증·프로젝트·샌드박스 상태 조회'], options: ['json'] },
-  'db migrate': { description: ['Apply current App migrations and wait for completion', '현재 앱 마이그레이션 적용 및 완료 대기'], options: ['app', 'request-id', 'json', 'yes'] },
-  'db seed': { argument: 'key', description: ['Run declared development data for this App', '현재 앱의 선언된 개발 데이터 실행'], options: ['app', 'request-id', 'json', 'yes'] },
-  'db status': { description: ['Inspect the App database operation', '앱 DB 작업 상태 조회'], options: ['app', 'json'] },
+  'db migrate': { description: ['Apply current App migrations and wait for completion', '현재 앱 마이그레이션 적용 및 완료 대기'], options: ['app', 'request-id', 'json', 'yes', 'step', 'pretend'] },
+  'db seed': { argument: 'key', description: ['Run an App Seeder or a named fixture', '앱 Seeder 또는 지정한 fixture 실행'], options: ['app', 'request-id', 'json', 'yes', 'class'] },
+  'db status': { description: ['Inspect migration files and batches', '마이그레이션 파일별 상태·배치 조회'], options: ['app', 'json', 'request-id'] },
+  'db rollback': { description: ['Roll back the last batch or selected range', '마지막 배치 또는 지정 범위 롤백'], options: ['app', 'request-id', 'json', 'yes', 'step', 'batch', 'pretend'] },
+  'db reset': { description: ['Roll back all migrations using down()', '모든 마이그레이션을 down()으로 롤백'], options: ['app', 'request-id', 'json', 'yes', 'pretend'] },
+  'db refresh': { description: ['Roll back then migrate again', '롤백 후 마이그레이션 재실행'], options: ['app', 'request-id', 'json', 'yes', 'step', 'seed', 'class'] },
+  'db fresh': { description: ['Erase the selected development schemas and migrate', '선택한 개발 스키마 삭제 후 마이그레이션'], options: ['app', 'request-id', 'json', 'yes', 'seed', 'class'] },
   submit: { description: ['Submit an existing Git tag for review', '기존 Git 태그를 심사에 제출'], options: ['app', 'tag', 'request-id', 'no-browser', 'json', 'yes'] },
   'submit list': { description: ['List recent submissions for this project or App', '현재 프로젝트 또는 앱의 최근 제출 목록'], options: ['page', 'json'] },
   'submit status': { argument: 'submission-id', description: ['Choose a recent submission or inspect an ID', '최근 제출 선택 또는 ID로 상태 조회'], options: ['json'] },
   'submit cancel': { argument: 'submission-id', description: ['Cancel a cancellable submission', '취소 가능한 제출 취소'], options: ['json', 'yes'] },
   'submit retry': { argument: 'submission-id', description: ['Retry a retryable submission', '재시도 가능한 제출 재요청'], options: ['json', 'yes'] },
 };
-export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'seed', 'status'] };
-export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'database', 'frontend', 'navigation', 'record']);
+export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'status', 'rollback', 'reset', 'refresh', 'fresh', 'seed'] };
+export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'database', 'frontend', 'navigation', 'record', 'pretend', 'seed']);
 export const optionDescriptions = {
+  step: 'One batch per migration (migrate), or the number to roll back',
+  batch: 'Migration batch to roll back', pretend: 'Preview SQL without executing migrations',
+  seed: 'Run the App Seeder after migrations', class: 'App Seeder class name',
   frontend: 'Run the App’s Vitest frontend tests',
   database: 'Start and remove a disposable PostgreSQL database for this run',
   filter: 'Run tests matching this PHPUnit/Pest filter or Vitest test name',
@@ -46,7 +53,7 @@ export const optionDescriptions = {
   'record-owner': 'legal_entity or tenant', navigation: 'Publish a menu entry', record: 'Include record read/edit screens',
   'navigation-group': 'insights, management, operations, master-data, settings', 'navigation-subgroup': 'Optional menu subgroup',
   icon: 'Shell icon name', sort: 'Menu order; resource default auto', port: 'Local preview port (4310)',
-  container: 'Listen for container development', tag: 'Existing version tag, e.g. v1.0.0', 'request-id': 'UUID for recovering the same request',
+  container: 'Listen for container development', tag: 'Existing version tag, e.g. v1.0.0', 'request-id': 'UUID for resuming the same request',
   'no-browser': 'Print the approval URL without opening a browser', devtools: 'Install generators only',
   'dry-run': 'Show the plan without writing', yes: 'Accept final confirmation, not missing input',
   json: 'JSON result on stdout; no prompts', 'no-interactive': 'Never prompt; missing required values fail',
@@ -67,7 +74,7 @@ export function parseCommand(argv) {
     if (negative) key = key.slice(3);
     const known = booleanOptions.has(key) || Object.values(commands).some(command => command.options.includes(key));
     if (!known) throw new InputError(`Unknown option: --${key}`);
-    if (booleanOptions.has(key)) {
+    if (booleanOptions.has(key) || (key === 'step' && argv.includes('db') && argv.includes('migrate'))) {
       if (equal >= 0) throw new InputError(`--${key} does not take a value.`);
       value = !negative;
     } else {
@@ -95,6 +102,14 @@ export function validateOptions(name, options) {
   if (!['dev', 'dev config'].includes(name) && Array.isArray(options.app)) throw new InputError('Only nexia dev and nexia dev config support repeated --app.');
   const allowed = [...commands[name].options, 'help', 'no-interactive'];
   for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new InputError(`--${key} is not supported by nexia ${name}.`);
+  if (name.startsWith('db ')) {
+    for (const key of ['step', 'batch']) {
+      if (options[key] !== undefined && !(key === 'step' && name === 'db migrate')
+          && (!/^[1-9][0-9]*$/.test(options[key]) || Number(options[key]) > 100000)) throw new InputError(`--${key} must be a positive integer up to 100000.`);
+    }
+    if (options.step !== undefined && options.batch !== undefined) throw new InputError('Choose --step or --batch.');
+    if (options.class !== undefined && name !== 'db seed' && !options.seed) throw new InputError('--class requires --seed.');
+  }
   if (options.navigation === false && ['navigation-group', 'navigation-subgroup', 'icon', 'sort'].some(key => Object.hasOwn(options, key))) throw new InputError('Menu options cannot be combined with --no-navigation.');
   if (options['label-zh-plural'] && !options['label-zh']) throw new InputError('--label-zh-plural requires --label-zh.');
 }
@@ -106,13 +121,13 @@ export function helpText(name = '') {
     'nexia docs read <document-id> [--locale en|ko] [--json]', '',
     'Read public documentation without login or a project. Defaults to English; use --locale ko for Korean documents.',
   ].join('\n');
-  if (definition) return [`nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}`, definition.description[index], '', ...[...definition.options, 'no-interactive', 'help'].map(key => `  --${key}${['navigation', 'record'].includes(key) ? ` / --no-${key}` : booleanOptions.has(key) ? '' : ' <value>'}  ${optionDescriptions[key] || 'Show help'}`), '', name.startsWith('docs ') ? 'No login or project required. Quote search queries containing spaces.' : 'Options skip matching questions. Run from an App or its project.'].join('\n');
+  if (definition) return [`nexia ${name}${definition.argument ? ` [${definition.argument}]` : ''}`, definition.description[index], '', ...[...definition.options, 'no-interactive', 'help'].map(key => `  --${key}${['navigation', 'record'].includes(key) ? ` / --no-${key}` : (booleanOptions.has(key) || (name === 'db migrate' && key === 'step')) ? '' : ' <value>'}  ${optionDescriptions[key] || 'Show help'}`), '', name.startsWith('docs ') ? 'No login or project required. Quote search queries containing spaces.' : 'Options skip matching questions. Run from an App or its project.'].join('\n');
   const sections = name && Object.hasOwn(groups, name)
     ? [{ title: [name, name], names: groups[name].map(child => `${name} ${child}`) }]
     : [
       { title: ['Start & connect', '시작·연결'], names: ['setup', 'update', 'create project', 'connect', 'login', 'logout', 'status'] },
       { title: ['Build & develop', '생성·개발'], names: ['create app', 'make resource', 'make page', 'dev', 'dev config', 'check', 'test', 'ps', 'stop'] },
-      { title: ['Sandbox database', '샌드박스 데이터'], names: ['db migrate', 'db seed', 'db status'] },
+      { title: ['Sandbox database', '샌드박스 데이터'], names: groups.db.map(child => `db ${child}`) },
       { title: ['Submit & review', '제출·심사'], names: ['submit', 'submit list', 'submit status', 'submit cancel', 'submit retry'] },
       { title: ['Documentation', '개발 문서'], names: ['docs', 'docs search', 'docs read'] },
     ];
