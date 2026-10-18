@@ -13,8 +13,10 @@ export async function retryDevRead(read, { signal, log, interval = 5000 }) {
     try { return await read(); }
     catch (error) {
       if (!transientPlatformError(error) && error.status !== 429) throw error;
-      log(`Platform temporarily unavailable (${error.platformRequest ?? 'connection check'}); retrying. Local watch and pending requests are retained.`);
-      await delay(error.retryAfterMs ?? interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+      log(error.status === 429
+        ? `Platform request limit reached; waiting ${Math.ceil((error.retryAfterMs ?? 60000) / 1000)}s before retrying. Local watch and pending requests are retained.`
+        : `Platform temporarily unavailable (${error.platformRequest ?? 'connection check'}); retrying. Local watch and pending requests are retained.`);
+      await delay(error.retryAfterMs ?? (error.status === 429 ? 60000 : interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
     }
   }
   return null;

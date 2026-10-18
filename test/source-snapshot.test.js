@@ -54,15 +54,15 @@ test('browser edits retain Backend identity but shared and execution inputs do n
     'database/migrations/Create.php', 'routes/routes.php', 'nexia.json', 'vite.config.mjs', 'package.json'];
   for (const file of files) {
     await mkdir(path.dirname(path.join(root, file)), { recursive: true });
-    await writeFile(path.join(root, file), 'initial');
+    await writeFile(path.join(root, file), file.endsWith('.json') ? '"initial"' : 'initial');
   }
   const baseline = await sourceSnapshot(root);
   for (const file of files) {
-    await writeFile(path.join(root, file), 'changed');
+    await writeFile(path.join(root, file), file.endsWith('.json') ? '"changed"' : 'changed');
     const updated = await sourceSnapshot(root);
     assert.notEqual(updated.digest, baseline.digest, 'full uploaded source always retains the change');
     assert.equal(runtimeSourceDigest(updated) === runtimeSourceDigest(baseline), files.indexOf(file) < 2, file);
-    await writeFile(path.join(root, file), 'initial');
+    await writeFile(path.join(root, file), file.endsWith('.json') ? '"initial"' : 'initial');
   }
   await rm(path.join(root, 'resources/js/Page.tsx'));
   assert.equal(runtimeSourceDigest(await sourceSnapshot(root)), runtimeSourceDigest(baseline));
@@ -111,4 +111,17 @@ test('native snapshot retains Vitest configuration and existing test sources wit
   }
   await symlink(path.join(root, '.env'), path.join(root, 'vitest.config.ts'));
   await assert.rejects(sourceSnapshot(root), /symlinks/);
+});
+
+test('invalid metadata JSON names the file without exposing its contents', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-source-json-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'composer.json'), '{"secret":"private",broken}');
+  await assert.rejects(sourceSnapshot(root), error => {
+    assert.match(error.message, /Invalid JSON in composer.json/);
+    assert.doesNotMatch(error.message, /private|secret/);
+    return true;
+  });
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  assert.equal((await sourceSnapshot(root)).files.length, 1);
 });

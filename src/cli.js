@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
 import { setup } from './setup.js';
+import { retryDevRead } from './dev-retry.js';
 import { updateCli } from './update.js';
 import { banner } from './banner.js';
 import { readDocs, formatDocs } from './docs.js';
@@ -38,13 +39,14 @@ async function readBinding(directory, name) {
     const stat = await lstat(target).catch(error => { if (error.code === 'ENOENT') throw new InputError('Run nexia dev in the intended project to register this App first.'); throw error; });
     if (stat.isSymbolicLink() || (target === file && (!stat.isFile() || stat.size > 8192))) throw new InputError('Invalid App binding.');
   }
-  return JSON.parse(await readFile(file, 'utf8'));
+  try { return JSON.parse(await readFile(file, 'utf8')); }
+  catch (error) { if (error instanceof SyntaxError) throw new InputError(`Invalid JSON in ${file}. Restore the project or App binding values before retrying.`); throw error; }
 }
 async function databaseBinding(directory) {
   const config = await readConnection();
   const [project, app] = await Promise.all(['project.json', 'app.json'].map(name => readBinding(directory, name)));
   if (!isUuid(project.project_id || '') || !isUuid(app.id || '') || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint) || validateEndpoint(app.endpoint) !== validateEndpoint(config.endpoint)) throw new InputError('App binding is invalid.');
-  const connection = await request(config, 'connection');
+  const connection = await retryDevRead(() => request(config, 'connection'), { log });
   if (connection.status !== 'connected' || connection.project?.id !== project.project_id) throw new InputError('This App is linked to another project. Run nexia login from its project folder.');
   return { config, app, project, connection };
 }
