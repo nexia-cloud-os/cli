@@ -182,3 +182,51 @@ test('project DB commands run all Apps sequentially and retain per-App failures 
   assert.equal(JSON.parse(status.stdout).database_result.migrations[0].batch, 1);
 
 });
+
+test('database waiting survives throttling and failed shutdown without replaying accepted work', async t => {
+  const { runDatabaseOperation } = await import('../src/database-operations.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-db-wait-'));
+  const previous = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  t.after(async () => { if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous; await rm(root, { recursive: true, force: true }); });
+  const id = '11111111-1111-4111-8111-111111111111', requestId = '22222222-2222-4222-8222-222222222222';
+  const config = { endpoint: 'http://127.0.0.1:43210', token: 'local-test' };
+  const connection = { status: 'connected', sandbox: { id, status: 'active' }, project: { id }, capabilities: { explicit_development_migrations: true, development_database_commands: 2 } };
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify(config));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint: config.endpoint, project_id: id }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint: config.endpoint, id }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  const operation = { id, request_id: requestId, source_revision_id: id, developer_project_id: id, developer_sandbox_id: id,
+    database_command: 'migrate', database_options: {}, status: 'running', started_at: '2026-10-18T00:00:00Z',
+    failure: { code: 'PREPARATION_FAILED', stage: 'migrate' }, recovery_check: { retry_safe: false },
+    diagnostic_path: `/projects/${id}/development?operation=${id}#operation-${id}` };
+  let posts = 0, polls = 0, blockingPolls = 0, limited = false;
+  const logs = [], requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const send = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Retry-After': '1' } });
+    if (url.endsWith('/connection')) return send(connection);
+    if (url.endsWith('/v2/sources')) return send({ revision: { id, digest: JSON.parse(options.body).source.digest, file_count: 1 } });
+    if (options.method === 'POST') {
+      requests.push(JSON.parse(options.body));
+      if (++posts === 1) return send({ status: 'preparation_pending', blocking_operation: { ...operation, status: 'failed' } }, 409);
+      if (posts === 2) return send({ message: 'Too Many Attempts' }, 429);
+      return send({ operation });
+    }
+    if (url.includes('/runtime-operations/')) {
+      if (!limited) { limited = true; return send({}, 429); }
+      const count = posts < 3 ? ++blockingPolls : ++polls;
+      return send({ operation: { ...operation, status: 'failed', ...(count > 1 ? { stopped_at: '2026-10-18T00:00:01Z', retry_allowed: true } : {}) } });
+    }
+    return send({ operation: null });
+  });
+  await assert.rejects(runDatabaseOperation(root, { config, app: { id }, project: { project_id: id }, connection }, {
+    command: 'migrate', requestId, log: line => logs.push(line),
+  }), /Fix the reported source error/);
+  assert.equal(posts, 3, 'only rejected submissions retry; accepted failed work never replays');
+  assert.equal(polls, 2, 'wait for shutdown even when retry_safe is false');
+  assert.equal(blockingPolls, 2, 'poll the blocking execution instead of repeating rejected POST requests');
+  assert.ok(requests.every(request => request.request_id === requestId && request.source_revision_id === id));
+  assert.match(logs.join('\n'), /normally clears shortly/);
+  assert.match(logs.join('\n'), /request limit reached/);
+});

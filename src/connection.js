@@ -66,7 +66,7 @@ export async function request(config, route, { method = 'GET', body, authenticat
     if (response.status === 409 && payload.status === 'preparation_pending') {
       const op = payload.blocking_operation;
       const location = preparationLocation(op, config.endpoint);
-      if (location && ['queued', 'running', 'needs_review'].includes(op.status)) {
+      if (location && ['queued', 'running', 'failed', 'needs_review'].includes(op.status)) {
         error.blockingOperation = op;
         error.message += `\nBlocking preparation: ${op.id} (${op.status}).\n${preparationFailureDetails(op.failure, op.recovery_check)}${location}`;
         error.message += op.status === 'needs_review'

@@ -77,7 +77,15 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
   let nextRegistration = 0;
   try {
     while (!signal?.aborted) {
-      const current = await readConnection(), binding = await findWorkspace(workspace.root);
+      const current = await readConnection();
+      let binding;
+      try { binding = await findWorkspace(workspace.root); }
+      catch (error) {
+        if (error.code !== 'INVALID_JSON') throw error;
+        reportFailure('project-json', 'workspace', error);
+        await delay(1000, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+        continue;
+      }
       if (current.endpoint !== config.endpoint || current.token !== config.token || binding?.project_id !== workspace.project_id || binding.endpoint !== workspace.endpoint) {
         throw new Error('Project or login changed. Restart dev for the intended project.');
       }
@@ -93,7 +101,8 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
         output.task(app.name, 'pending', 'Queued for local and remote development');
       }
       for (const [directory, worker] of workers) {
-        if (!apps.some(app => app.directory === directory && app.key === worker.key)) {
+        if (!apps.some(app => app.directory === directory && app.key === worker.key)
+            && !discovered.errors.some(error => error.directory === directory && error.code === 'INVALID_JSON')) {
           worker.controller.abort(); await worker.done; workers.delete(directory);
           report(directory, path.basename(directory), 'stopped', 'Local watch removed; remote data retained');
         }

@@ -126,3 +126,26 @@ test('actual SDK deprecation warnings appear once per symbol across watcher rebu
   assert.equal(output.length, 2);
   assert.match(output[0], /Removal version is not scheduled/);
 });
+
+test('error locations wrap without losing their file and line in the default reporter', async () => {
+  const { devLog } = await import('../src/dev-log.js');
+  const { createDevReporter } = await import('../src/dev-output.js');
+  const output = [], stream = { isTTY: false, columns: 60 };
+  const reporter = createDevReporter(line => output.push(line), { stream });
+  const location = '/project/' + 'long-directory/'.repeat(30) + 'Broken.tsx:123:4';
+  devLog(line => reporter.message('trial', line), 'build', 'error', location);
+  assert.ok(output.join('\n').split('\n').map(line => line.replace(/^✕ trial  /, '')).join('').includes(location));
+  assert.doesNotMatch(output.join('\n'), /truncated/);
+});
+
+test('Vite transform errors retain the following source location as errors', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { pipeBuildLogs } = await import('../src/dev-log.js');
+  const output = [], stream = new PassThrough();
+  pipeBuildLogs(stream, line => output.push(line), 'warning');
+  const location = '/project/' + 'long-directory/'.repeat(30) + 'Broken.tsx:123:4: ERROR: Missing closing tag';
+  stream.end('[commonjs] Transform failed with 1 error:\n' + location + '\n');
+  await new Promise(resolve => stream.once('end', resolve));
+  assert.ok(output.every(line => line.startsWith('[build error]')));
+  assert.ok(output.join('\n').includes(location));
+});
