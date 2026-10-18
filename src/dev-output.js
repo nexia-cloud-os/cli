@@ -190,12 +190,13 @@ export function createDevReporter(log = console.error, {
     },
     panel(title, rows) { writeLog(devPanel(title, rows, stream)); },
     message(name, value, { verbose = false, failure = false } = {}) {
-      const visible = visibleLines(value, { verbose });
+      const diagnostic = /^\[[^\]]+\s+(error|fatal|critical|alert|emergency)\]/.test(plain(value));
+      const visible = visibleLines(value, { verbose: verbose || diagnostic });
       const lines = visible.map(line => {
         const level = line.match(/^\[[^\]]+\s+(error|fatal|critical|alert|emergency|warning|warn)\]/)?.[1];
         const style = styleForLevel(level);
         const marker = style === 'error' ? '✕' : style === 'warning' ? '!' : '·';
-        return formatDetail(marker, name, line, style);
+        return formatDetail(marker, name, line, style, style === 'error');
       });
       if (lines.length) writeLog(lines.join('\n'), { owner: name, failure });
     },

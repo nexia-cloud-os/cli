@@ -33,7 +33,7 @@ export function preparationFailureDetails(failure, check) {
     return `[SDK_VERSION_MISMATCH] ${stage}\nApp requires PHP SDK: ${failure.required_sdk}\nServer PHP SDK: ${failure.installed_sdk}\nThe platform runtime does not satisfy this App's composer.json. Adjust App code and dependencies to APIs supported by the server SDK, then run nexia check. Do not lower the required version range without verifying compatibility. If the App needs newer APIs, the platform runtime must be updated. This is not an administrator approval request. Local composer install or deleting .nexia will not change the server SDK.\n`;
   }
   if (failure.code === 'DEPENDENCY_BUILD_FAILED' && failure.stage === 'dependencies') {
-    return `[DEPENDENCY_BUILD_FAILED] ${stage}\nCheck composer.json against the supported PHP dependencies. If it matches, contact developer support with the operation ID to inspect the server build. Private build output is not exposed.\n`;
+    return `[DEPENDENCY_BUILD_FAILED] ${stage}\nFix the reported PHP source location, or check composer.json against the supported PHP dependencies when no source location is reported. Run nexia check from the App folder and keep nexia dev running while correcting the source.\n`;
   }
   if (failure.stage === 'migration_preflight') {
     const causes = {

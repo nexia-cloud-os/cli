@@ -13,7 +13,7 @@ export function devLog(log, source, level, message, { verbose = false } = {}) {
   const color = styleForLevel(level);
   const limit = verbose ? 8192 : 1200;
   const lineLimit = verbose ? 40 : 8;
-  const widthLimit = verbose ? 1200 : 360;
+  const widthLimit = verbose || color === 'error' ? 1200 : 360;
   const lines = String(message).slice(0, limit).split(/\r?\n/).slice(0, lineLimit);
   const prefix = `[${source} ${level}]`;
   for (const line of lines) {
@@ -68,7 +68,9 @@ export function pipeBuildLogs(stream, log, level, { verbose = false } = {}) {
       return;
     }
     viteReporter = false;
-    if (/^(?:error(?: during build)?[: ]|\[vite[^\]]*\]\s*(?:internal server )?error|rolluperror|syntaxerror)/i.test(clean)) blockLevel = 'error';
+    if (/^(?:error(?: during build)?[: ]|\[vite[^\]]*\]\s*(?:internal server )?error|rolluperror|syntaxerror)/i.test(clean)
+        || /^(?:\[[^\]]+\]\s*)?Transform failed with \d+ errors?:/i.test(clean)
+        || /:\d+:\d+:\s*ERROR:/.test(clean)) blockLevel = 'error';
     else if (/^(?:warning[: ]|warn[: ]|\(!\))/i.test(clean)) blockLevel = 'warning';
     const now = Math.floor(Date.now() / 60000);
     if (minute !== now) { minute = now; count = 0; }

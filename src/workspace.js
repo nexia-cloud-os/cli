@@ -9,7 +9,7 @@ async function json(file) {
     const stat = await lstat(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) throw new Error(`Use a regular JSON file: ${file}`);
     return JSON.parse(await readFile(file, 'utf8'));
-  } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  } catch (error) { if (error.code === 'ENOENT') return null; if (error instanceof SyntaxError) throw Object.assign(new Error(`Invalid JSON in ${file}. Fix the JSON syntax and save the file.`), { code: 'INVALID_JSON' }); throw error; }
 }
 
 // Legacy per-App bindings intentionally do not define a project workspace.
@@ -69,7 +69,7 @@ export async function discoverApps(root) {
       const composer = await json(path.join(directory, 'composer.json'));
       if (!composer?.name || !/^[a-z][a-z0-9-]{0,62}$/.test(manifest.app?.app_key ?? '')) throw new Error('App metadata is incomplete.');
       apps.push({ directory, name: entry.name, key: manifest.app.app_key, manifest });
-    } catch (error) { errors.push({ directory, message: error.message }); }
+    } catch (error) { errors.push({ directory, message: error.message, ...(error.code ? { code: error.code } : {}) }); }
   }
   const duplicates = new Set(apps.filter(app => apps.some(other => other !== app && other.key === app.key)).map(app => app.key));
   return {

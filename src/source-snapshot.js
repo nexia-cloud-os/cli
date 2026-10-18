@@ -80,6 +80,10 @@ export async function sourceSnapshot(directory) {
       bytes = buffer.subarray(0, offset);
       if (bytes.length !== stat.size || !(await realpath(file)).startsWith(`${await realpath(root)}${path.sep}`)) throw new Error('Source changed while reading. Save and retry.');
     } finally { await handle.close(); }
+    if (['composer.json', 'nexia.json', 'package.json', 'package-lock.json', 'composer.lock'].includes(relative)) {
+      try { JSON.parse(bytes.toString('utf8')); }
+      catch { throw new Error(`Invalid JSON in ${relative}. Fix the JSON syntax and save the file; development source watching continues.`); }
+    }
     total += bytes.length;
     result.push({ path: relative, sha256: sha256(bytes), content: bytes.toString('base64') });
   }
