@@ -27,7 +27,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
       const stat = await lstat(file);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192) throw new Error('Invalid local App binding or runtime state.');
       return JSON.parse(await readFile(file, 'utf8'));
-    } catch (error) { if (optional && error.code === 'ENOENT') return null; throw error; }
+    } catch (error) { if (optional && error.code === 'ENOENT') return null; if (error instanceof SyntaxError) throw new Error(`Invalid JSON in ${file}. Restore the local binding or runtime state before retrying; data was retained.`); throw error; }
   }
   const stat = await lstat(local);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Link this App in a real directory first.');
@@ -374,6 +374,14 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           continue;
         }
         if ([401, 403].includes(error.status) || error.code === 'APP_BINDING_CHANGED') throw error;
+        if (error.status === 409 && error.platformStatus === 'preparation_pending'
+            && ['queued', 'running', 'failed'].includes(error.blockingOperation?.status)) {
+          browserRuntime = null;
+          if (lastStatus !== 'preparation-pending') task('running', 'Waiting for the previous App execution to finish stopping or preparing. This normally clears shortly; development will continue automatically.');
+          lastStatus = 'preparation-pending';
+          await delay(Math.max(5000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
         if (error.status !== 429) {
           browserRuntime = null;
           const status = `error:${error.code || error.status || ''}:${error.message}`;

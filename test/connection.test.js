@@ -149,7 +149,7 @@ test('preparation conflicts distinguish waiting from review and reject unsafe di
   t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 409,
     json: async () => ({ status: 'preparation_pending', message: 'Preparation pending.', blocking_operation: operation }) }));
   const config = { endpoint: 'https://developers.example', token: 'test-secret' };
-  for (const status of ['needs_review', 'queued', 'running']) {
+  for (const status of ['needs_review', 'queued', 'running', 'failed']) {
     operation.status = status;
     await assert.rejects(request(config, 'v2/runtime-operations'), error => {
       assert.equal(error.status, 409);
