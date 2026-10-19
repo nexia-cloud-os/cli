@@ -126,6 +126,18 @@ test('preparation keeps the App discoverable without exposing stale execution au
     assert.equal(result.status, 409);
     assert.deepEqual(await result.json(), { schema_version: 'native-status-1', status, app_id, app_key: 'trial' });
   }
+  mode = 'preparing';
+  const pending = await fetch(`${server.url}/__nexia_native?app_id=${app_id}`, {
+    headers: { Origin: workspaceOrigin, Accept: 'application/vnd.nexia.native-status+json' },
+  });
+  assert.equal(pending.status, 202);
+  assert.equal(pending.headers.get('Retry-After'), '2');
+  assert.deepEqual(await pending.json(), { schema_version: 'native-status-1', status: 'preparing', app_id, app_key: 'trial' });
+  mode = 'runtime_failed';
+  const failed = await fetch(`${server.url}/__nexia_native?app_id=${app_id}`, {
+    headers: { Origin: workspaceOrigin, Accept: 'application/vnd.nexia.native-status+json' },
+  });
+  assert.equal(failed.status, 409, 'real preparation errors remain errors');
   mode = 'off';
   assert.deepEqual((await (await get('/__nexia_native')).json()).apps, []);
   assert.equal((await get(`/__nexia_native?app_id=${app_id}`)).status, 423);

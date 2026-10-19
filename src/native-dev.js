@@ -356,7 +356,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
       } catch (error) {
         if (error.code === 'SOURCE_BUSY') {
-          browserRuntime = null;
+          // A changing source tree does not invalidate the last completed execution.
           if (lastStatus !== 'source-busy') {
             if (reporter) task('running', error.message); else log(error.message);
           }
@@ -366,7 +366,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         }
         // Source snapshots are immutable; preparation retries retain their persisted request ID.
         if (transientPlatformError(error)) {
-          browserRuntime = null;
+          // Core still authorizes every request; a failed poll is not a stop receipt.
           const reason = error.status ? `HTTP ${error.status}` : error.name === 'TimeoutError' ? 'timeout' : 'connection interrupted';
           if (reporter) task('running', `Platform temporarily unavailable (${reason}); retrying…`);
           else log(`Platform temporarily unavailable (${error.platformRequest ?? 'development request'}: ${reason}); retrying. Source and pending requests retained.`);
@@ -376,7 +376,6 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         if ([401, 403].includes(error.status) || error.code === 'APP_BINDING_CHANGED') throw error;
         if (error.status === 409 && error.platformStatus === 'preparation_pending'
             && ['queued', 'running', 'failed'].includes(error.blockingOperation?.status)) {
-          browserRuntime = null;
           if (lastStatus !== 'preparation-pending') task('running', 'Waiting for the previous App execution to finish stopping or preparing. This normally clears shortly; development will continue automatically.');
           lastStatus = 'preparation-pending';
           await delay(Math.max(5000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
@@ -392,7 +391,6 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
-        browserRuntime = null;
         if (reporter) task('running', `Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)}s…`);
         else log(`Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)} seconds. Source, data and pending request retained.`);
         await delay(error.retryAfterMs, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
