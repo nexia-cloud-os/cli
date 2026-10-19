@@ -52,7 +52,8 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     const root = path.join(path.resolve(directory), 'dist', generation ? `frontend-generations/${generation}` : 'frontend');
     if (manifest && current?.mode === 'off') { res.writeHead(423).end(); return; }
     if (manifest && ['preparing', 'build_failed', 'runtime_failed'].includes(current?.mode)) {
-      res.writeHead(409, { 'Content-Type': 'application/json', 'Retry-After': '2' });
+      const pending = current.mode === 'preparing' && req.headers.accept === 'application/vnd.nexia.native-status+json';
+      res.writeHead(pending ? 202 : 409, { 'Content-Type': 'application/json', 'Retry-After': '2' });
       res.end(req.method === 'HEAD' ? undefined : JSON.stringify({
         schema_version: 'native-status-1', status: current.mode, app_id: current.app_id, app_key: current.app_key,
       }));
