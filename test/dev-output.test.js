@@ -161,3 +161,35 @@ test('catalog failure keys and character limits survive a narrow terminal', asyn
   assert.ok(details.includes('resources/lang/en.json'));
   reporter.close();
 });
+
+test('live frames reserve the cursor row even with overflowing details or summary', () => {
+  for (const rows of [1, 10, 40]) {
+    const writes = [];
+    const reporter = createDevReporter(() => {}, { stream: { isTTY: true, columns: 173, rows, write: value => writes.push(value) }, heartbeatMs: 0 });
+    reporter.summary(Array.from({ length: 11 }, (_, i) => [`Field ${i}`, 'value']));
+    for (const name of ['startup', 'workspace', 'payroll', 'people', 'time-absence']) reporter.task(name, 'running', 'Preparing');
+    for (let i = 0; i < 50; i++) reporter.message('people', `detail ${i}`);
+    for (const frame of writes.filter(value => !value.startsWith('\x1b['))) {
+      assert.ok(frame.split('\n').length <= Math.max(2, rows), `frame overflow in ${rows} rows`);
+    }
+    reporter.close();
+  }
+});
+
+test('long failure headlines and all diagnostic lines survive outside the live dashboard', () => {
+  for (const isTTY of [false, true]) {
+    const output = [];
+    const reporter = createDevReporter(value => output.push(value), {
+      stream: { isTTY, columns: 60, rows: 10, write: value => output.push(value) }, heartbeatMs: 0,
+    });
+    const headline = `Sandbox error: ${'long diagnostic '.repeat(30)}renew after checking status`;
+    const lines = Array.from({ length: 20 }, (_, i) => `diagnostic-${i}`);
+    reporter.failure('dev', new Error([headline, ...lines].join('\n')));
+    reporter.task('other', 'running', 'Preparing');
+    const text = output.map(value => value.split('\n').map(plain).join('\n')).join('\n');
+    const unwrapped = text.replace(/✕ dev  /g, '').replace(/\n/g, '');
+    assert.ok(unwrapped.includes(headline));
+    for (const line of lines) assert.ok(text.includes(line));
+    reporter.close();
+  }
+});
