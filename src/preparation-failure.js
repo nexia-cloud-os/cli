@@ -51,7 +51,10 @@ export function preparationFailureDetails(failure, check) {
   if (failure.code === 'PREPARATION_FAILED') {
     const action = { source: 'Check the App manifest and uploaded source.', catalog: 'Check App metadata and contribution declarations.',
       migrate: 'Check the App migrations; do not delete migration history or reset data.', initialize: 'Check App initialization code; preserve existing data.' };
-    return `[PREPARATION_FAILED] ${stage}\n${Object.hasOwn(action, failure.stage) ? `${action[failure.stage]} ` : ''}Correct the App code for this step; development source watching continues.\n`;
+    if (!location && ['database_probe', 'ingress', 'operator'].includes(failure.stage)) {
+      return `[PREPARATION_FAILED] ${stage}\nPlatform preparation failed. Check the platform connection and retry nexia dev after it recovers. This status does not establish an App code error; do not reset data.\n`;
+    }
+    return `[PREPARATION_FAILED] ${stage}\n${Object.hasOwn(action, failure.stage) ? `${action[failure.stage]} ` : ''}Correct the reported App error; development source watching continues.\n`;
   }
   return '';
 }
