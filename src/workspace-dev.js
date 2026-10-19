@@ -50,7 +50,9 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     connection = await readStatus();
     if (!connection) return;
   }
-  if (connection.sandbox?.status !== 'active') throw new Error('Your sandbox needs attention. Open the developer console to renew or recover it; data was retained.');
+  if (connection.sandbox?.status !== 'active') {
+    throw Object.assign(new Error(`Personal sandbox is not active (status: ${connection.sandbox?.status || 'unknown'}).\nOpen this project's sandbox settings in Developers and check its status and failure details. If no action is available, contact developer support.\nRetry nexia dev once the sandbox is active. Local source and data were not reset.`), { code: 'SANDBOX_NOT_ACTIVE' });
+  }
   output.task('workspace', 'success', 'Personal sandbox ready');
   const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);
   const launch = new URL(connection.sandbox.launch_url);

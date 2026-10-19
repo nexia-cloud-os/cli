@@ -84,8 +84,17 @@ for (const safeFailure of [false, true]) test(safeFailure
     };
   `);
   const deadline = setTimeout(() => shutdown.abort(), 5000);
-  try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {} }); }
+  const readyStates = [];
+  try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {}, reporter: {
+    summary() {}, message() {}, resolve() { return false; },
+    task(_name, state, detail) {
+      readyStates.push({ state, detail });
+      if (state === 'success') assert.ok([...operations.values()].some(operation => operation.status === 'completed'));
+    },
+  } }); }
   finally { clearTimeout(deadline); }
+  assert.ok(readyStates.some(item => item.state === 'running' && item.detail.startsWith('Frontend build ready')));
+  assert.ok(readyStates.every(item => item.state !== 'success' || item.detail === 'Development ready'));
   assert.equal(sources.length, 3);
   assert.equal(operations.size, 2);
   const frontend = sources[1].files.find(file => file.path === 'resources/js/Page.tsx');
@@ -156,6 +165,7 @@ for (const expired of [true, false]) {
         task(name, state, detail) { tasks.push({ name, state, detail }); if (detail.includes('Platform queue has not started') || detail.includes('Watching for changes')) shutdown.abort(); },
         message() {},
         summary() {},
+        failure(name, error) { tasks.push({ name, state: 'error', detail: error.message }); shutdown.abort(); },
       } });
       await run;
       if (!expired) assert.ok(tasks.some(task => task.detail.includes('HTTP 410')));
@@ -717,7 +727,7 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
           assert.equal(readPreview().operation_id, operation.id);
           recovered = true;
           if (interruption === 'source-busy') await rm(path.join(root, '.git/index.lock'));
-          shutdown.abort();
+          if (interruption === 'source-busy') shutdown.abort();
         }
       }
       result = { operation: null };
@@ -745,9 +755,16 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
   await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
   await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
   await writeFile(path.join(root, 'composer.json'), '{}');
-  const deadline = setTimeout(() => shutdown.abort(), 6000);
+  const statuses = [];
+  const deadline = setTimeout(() => shutdown.abort(), 10000);
   try {
-    await nativeDev(root, { interval: 5, signal: shutdown.signal, log: message => {
+    await nativeDev(root, { ...(interruption === 'source-busy' ? {} : { reporter: {
+      summary() {}, message() {}, resolve() { return false; },
+      task(_name, state, detail) {
+        statuses.push({ state, detail });
+        if (state === 'success' && recovered) shutdown.abort();
+      },
+    } }), interval: 5, signal: shutdown.signal, log: message => {
       if (interruption === 'source-busy' && message.includes('Waiting for Git')) {
         assert.equal(readPreview().operation_id, operation.id);
         recovered = true;
@@ -760,4 +777,8 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
   assert.equal(interrupted, true);
   assert.equal(recovered, true);
   assert.equal(submissions, 1);
+  if (interruption !== 'source-busy') {
+    assert.equal(statuses.filter(item => item.state === 'success').length, 2);
+    assert.ok(statuses.some(item => item.state === 'running' && /retrying|Waiting/.test(item.detail)));
+  }
 });
