@@ -692,3 +692,72 @@ test('first dev waits for explicit migration and file saves never submit databas
   assert.equal(uploads, 2, 'completed migration reuses the already uploaded source');
   assert.ok(messages.some(message => message.includes('nexia db migrate')));
 });
+
+for (const interruption of [503, 429, 409, 'source-busy']) test(`completed preview survives ${interruption} without another runtime submission`, async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-preview-continuity-'));
+  const previousConfig = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  const shutdown = new AbortController();
+  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
+  let operation, readPreview, interrupted = false, recovered = false, submissions = 0;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const input = raw ? JSON.parse(raw) : null;
+    let result;
+    if (req.url.endsWith('/connection')) result = { status: 'connected', project: { id: project },
+      capabilities: { explicit_development_migrations: true }, sandbox: { id: sandbox, status: 'active',
+        workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (req.url.endsWith('/database-operations')) {
+      if (operation && readPreview()?.operation_id === operation.id) {
+        if (!interrupted) {
+          interrupted = true;
+          if (interruption === 'source-busy') await writeFile(path.join(root, '.git/index.lock'), '');
+          else { res.writeHead(interruption, { 'Content-Type': 'application/json', 'Retry-After': '1' }).end(JSON.stringify(interruption === 409 ? { status: 'preparation_pending', blocking_operation: { id: operation.id, status: 'running', diagnostic_path: `/projects/${project}/development?operation=${operation.id}#operation-${operation.id}` } } : {})); return; }
+        } else {
+          assert.equal(readPreview().operation_id, operation.id);
+          recovered = true;
+          if (interruption === 'source-busy') await rm(path.join(root, '.git/index.lock'));
+          shutdown.abort();
+        }
+      }
+      result = { operation: null };
+    } else if (req.url.endsWith('/execution')) result = { selection: { app_id: app, project_id: project,
+      sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+    else if (req.url.endsWith('/v2/sources')) result = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
+    else if (req.method === 'POST' && req.url.endsWith('/v2/runtime-operations')) {
+      submissions++;
+      operation = { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
+        developer_project_id: project, developer_sandbox_id: sandbox, status: 'completed' };
+      result = { operation };
+    } else if (req.url.includes('/v2/runtime-operations/')) result = { operation };
+    else { res.writeHead(404).end('{}'); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    shutdown.abort(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
+    await rm(root, { recursive: true, force: true });
+  });
+  for (const dir of ['.nexia', '.git']) await mkdir(path.join(root, dir));
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  const deadline = setTimeout(() => shutdown.abort(), 6000);
+  try {
+    await nativeDev(root, { interval: 5, signal: shutdown.signal, log: message => {
+      if (interruption === 'source-busy' && message.includes('Waiting for Git')) {
+        assert.equal(readPreview().operation_id, operation.id);
+        recovered = true;
+        shutdown.abort();
+      }
+    },
+      previewHost: { attach(_directory, state) { readPreview = state; return { url: 'http://127.0.0.1:4310', close: async () => {} }; } },
+    });
+  } finally { clearTimeout(deadline); }
+  assert.equal(interrupted, true);
+  assert.equal(recovered, true);
+  assert.equal(submissions, 1);
+});
