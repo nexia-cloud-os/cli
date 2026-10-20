@@ -62,3 +62,16 @@ test('catalog errors name the file, exact dotted key and lengths without grantin
   assert.doesNotMatch(message, /PRIVATE|safe to retry|No App code ran/);
   assert.match(preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [] }), /Fix the reported catalog declarations/);
 });
+
+test('platform preparation errors do not tell developers to modify App code', () => {
+  for (const stage of ['database_probe', 'ingress', 'operator']) {
+    const output = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage });
+    assert.match(output, /Platform preparation failed/);
+    assert.match(output, /retry nexia dev/);
+    assert.doesNotMatch(output, /Correct the App code|contact|administrator/);
+  }
+  const output = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'catalog',
+    diagnostic: { kind: 'undefined_method', file: 'src/Manifest.php', line: 12, symbol: 'Trial::missing' } });
+  assert.match(output, /Undefined method: src\/Manifest.php:12 \(Trial::missing\)/);
+  assert.match(output, /Correct the reported App error/);
+});

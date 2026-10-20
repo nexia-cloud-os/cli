@@ -101,12 +101,17 @@ export function createDevReporter(log = console.error, {
   const render = () => {
     if (!live || paused || (!summaryRows.length && !tasks.size)) return;
     clear();
-    const panel = dashboard(), panelLines = panel.split('\n');
-    const room = Math.max(1, (stream.rows || 40) - panelLines.length - 2);
+    const maxLines = Math.max(1, (stream.rows || 40) - 1);
+    const panelLines = dashboard().split('\n');
+    if (panelLines.length > maxLines) {
+      panelLines.splice(Math.min(1, maxLines - 1), panelLines.length - maxLines + 1, paint(shorten('… summary rows omitted; enlarge the terminal.', outputWidth()), 'muted', stream));
+    }
+    const panel = panelLines.join('\n');
+    const room = Math.max(0, maxLines - panelLines.length - 2);
     const hidden = omittedDetails + Math.max(0, detailLines.length - room);
     const visibleCount = Math.max(0, room - Number(hidden > 0));
     const visible = visibleCount ? detailLines.slice(-visibleCount).map(line => line.value) : [];
-    if (hidden) visible.unshift(paint(`… ${hidden} earlier detail line(s) omitted.`, 'muted', stream));
+    if (hidden && room) visible.unshift(paint(`… ${hidden} earlier detail line(s) omitted.`, 'muted', stream));
     const failed = [...tasks.values()].some(task => task.state === 'error');
     const detailTitle = failed
       ? `${paint('Details', 'title', stream)} · resolve ${paint('FAILED', 'error', stream)} items first`
@@ -118,6 +123,11 @@ export function createDevReporter(log = console.error, {
   const writeLog = (value, { owner, failure = false } = {}) => {
     if (failure && owner) activeFailures.add(owner);
     if (!live) { log(value); return; }
+    // Preserve full failures in scrollback outside the bounded live dashboard.
+    if (failure) {
+      clear();
+      stream.write(`${paint('Details', 'title', stream)}\n${value}\n`);
+    }
     detailLines.push(...String(value).split(/\r?\n/).filter(Boolean).map(line => ({ value: line, owner, failure })));
     if (detailLines.length > 200) {
       const omitted = detailLines.splice(0, detailLines.length - 200);
@@ -191,21 +201,21 @@ export function createDevReporter(log = console.error, {
     panel(title, rows) { writeLog(devPanel(title, rows, stream)); },
     message(name, value, { verbose = false, failure = false } = {}) {
       const diagnostic = /^\[[^\]]+\s+(error|fatal|critical|alert|emergency)\]/.test(plain(value));
-      const visible = visibleLines(value, { verbose: verbose || diagnostic });
+      const visible = failure ? safeLines(value) : visibleLines(value, { verbose: verbose || diagnostic });
       const lines = visible.map(line => {
         const level = line.match(/^\[[^\]]+\s+(error|fatal|critical|alert|emergency|warning|warn)\]/)?.[1];
         const style = styleForLevel(level);
         const marker = style === 'error' ? '✕' : style === 'warning' ? '!' : '·';
-        return formatDetail(marker, name, line, style, style === 'error');
+        return formatDetail(marker, name, line, style, failure || style === 'error');
       });
       if (lines.length) writeLog(lines.join('\n'), { owner: name, failure });
     },
     failure(name, error, { verbose = false, next, summary } = {}) {
-      const lines = safeLines(devFailure(error, { verbose }));
+      const lines = safeLines(error?.message || error || 'Unknown failure.');
       const headline = lines.shift() || 'Unknown failure.';
       task(name, 'error', summary || headline);
       const details = lines.map(line => formatDetail('✕', name, line, 'error', true));
-      if (summary || (live && paused)) details.unshift(formatDetail('✕', name, headline, 'error', true));
+      details.unshift(formatDetail('✕', name, headline, 'error', true));
       if (next) details.push(formatDetail('→', name, `Next: ${plain(next)}`, 'warning', true));
       if (details.length) writeLog(details.join('\n'), { owner: name, failure: true });
     },

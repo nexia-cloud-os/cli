@@ -127,7 +127,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           build = await startFrontendBuild(directory, { verbose, signal, log: detailLog, onInvalidate: () => {}, onState: (phase, detail) => {
             if (phase === 'building') task('running', 'Building frontend…');
             if (phase === 'failed') task('error', detail || 'Frontend build failed. Fix the build output; watching continues.');
-            if (phase === 'ready') task('success', 'Frontend build ready');
+            if (phase === 'ready') task('running', 'Frontend build ready; checking runtime preparation…');
+            lastStatus = undefined;
           } });
           if (signal?.aborted) break;
           preview = previewHost ? previewHost.attach(directory, previewState, log, verbose)
@@ -276,9 +277,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
               let state = phase === 'queued' ? 'pending' : 'running';
               let detail = phase === 'queued' ? 'Platform queue has not started runtime preparation…' : `Runtime preparation ${phase}…`;
               if (phase === 'completed') {
-                const resolved = reporter.resolve?.(name) === true;
-                state = 'success';
-                detail = resolved ? 'Runtime preparation confirmed; previous failure resolved' : 'Runtime preparation confirmed';
+                detail = 'Runtime preparation confirmed; checking current source…';
               } else if (['failed', 'needs_review'].includes(phase)) {
                 state = 'error';
                 detail = `Runtime preparation ${phase.replace('_', ' ')}`;
@@ -348,6 +347,10 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { continue; }
           quietDigest = snapshot.digest;
           browserRuntime = candidateRuntime && { ...candidateRuntime, ...(build?.snapshot() ? { frontend_generation: build.snapshot() } : {}) };
+          if (browserRuntime && reporter) {
+            const resolved = reporter.resolve?.(name) === true;
+            task('success', resolved ? 'Development ready; previous failure resolved' : 'Development ready');
+          }
           if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
             await runtimeLogs?.close();
             runtimeLogs = watchRuntimeLogs(config, browserRuntime.operation_id, { log: detailLog, signal, verbose });
@@ -366,6 +369,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         }
         // Source snapshots are immutable; preparation retries retain their persisted request ID.
         if (transientPlatformError(error)) {
+          lastStatus = undefined;
           // Core still authorizes every request; a failed poll is not a stop receipt.
           const reason = error.status ? `HTTP ${error.status}` : error.name === 'TimeoutError' ? 'timeout' : 'connection interrupted';
           if (reporter) task('running', `Platform temporarily unavailable (${reason}); retrying…`);
@@ -385,12 +389,14 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           browserRuntime = null;
           const status = `error:${error.code || error.status || ''}:${error.message}`;
           if (lastStatus !== status) {
-            task('error', `${error.message}\nWatching for changes. Fix the error; development stays open.`);
+            if (reporter) reporter.failure(name, error, { verbose, next: 'Fix the error; source watching continues.' });
+            else task('error', `${error.message}\nWatching for changes. Fix the error; development stays open.`);
           }
           lastStatus = status;
           await delay(Math.max(1000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
           continue;
         }
+        lastStatus = undefined;
         if (reporter) task('running', `Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)}s…`);
         else log(`Platform request limit reached; retrying in ${Math.ceil(error.retryAfterMs / 1000)} seconds. Source, data and pending request retained.`);
         await delay(error.retryAfterMs, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
