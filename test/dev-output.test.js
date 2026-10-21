@@ -157,8 +157,7 @@ test('catalog failure keys and character limits survive a narrow terminal', asyn
   })), { next: 'Fix the translation, then run nexia check.' });
   const details = output.slice(1).join('\n').split('\n').map(line => line.replace(/^[✕→] payroll  /, '')).join('');
   assert.ok(details.includes('maximum 2000 characters; actual 2001'));
-  assert.ok(details.includes('Key: ' + key));
-  assert.ok(details.includes('resources/lang/en.json'));
+  assert.ok(details.includes('[too_long] resources/lang/en.json · ' + key));
   reporter.close();
 });
 
