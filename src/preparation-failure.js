@@ -13,7 +13,7 @@ export function preparationFailureDetails(failure, check) {
     ? `\n${kinds[diagnostic.kind]}: ${diagnostic.file}:${diagnostic.line}${typeof diagnostic.symbol === 'string' && /^[A-Za-z_][A-Za-z0-9_\\:]{0,239}$/.test(diagnostic.symbol) ? ` (${diagnostic.symbol})` : ''}` : '';
   const stage = `Failed step: ${stages[failure.stage]}.${location}`;
   if (failure.code === 'CATALOG_VALIDATION_FAILED' && failure.stage === 'catalog') {
-    const issues = Array.isArray(failure.issues) ? failure.issues.slice(0, 10) : [];
+    const issues = Array.isArray(failure.issues) ? failure.issues.slice(0, 100) : [];
     const details = issues.filter(issue => issue && typeof issue.field === 'string'
       && /^[a-zA-Z0-9_.:-]{1,240}$/.test(issue.field) && ['invalid', 'too_long'].includes(issue.rule)).map(issue => {
       const translation = /^catalog\.translations\.([a-zA-Z0-9_-]{1,20})\.(.+)$/.exec(issue.field);
@@ -21,19 +21,21 @@ export function preparationFailureDetails(failure, check) {
         && Number.isInteger(issue.actual) && issue.actual >= 0 && issue.actual <= 1048576
         ? `maximum ${issue.limit} characters; actual ${issue.actual}` : 'invalid declaration';
       return translation
-        ? `  Translation: ${length}\n  File: resources/lang/${translation[1]}.json\n  Key: ${translation[2]}`
-        : `  ${length}\n${issue.field}`;
+        ? `  [${issue.rule}] resources/lang/${translation[1]}.json · ${translation[2]}: ${length}`
+        : `  [${issue.rule}] ${issue.field}: ${length}`;
     });
-    return `[CATALOG_VALIDATION_FAILED] ${stage}\n${details.length ? details.join('\n') + '\n' : ''}Fix the reported catalog declarations and run nexia check from the App folder. Keep nexia dev running while correcting the declarations.\n`;
+    const omitted = Number.isSafeInteger(failure.issues_omitted) && failure.issues_omitted > 0 && failure.issues_omitted <= 1048576
+      ? `  ${failure.issues_omitted} additional issue(s) omitted by the 100-issue limit.\n` : '';
+    return `[CATALOG_VALIDATION_FAILED] ${stage}\nOwner: App catalog.\n${details.length ? details.join('\n') + '\n' : ''}${omitted}Fix the reported catalog declarations and run nexia check from the App folder. Keep nexia dev running while correcting the declarations.\n`;
   }
   if (failure.code === 'SDK_VERSION_MISMATCH' && failure.stage === 'dependencies'
       && typeof failure.required_sdk === 'string' && /^[0-9vVxX*^~<>=| .+\-]{1,160}$/.test(failure.required_sdk)
       && typeof failure.installed_sdk === 'string' && /^v?\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(failure.installed_sdk)
       && failure.installed_sdk.length <= 80) {
-    return `[SDK_VERSION_MISMATCH] ${stage}\nApp requires PHP SDK: ${failure.required_sdk}\nServer PHP SDK: ${failure.installed_sdk}\nThe platform runtime does not satisfy this App's composer.json. Adjust App code and dependencies to APIs supported by the server SDK, then run nexia check. Do not lower the required version range without verifying compatibility. If the App needs newer APIs, the platform runtime must be updated. This is not an administrator approval request. Local composer install or deleting .nexia will not change the server SDK.\n`;
+    return `[SDK_VERSION_MISMATCH] ${stage}\nOwner: platform/App SDK compatibility.\nApp requires PHP SDK: ${failure.required_sdk}\nServer PHP SDK: ${failure.installed_sdk}\nThe platform runtime does not satisfy this App's composer.json. Adjust App code and dependencies to APIs supported by the server SDK, then run nexia check. Do not lower the required version range without verifying compatibility. If the App needs newer APIs, the platform runtime must be updated. This is not an administrator approval request. Local composer install or deleting .nexia will not change the server SDK.\n`;
   }
   if (failure.code === 'DEPENDENCY_BUILD_FAILED' && failure.stage === 'dependencies') {
-    return `[DEPENDENCY_BUILD_FAILED] ${stage}\nFix the reported PHP source location, or check composer.json against the supported PHP dependencies when no source location is reported. Run nexia check from the App folder and keep nexia dev running while correcting the source.\n`;
+    return `[DEPENDENCY_BUILD_FAILED] ${stage}\nOwner: ${location ? 'App PHP source' : 'undetermined dependency build'}.\nFix the reported PHP source location, or check composer.json against the supported PHP dependencies when no source location is reported. Run nexia check from the App folder and keep nexia dev running while correcting the source.\n`;
   }
   if (failure.stage === 'migration_preflight') {
     const causes = {
@@ -46,15 +48,31 @@ export function preparationFailureDetails(failure, check) {
     const files = Array.isArray(check?.migrations) ? check.migrations.slice(0, 10)
       .filter(item => /^[a-zA-Z0-9_-]{1,255}$/.test(item?.name ?? '') && ['missing', 'changed'].includes(item.reason))
       .map(item => `  ${item.reason}: ${item.name}.php`).join('\n') : '';
-    return `[${failure.code}] ${stage}\n${causes[failure.code]}\n${files ? `${files}\n` : ''}No App code ran in this attempt. Do not reset data or delete migration history.\n`;
+    return `[${failure.code}] ${stage}\nOwner: ${failure.code === 'MIGRATION_OWNERSHIP_MISMATCH' ? 'platform database allocation' : 'App migration state'}.\n${causes[failure.code]}\n${files ? `${files}\n` : ''}No App code ran in this attempt. Do not reset data or delete migration history.\n`;
   }
   if (failure.code === 'PREPARATION_FAILED') {
     const action = { source: 'Check the App manifest and uploaded source.', catalog: 'Check App metadata and contribution declarations.',
       migrate: 'Check the App migrations; do not delete migration history or reset data.', initialize: 'Check App initialization code; preserve existing data.' };
-    if (!location && ['database_probe', 'ingress', 'operator'].includes(failure.stage)) {
-      return `[PREPARATION_FAILED] ${stage}\nPlatform preparation failed. Check the platform connection and retry nexia dev after it recovers. This status does not establish an App code error; do not reset data.\n`;
+    if (failure.stage === 'database_probe') {
+      const reasons = {
+        connection: 'Database connection failed', database_identity: 'Connected to the wrong database',
+        schema_isolation: 'Schema access or isolation check failed', schema_create: 'Schema CREATE permission is incorrect',
+        cross_database_access: 'Access to the platform database was unexpectedly allowed',
+        cross_database_policy: 'Cross-database access policy check failed', probe_exception: 'Database probe could not complete',
+      };
+      const issues = Array.isArray(failure.probe_issues) ? failure.probe_issues.filter(issue =>
+        typeof issue === 'string' && /^(?:migrator|runtime):[a-z_]+$/.test(issue)
+        && Object.hasOwn(reasons, issue.split(':')[1])).slice(0, 14) : [];
+      return `[PREPARATION_FAILED] ${stage}\nOwner: platform database configuration (Core/Manager); App code did not run.\n${issues.map(issue => {
+        const [role, reason] = issue.split(':');
+        return `  [${issue}] ${reasons[reason]}`;
+      }).join('\n')}${issues.length ? '\n' : 'This runtime did not record a more specific probe reason.\n'}Check the platform database allocation and access policy; keep App data intact.\n`;
     }
-    return `[PREPARATION_FAILED] ${stage}\n${Object.hasOwn(action, failure.stage) ? `${action[failure.stage]} ` : ''}Correct the reported App error; development source watching continues.\n`;
+    if (!location && ['ingress', 'operator'].includes(failure.stage)) {
+      return `[PREPARATION_FAILED] ${stage}\nOwner: platform (Core/Manager). Inspect the operation diagnostics and restore platform service; keep App data intact.\n`;
+    }
+    if (!location) return `[PREPARATION_FAILED] ${stage}\nOwner: undetermined. Inspect the operation diagnostics before changing App code or platform settings; do not delete migration history or reset data.\n`;
+    return `[PREPARATION_FAILED] ${stage}\nOwner: App code. ${Object.hasOwn(action, failure.stage) ? `${action[failure.stage]} ` : ''}Correct the reported App error; development source watching continues.\n`;
   }
   return '';
 }
@@ -73,5 +91,9 @@ export function preparationLocation(operation, endpoint) {
 /** A failed execution is a diagnostic, never a development approval request. */
 export function preparationNextAction(operation) {
   if (operation?.database_command) return 'Correct the reported database issue, then run the database command explicitly. Source watching continues; existing data and execution history are retained.';
+  if (operation?.failure?.code === 'PREPARATION_FAILED'
+      && ['database_probe', 'ingress', 'operator'].includes(operation.failure.stage)) {
+    return 'Platform recovery is required. Keep nexia dev running; no App data reset or App source change is indicated by this failure.';
+  }
   return 'Correct the reported issue and keep nexia dev running. Changed source is checked automatically; no administrator approval is required.';
 }

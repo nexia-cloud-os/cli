@@ -10,4 +10,5 @@ test('development has no recover command or administrator retry approval', () =>
     assert.match(action, /keep nexia dev running/);
     assert.doesNotMatch(action, /nexia recover|preserve-and-replace|restart nexia dev/);
   }
+  assert.match(preparationNextAction({ failure: { code: 'PREPARATION_FAILED', stage: 'database_probe' } }), /Platform recovery is required/);
 });
