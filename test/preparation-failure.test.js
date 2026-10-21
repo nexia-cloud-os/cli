@@ -55,23 +55,41 @@ test('catalog errors name the file, exact dotted key and lengths without grantin
     { field: 'catalog.permissions.0.key', rule: 'invalid', limit: null, actual: null },
     { field: '\x1b[2JPRIVATE', rule: 'invalid' },
   ] });
-  assert.match(message, /File: resources\/lang\/en.json\n  Key: payroll.approval.description/);
+  assert.match(message, /resources\/lang\/en.json · payroll.approval.description/);
   assert.match(message, /maximum 2000 characters; actual 2001/);
-  assert.match(message, /invalid declaration\ncatalog.permissions.0.key/);
+  assert.match(message, /\[invalid\] catalog.permissions.0.key: invalid declaration/);
   assert.match(message, /nexia check/);
   assert.doesNotMatch(message, /PRIVATE|safe to retry|No App code ran/);
   assert.match(preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [] }), /Fix the reported catalog declarations/);
 });
 
+test('catalog diagnostics show more than ten issue codes and disclose the limit', () => {
+  const message = preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog',
+    issues: Array.from({ length: 12 }, (_, index) => ({ field: `catalog.resources.${index}.key`, rule: 'invalid' })),
+    issues_omitted: 3 });
+  assert.match(message, /\[invalid\] catalog.resources.11.key/);
+  assert.match(message, /3 additional issue\(s\) omitted/);
+});
+
 test('platform preparation errors do not tell developers to modify App code', () => {
   for (const stage of ['database_probe', 'ingress', 'operator']) {
     const output = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage });
-    assert.match(output, /Platform preparation failed/);
-    assert.match(output, /retry nexia dev/);
+    assert.match(output, /Owner: platform/);
     assert.doesNotMatch(output, /Correct the App code|contact|administrator/);
   }
   const output = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'catalog',
     diagnostic: { kind: 'undefined_method', file: 'src/Manifest.php', line: 12, symbol: 'Trial::missing' } });
   assert.match(output, /Undefined method: src\/Manifest.php:12 \(Trial::missing\)/);
   assert.match(output, /Correct the reported App error/);
+});
+
+test('database probe lists every bounded platform issue without exposing private output', () => {
+  const output = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'database_probe',
+    probe_issues: ['migrator:connection', 'runtime:schema_create', 'runtime:cross_database_access',
+      'runtime:secret\x1b[2J'], stderr: 'password=secret' });
+  assert.match(output, /\[migrator:connection\] Database connection failed/);
+  assert.match(output, /\[runtime:schema_create\] Schema CREATE permission is incorrect/);
+  assert.match(output, /\[runtime:cross_database_access\] Access to the platform database was unexpectedly allowed/);
+  assert.match(output, /App code did not run/);
+  assert.doesNotMatch(output, /secret|password|Correct the reported App error/);
 });
