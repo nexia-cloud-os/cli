@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,33 @@ import { fileURLToPath } from 'node:url';
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+
+test('db local registers a new App before its first dev run', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-db-local-registration-'));
+  const app = '11111111-1111-4111-8111-111111111111';
+  const project = '22222222-2222-4222-8222-222222222222';
+  const calls = [];
+  const server = createServer(async (req, res) => {
+    calls.push([req.method, req.url]);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(req.url.endsWith('/connection')
+      ? { status: 'connected', project: { id: project, name: 'Test project' } }
+      : { app: { id: app, key: 'sample', name: 'Sample', package_name: 'example/sample', table_prefix: 'sample_' } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); });
+  const appRoot = path.join(root, 'app'); await mkdir(appRoot);
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-token' }), { mode: 0o600 });
+  await writeFile(path.join(appRoot, 'composer.json'), JSON.stringify({ name: 'example/sample' }));
+  await writeFile(path.join(appRoot, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'sample', app_table_prefix: 'sample_' } }));
+  await assert.rejects(execute(process.execPath, [cli, 'db', 'local', '--yes'], {
+    cwd: appRoot, env: { ...process.env, NEXIA_CONFIG_HOME: root, PGHOST: '192.0.2.1', PGDATABASE: 'sample', PGUSER: 'postgres', PGPASSWORD: 'test' },
+  }), /loopback PGHOST/);
+  assert.equal(JSON.parse(await readFile(path.join(appRoot, '.nexia', 'app.json'), 'utf8')).id, app);
+  assert.ok(calls.some(([method, url]) => method === 'POST' && url.endsWith('/apps')));
+  assert.ok(!calls.some(([, url]) => url.endsWith('/local-database')));
+});
 
 test('database reset uses the rollback command vocabulary and rejects reference catalog', async () => {
   const { parseCommand } = await import('../src/commands.js');
