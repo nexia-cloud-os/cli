@@ -23,6 +23,8 @@ export const commands = {
   'db migrate': { description: ['Apply current App migrations and wait for completion', '현재 앱 마이그레이션 적용 및 완료 대기'], options: ['app', 'request-id', 'json', 'yes', 'step', 'pretend'] },
   'db seed': { argument: 'key', description: ['Run an App Seeder or a named fixture', '앱 Seeder 또는 지정한 fixture 실행'], options: ['app', 'request-id', 'json', 'yes', 'class'] },
   'db status': { description: ['Inspect migration files and batches', '마이그레이션 파일별 상태·배치 조회'], options: ['app', 'json', 'request-id'] },
+  'db access': { description: ['Show this App sandbox runtime DB account', '현재 앱 샌드박스 실행용 DB 계정 표시'], options: ['ip', 'revoke', 'yes'] },
+  'db local': { description: ['Use this App database on the developer PC', '이 앱의 DB를 개발자 PC에서 사용'], options: ['yes'] },
   'db rollback': { description: ['Roll back the last batch or selected range', '마지막 배치 또는 지정 범위 롤백'], options: ['app', 'request-id', 'json', 'yes', 'step', 'batch', 'pretend'] },
   'db reset': { description: ['Roll back all migrations using down()', '모든 마이그레이션을 down()으로 롤백'], options: ['app', 'request-id', 'json', 'yes', 'pretend'] },
   'db refresh': { description: ['Roll back then migrate again', '롤백 후 마이그레이션 재실행'], options: ['app', 'request-id', 'json', 'yes', 'step', 'seed', 'class'] },
@@ -33,14 +35,16 @@ export const commands = {
   'submit cancel': { argument: 'submission-id', description: ['Cancel a cancellable submission', '취소 가능한 제출 취소'], options: ['json', 'yes'] },
   'submit retry': { argument: 'submission-id', description: ['Retry a retryable submission', '재시도 가능한 제출 재요청'], options: ['json', 'yes'] },
 };
-export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'status', 'rollback', 'reset', 'refresh', 'fresh', 'seed'] };
-export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'database', 'frontend', 'navigation', 'record', 'pretend', 'seed']);
+export const groups = { create: ['project', 'app'], make: ['resource', 'page'], db: ['migrate', 'status', 'access', 'local', 'rollback', 'reset', 'refresh', 'fresh', 'seed'] };
+export const booleanOptions = new Set(['help', 'version', 'no-interactive', 'yes', 'json', 'dry-run', 'no-browser', 'devtools', 'container', 'verbose', 'database', 'frontend', 'navigation', 'record', 'pretend', 'seed', 'revoke']);
 export const optionDescriptions = {
   step: 'One batch per migration (migrate), or the number to roll back',
   batch: 'Migration batch to roll back', pretend: 'Preview SQL without executing migrations',
   seed: 'Run the App Seeder after migrations', class: 'App Seeder class name',
   frontend: 'Run the App’s Vitest frontend tests',
   database: 'Start and remove a disposable PostgreSQL database for this run',
+  ip: 'Public IPv4 address of the SQL client (defaults to the observed CLI address)',
+  revoke: 'Disable this App database access',
   filter: 'Run tests matching this PHPUnit/Pest filter or Vitest test name',
   testsuite: 'Run one suite declared in the App’s phpunit.xml',
   page: 'Recent submission page (20 per page)',
@@ -99,6 +103,7 @@ export function parseCommand(argv) {
   return { name, argument: words[0], options };
 }
 export function validateOptions(name, options) {
+  if (name === 'db access' && options.revoke && options.ip) throw new InputError('--revoke cannot be combined with --ip.');
   if (!['dev', 'dev config'].includes(name) && Array.isArray(options.app)) throw new InputError('Only nexia dev and nexia dev config support repeated --app.');
   const allowed = [...commands[name].options, 'help', 'no-interactive'];
   for (const key of Object.keys(options)) if (!allowed.includes(key)) throw new InputError(`--${key} is not supported by nexia ${name}.`);

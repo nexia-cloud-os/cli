@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer as httpServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,15 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { nativeDev } from '../src/native-dev.js';
+
+const managedDatabase = handler => async (req, res) => {
+  if (req.method === 'GET' && req.url.endsWith('/local-database')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ binding: null, tunnel_url: null }));
+    return;
+  }
+  await handler(req, res);
+};
+const createServer = handler => httpServer(managedDatabase(handler));
 
 for (const safeFailure of [false, true]) test(safeFailure
   ? 'stopped App execution failure accepts corrected source without administrator approval'
@@ -520,7 +529,8 @@ test('stopped execution recovers source and ambiguous preparation timeouts witho
     const route = new URL(url).pathname;
     const input = options.body ? JSON.parse(options.body) : null;
     let payload;
-    if (route.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true, runtime_writers: true },
+    if (route.endsWith('/local-database')) payload = { binding: null, tunnel_url: null };
+    else if (route.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true, runtime_writers: true },
       sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
     else if (route.endsWith('/database-operations')) payload = { operation: null };
     else if (route.endsWith('/writer')) {

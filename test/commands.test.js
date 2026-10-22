@@ -88,6 +88,11 @@ test('CLI messages and every help page stay English under a Korean terminal loca
 
 
 test('database options follow each Laravel command and reject foreign connections', () => {
+  assert.deepEqual(parseCommand(['db', 'access', '--ip', '211.169.150.194', '--yes']).options,
+    { ip: '211.169.150.194', yes: true });
+  assert.equal(parseCommand(['db', 'access', '--revoke']).name, 'db access');
+  assert.throws(() => parseCommand(['db', 'access', '--rotate']));
+  assert.throws(() => parseCommand(['db', 'access', '--database', 'other']));
   assert.equal(parseCommand(['db', 'migrate', '--step']).options.step, true);
   assert.doesNotMatch(helpText('db migrate'), /--step <value>/);
   assert.match(helpText('db rollback'), /--step <value>/);

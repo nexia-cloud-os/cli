@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+import { mkdir, readFile, readdir, rm, lstat, writeFile, rename } from 'node:fs/promises';
 import { setup } from './setup.js';
 import { retryDevRead } from './dev-retry.js';
 import { updateCli } from './update.js';
@@ -17,6 +18,8 @@ import { workspaceDev } from './workspace-dev.js';
 import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
 import { runDatabaseOperation } from './database-operations.js';
+import { setupLocalDatabase } from './local-database.js';
+import { registerApp } from './apps.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
 import { Cancelled, createInput, language, message } from './input.js';
@@ -304,6 +307,58 @@ try {
         const devOptions = { verbose: options.verbose === true, signal: shutdown.signal, port, container: options.container === true, app: selectedApps, reporter: devReporter, log, onStatus: value => session.update(value) };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+    } else if (name === 'db local') {
+      const directory = await findApp();
+      if (!directory) throw new InputError('Run nexia db local from the selected App folder.');
+      if (!await exists(path.join(directory, '.nexia', 'app.json'))) await registerApp(directory, { log });
+      const binding = await databaseBinding(directory);
+      await input.confirm(`Prepare local PostgreSQL ${process.env.PGDATABASE || '(set PGDATABASE)'} for ${binding.app.key}. This creates exactly two App roles and key-only Core reference tables. Existing App data is retained.`);
+      input.close();
+      const local = await setupLocalDatabase(binding.config, binding.app.id);
+      const file = path.join(directory, '.nexia', 'local-database.json');
+      const existing = await lstat(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('Invalid local database connection file.');
+      const temporary = `${file}.${randomUUID()}.tmp`;
+      await writeFile(temporary, JSON.stringify({ endpoint: binding.config.endpoint, project_id: binding.project.project_id,
+        app_id: binding.app.id, binding_id: local.id, database: local.database_name,
+        host: process.env.PGHOST || '127.0.0.1', port: Number(process.env.PGPORT || 5432) }) + '\n', { mode: 0o600, flag: 'wx' });
+      await rename(temporary, file);
+      console.log(`Local App database ready: ${local.database_name} (${local.id}). Keep nexia dev running to serve the sandbox runtime.`);
+    } else if (name === 'db access') {
+      const directory = await findApp();
+      if (!directory) throw new InputError('Run nexia db access from the selected App folder.');
+      const binding = await databaseBinding(directory);
+      const route = `v2/apps/${binding.app.id}/database-access`;
+      let state = await request(binding.config, route);
+      if (state.status === 'needs_review' && !options.revoke) throw new Error('The database gateway credential needs platform operator review.');
+      if (options.revoke) {
+        await input.confirm(`Close external SQL access for ${binding.app.key}. Saved App data is retained.`);
+        input.close();
+        state = await request(binding.config, route, { method: 'DELETE' });
+        console.log(`Database access: ${state.status}. Existing sessions are being closed.`);
+      } else {
+        if (options.ip || ['off', 'revoked'].includes(state.status)) {
+          const address = await input.text('ip', 'SQL client public IPv4 address', {
+            value: options.ip || state.observed_ip, required: true,
+            validate: value => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value),
+          });
+          await input.confirm(`Allow the existing App runtime DB account to connect from ${address}. This account can write App data.`);
+          state = await request(binding.config, route, { method: 'POST', body: { addresses: [address] } });
+        }
+        input.close();
+        for (let attempt = 0; attempt < 36 && !['ready', 'needs_review', 'expired', 'revoked'].includes(state.status); attempt++) {
+          await delay(5000);
+          const current = await readConnection();
+          if (current.endpoint !== binding.config.endpoint || current.token !== binding.config.token) throw new Error('Login changed while waiting; check the selected App and rerun nexia db access.');
+          state = await request(binding.config, route);
+        }
+        if (state.status !== 'ready') throw new Error(`Database access is ${state.status}.${state.status === 'needs_review' ? ' Ask the platform operator to review the database role.' : ' Retry nexia db access after the platform finishes applying it.'}`);
+        let connection = state.connection;
+        try { connection = await request(binding.config, `${route}/reveal`, { method: 'POST' }); }
+        catch (error) { if (error.status !== 409) throw error; }
+        if (!connection) throw new Error('Gateway access changed while revealing the password. Run nexia db access again.');
+        console.log(`App: ${binding.app.key}\nHost: ${connection.host}\nPort: ${connection.port}\nDatabase: ${connection.database}\nSchema: ${connection.schema}\nUser: ${connection.username}\nSSL mode: ${connection.ssl_mode}\nExpires with sandbox: ${state.expires_at}\nPassword: ${connection.password}`);
+      }
     } else if (name.startsWith('db ')) {
       const action = name.split(' ')[1], directories = await appTargets(options, input, { all: true });
       if (options['request-id'] && (!isUuid(options['request-id']) || directories.length !== 1)) {

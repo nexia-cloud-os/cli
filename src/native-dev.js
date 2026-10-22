@@ -14,6 +14,7 @@ import { readExecutionSelection, selectExecution } from './apps.js';
 import { startNativePreview } from './native-preview.js';
 import { startFrontendBuild } from './frontend-build.js';
 import { devPanel, devTask, serverVersionRows } from './dev-output.js';
+import { connectDatabaseTunnel } from './local-database-tunnel.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
@@ -80,6 +81,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   let writer = null, writerCheckedAt = 0;
   let connectionChecked = false, startupSelectionChecked = false;
   let preview, build, runtimeLogs, browserRuntime = null, preparationFailed = false;
+  let localDatabase, localTunnel, localTunnelClosed = false;
   // Keep the App discoverable while its current execution is unavailable.
   // A preparing identity grants no operation or source authority.
   const previewState = () => browserRuntime ? { ...browserRuntime,
@@ -101,6 +103,26 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         if (currentProject.endpoint !== scope.endpoint || currentApp.endpoint !== scope.endpoint
           || currentProject.project_id !== scope.project_id || currentApp.id !== scope.app_id) {
           throw Object.assign(new Error('App binding changed. Stop nexia dev and restore the original binding before restarting; data was retained.'), { code: 'APP_BINDING_CHANGED' });
+        }
+        if (localDatabase === undefined) {
+          const selected = await request(config, `v2/apps/${scope.app_id}/local-database`);
+          localDatabase = selected.binding ? selected : null;
+        }
+        if (localDatabase && (!localTunnel || localTunnelClosed)) {
+          if (!localDatabase.tunnel_url) throw new Error('The platform did not provide a local database tunnel address.');
+          const settings = await readLocal('local-database.json');
+          if (settings.endpoint !== scope.endpoint || settings.project_id !== scope.project_id
+              || settings.app_id !== scope.app_id || settings.binding_id !== localDatabase.binding.id
+              || settings.database !== localDatabase.binding.database_name
+              || !['127.0.0.1', '::1'].includes(settings.host)
+              || !Number.isInteger(settings.port) || settings.port < 1 || settings.port > 65535) {
+            throw new Error('Local database binding changed. Run nexia db local again before starting this App.');
+          }
+          localTunnel = await connectDatabaseTunnel({ endpoint: localDatabase.tunnel_url,
+            token: config.token, appId: scope.app_id, host: settings.host, port: settings.port, signal });
+          localTunnelClosed = false;
+          localTunnel.closed.then(() => { localTunnelClosed = true; });
+          task('running', `Local PostgreSQL tunnel connected for ${localDatabase.binding.database_name}`);
         }
         // Keep local edit detection responsive while reducing unchanged remote status reads.
         if (browserRuntime && quietDigest && Date.now() - platformCheckedAt < Math.min(15000, interval * 3)
@@ -406,6 +428,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     if (!reporter) task('error', String(error.message || error).split(/\r?\n/, 1)[0]);
     throw error;
   } finally {
+    localTunnel?.close();
     await runtimeLogs?.close(); await preview?.close(); await build?.close();
     if (writer) await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession, release: true } })
       .catch(() => detailLog('Writer release was not confirmed; it expires automatically. Runtime data was retained.'));
