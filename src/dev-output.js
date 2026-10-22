@@ -54,13 +54,25 @@ function box(title, lines, stream) {
 export function devPanel(title, rows, stream = process.stderr) {
   const width = Math.max(0, ...rows.map(([label]) => displayWidth(label)));
   const panelWidth = Number.isInteger(stream.columns) ? Math.max(24, Math.min(120, stream.columns - 2)) : Infinity;
-  const lines = rows.map(([label, value]) => {
+  const lines = rows.flatMap(([label, value]) => {
     if (value && typeof value === 'object' && value.formatted) return value.formatted;
     const limit = Math.max(12, panelWidth - width - 6);
     const rendered = value && typeof value === 'object' && value.link
         ? terminalLink(value.link, shorten(plain(value.label || value.link), limit), stream)
         : shorten(plain(value ?? '—'), limit);
     const labelText = plain(label);
+    // Plain-URL terminals ignore link labels; wrap their full destination inside the box.
+    if (displayWidth(rendered) > limit) {
+      const wrapped = [];
+      let remaining = plain(rendered);
+      while (remaining) {
+        const chunk = fit(remaining, limit + 1);
+        const heading = wrapped.length ? '' : labelText;
+        wrapped.push(`${paint(`${heading}${' '.repeat(width - displayWidth(heading))}`, 'muted', stream)}  ${chunk}`);
+        remaining = remaining.slice(chunk.length);
+      }
+      return wrapped;
+    }
     return `${paint(`${labelText}${' '.repeat(width - displayWidth(labelText))}`, 'muted', stream)}  ${rendered}`;
   });
   return box(title, lines, stream);
