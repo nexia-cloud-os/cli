@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -14,6 +14,7 @@ test('connect binds a folder; nested login preserves it; status and logout keep 
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-auth-cli-'));
   const project = { id: '12345678-1234-1234-1234-123456789abc', name: 'Test project' };
   const token = 'c'.repeat(64), calls = [];
+  let interrupted = true;
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     calls.push([req.method, req.url]);
@@ -23,6 +24,7 @@ test('connect binds a folder; nested login preserves it; status and logout keep 
       res.end(JSON.stringify({ token, user_code: 'CODE', verification_url: `${endpoint}/projects/${project.id}/connect`, expires_in: 600 }));
     } else {
       assert.equal(req.headers.authorization, `Bearer ${token}`);
+      if (interrupted) { res.writeHead(503); res.end('{}'); return; }
       res.end(JSON.stringify({ status: req.method === 'DELETE' ? 'revoked' : 'connected', project }));
     }
   });
@@ -36,7 +38,16 @@ test('connect binds a folder; nested login preserves it; status and logout keep 
     assert.ok(!`${result.stdout}${result.stderr}`.includes(token));
     return result;
   };
+  await assert.rejects(run(['connect', project.id, '--yes', '--no-browser']), error => {
+    assert.match(error.stderr, /503/);
+    assert.ok(!`${error.stdout}${error.stderr}`.includes(token));
+    return true;
+  });
+  assert.equal((await readdir(path.join(root, 'config'))).filter(name => name.startsWith('pairing-')).length, 1);
+  interrupted = false;
   await run(['connect', project.id, '--yes', '--no-browser']);
+  assert.equal(calls.filter(([, url]) => url.endsWith('/pair')).length, 1, 'connect resumes the saved approval');
+  assert.equal((await readdir(path.join(root, 'config'))).filter(name => name.startsWith('pairing-')).length, 0);
   const binding = await readFile(path.join(folder, '.nexia/project.json'), 'utf8');
   await run(['login', '--no-browser'], nested);
   assert.equal(await readFile(path.join(folder, '.nexia/project.json'), 'utf8'), binding);

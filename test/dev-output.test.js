@@ -25,6 +25,37 @@ test('server versions use only the authenticated bounded platform contract', () 
   assert.deepEqual(serverVersionRows({ core: '\u001b[31msecret', php_sdk: '0.9.3', react_sdk: '0.9.1' }), []);
 });
 
+test('plain workspace URLs stay within the dashboard width and redraw height', () => {
+  const previous = Object.fromEntries(['TERM_PROGRAM', 'WT_SESSION', 'KITTY_WINDOW_ID'].map(key => [key, process.env[key]]));
+  const url = `https://developers.nexia.to/projects/${'a'.repeat(36)}/workspace?preview=http%3A%2F%2F127.0.0.1%3A4310`;
+  try {
+    delete process.env.WT_SESSION;
+    delete process.env.KITTY_WINDOW_ID;
+    for (const terminal of ['Apple_Terminal', 'unknown']) {
+      process.env.TERM_PROGRAM = terminal;
+      for (const columns of [55, 168]) {
+        const writes = [];
+        const stream = { isTTY: true, columns, rows: 52, write: value => writes.push(value) };
+        const reporter = createDevReporter(() => {}, { stream, heartbeatMs: 0 });
+        reporter.summary([['CLI version', '0.2.0-alpha.35'], ['Workspace', { link: url, label: 'Open workspace' }]]);
+        const frame = writes.at(-1);
+        const lines = frame.trimEnd().split('\n');
+        assert.ok(lines.every(line => displayWidth(line) < columns));
+        assert.ok(lines.map(plain).join('').replace(/[│\s]/g, '').includes(url));
+        reporter.task('startup', 'success', 'Found 5 Apps');
+        assert.equal(writes.at(-2), `\x1b[${lines.length}A\r\x1b[J`);
+        assert.ok(writes.at(-1).trimEnd().split('\n').every(line => displayWidth(line) < columns));
+        reporter.close();
+      }
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test('server versions are inserted immediately after the CLI version', () => {
   const writes = [];
   const timers = { setInterval() { return { unref() {} }; }, clearInterval() {} };
