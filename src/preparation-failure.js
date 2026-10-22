@@ -7,26 +7,37 @@ export function preparationFailureDetails(failure, check) {
   const diagnostic = failure.diagnostic;
   const kinds = { undefined_method: 'Undefined method', class_not_found: 'Class not found', syntax_error: 'PHP syntax error', type_error: 'PHP type error', runtime_error: 'PHP execution error' };
   const location = diagnostic && Object.hasOwn(kinds, diagnostic.kind)
-    && /^(?:src|database|routes|config)\/[A-Za-z0-9_./-]+\.php$/.test(diagnostic.file || '')
+    && /^(?:runtime\/)?(?:src|database|routes|config|vendor|bootstrap)\/[A-Za-z0-9_./-]+\.php$/.test(diagnostic.file || '')
     && !diagnostic.file.split('/').some(part => !part || part === '.' || part === '..')
     && Number.isSafeInteger(diagnostic.line) && diagnostic.line > 0 && diagnostic.line <= 9999999
     ? `\n${kinds[diagnostic.kind]}: ${diagnostic.file}:${diagnostic.line}${typeof diagnostic.symbol === 'string' && /^[A-Za-z_][A-Za-z0-9_\\:]{0,239}$/.test(diagnostic.symbol) ? ` (${diagnostic.symbol})` : ''}` : '';
-  const stage = `Failed step: ${stages[failure.stage]}.${location}`;
+  const clean = value => value.replace(/[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g, '');
+  const message = location && typeof diagnostic.message === 'string' && diagnostic.message.length <= 16384 ? `\n${clean(diagnostic.message)}` : '';
+  const trace = location && typeof diagnostic.trace === 'string' && diagnostic.trace.length <= 16384 ? `\n${clean(diagnostic.trace)}` : '';
+  const truncated = location && diagnostic.truncated === true ? '\nException details were truncated by the size/frame limit.' : '';
+  const stage = `Failed step: ${stages[failure.stage]}.${location}${message}${trace}${truncated}`;
   if (failure.code === 'CATALOG_VALIDATION_FAILED' && failure.stage === 'catalog') {
-    const issues = Array.isArray(failure.issues) ? failure.issues.slice(0, 100) : [];
+    const issues = Array.isArray(failure.issues) ? failure.issues.slice(0, 1000) : [];
     const details = issues.filter(issue => issue && typeof issue.field === 'string'
-      && /^[a-zA-Z0-9_.:-]{1,240}$/.test(issue.field) && ['invalid', 'too_long'].includes(issue.rule)).map(issue => {
+      && /^[a-zA-Z0-9_.:-]{1,240}$/.test(issue.field) && ['invalid', 'too_long', 'query_invalid', 'query_requires_resolve', 'query_requires_paged', 'query_duplicate', 'query_field_undeclared'].includes(issue.rule)).map(issue => {
       const translation = /^catalog\.translations\.([a-zA-Z0-9_-]{1,20})\.(.+)$/.exec(issue.field);
+      const guidance = {
+        query_field_undeclared: 'This reference query key is absent from ResourceDescriptor::fieldSchema. Declare it only if it is safe to expose publicly, or remove it from querySchema(). Model resourceListFields() is a separate contract.',
+        query_duplicate: 'Remove the repeated key from querySchema().',
+        query_requires_paged: 'Query conditions require a paged reference provider; implement ResourceReferencePagedSearchContribution or remove these conditions.',
+        query_requires_resolve: 'A paged reference provider must also resolve records.',
+        query_invalid: 'Declare boolean resolve/paged capabilities and lists of unique field names (up to 1,000 keys, 80 characters each).',
+      };
       const length = issue.rule === 'too_long' && Number.isInteger(issue.limit) && issue.limit >= 1 && issue.limit <= 1048576
         && Number.isInteger(issue.actual) && issue.actual >= 0 && issue.actual <= 1048576
-        ? `maximum ${issue.limit} characters; actual ${issue.actual}` : 'invalid declaration';
+        ? `maximum ${issue.limit} characters; actual ${issue.actual}` : guidance[issue.rule] || 'invalid declaration';
       return translation
         ? `  [${issue.rule}] resources/lang/${translation[1]}.json · ${translation[2]}: ${length}`
         : `  [${issue.rule}] ${issue.field}: ${length}`;
     });
     const omitted = Number.isSafeInteger(failure.issues_omitted) && failure.issues_omitted > 0 && failure.issues_omitted <= 1048576
-      ? `  ${failure.issues_omitted} additional issue(s) omitted by the 100-issue limit.\n` : '';
-    return `[CATALOG_VALIDATION_FAILED] ${stage}\nOwner: App catalog.\n${details.length ? details.join('\n') + '\n' : ''}${omitted}Fix the reported catalog declarations and run nexia check from the App folder. Keep nexia dev running while correcting the declarations.\n`;
+      ? `  ${failure.issues_omitted} additional issue(s) omitted by the 1,000-issue limit.\n` : '';
+    return `[CATALOG_VALIDATION_FAILED] ${stage}\nOwner: App catalog.\n${issues.length ? `Catalog issues: ${issues.length + (Number.isSafeInteger(failure.issues_omitted) ? failure.issues_omitted : 0)} total; ${issues.length} shown.\n` : ''}${details.length ? details.join('\n') + '\n' : ''}${omitted}Fix the reported catalog declarations. nexia check checks source only; dynamic reference catalogs are checked by nexia dev. Keep nexia dev running while correcting the declarations.\n`;
   }
   if (failure.code === 'SDK_VERSION_MISMATCH' && failure.stage === 'dependencies'
       && typeof failure.required_sdk === 'string' && /^[0-9vVxX*^~<>=| .+\-]{1,160}$/.test(failure.required_sdk)
