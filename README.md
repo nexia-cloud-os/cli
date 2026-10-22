@@ -10,7 +10,7 @@ If an interrupted upload's source has expired before runtime preparation,
 `nexia dev` re-uploads the local source and continues. Requests already
 accepted by the platform keep their original operation and recovery identity.
 
-Public PHP/React App development tools for Node.js 22.12+ (npm 11.x), PHP 8.4+
+Public PHP/React App development tools for Node.js 22.12+ (npm 11.x), PHP 8.5.12+
 and Composer. This command interface is a breaking change: old spellings are
 rejected, not hidden aliases. Platform authentication, resource generation,
 source synchronization, database requests and version review keep their existing
@@ -36,7 +36,7 @@ to initialize its database. Run it again explicitly after writing new migrations
 file saves do not change the schema.
 
 `setup --devtools` installs/updates generators in the CLI-owned tools directory,
-not global Composer. Plain `setup` asks whether to also install/upgrade Homebrew
+not global Composer. Run it after upgrading the CLI to receive the PHP 8.5.12 App template (devtools 0.2.12+). Plain `setup` asks whether to also install/upgrade Homebrew
 PHP and Composer on macOS, shows the plan and requires confirmation. Existing
 runtime versions may change; this release does not change the installer's upgrade
 policy. On Linux/Windows install prerequisites yourself, then use `--devtools`.

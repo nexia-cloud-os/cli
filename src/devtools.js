@@ -6,7 +6,7 @@ import { onPath } from './setup.js';
 
 const toolDirectory = () => path.resolve(process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia'), 'tools', 'devtools');
 const devtoolsPackage = 'nexia-cloud-os/devtools';
-const devtoolsVersion = '^0.2';
+const devtoolsVersion = '^0.2.12';
 const previousPackages = ['nexia/devtools', 'nexia/app-devtools'];
 
 export async function installDevtools({ dryRun = false, log = console.log } = {}) {
@@ -14,7 +14,7 @@ export async function installDevtools({ dryRun = false, log = console.log } = {}
   log(`Install the PHP generators in ${directory}. Existing Apps and global Composer configuration are not changed.`);
   if (dryRun) return;
   const composer = await onPath('composer');
-  if (!composer || !await onPath('php')) throw new Error('Install PHP 8.4+ and Composer first, then run nexia setup --devtools.');
+  if (!composer || !await onPath('php')) throw new Error('Install PHP 8.5.12+ and Composer first, then run nexia setup --devtools.');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   try {
     await writeFile(path.join(directory, 'composer.json'), JSON.stringify({ require: { [devtoolsPackage]: devtoolsVersion }, config: { 'allow-plugins': false } }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
@@ -25,7 +25,7 @@ export async function installDevtools({ dryRun = false, log = console.log } = {}
   manifest.require ??= {};
   const previousVersion = previousPackages.map(name => manifest.require[name]).find(version => version !== undefined);
   const selectedVersion = manifest.require[devtoolsPackage] ?? previousVersion;
-  manifest.require[devtoolsPackage] = !selectedVersion || selectedVersion === '*' || selectedVersion === '^0.1' ? devtoolsVersion : selectedVersion;
+  manifest.require[devtoolsPackage] = !selectedVersion || selectedVersion === '*' || ['^0.1', '^0.2'].includes(selectedVersion) ? devtoolsVersion : selectedVersion;
   for (const name of previousPackages) delete manifest.require[name];
   if (JSON.stringify(manifest) !== previousManifest) {
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
