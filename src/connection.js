@@ -110,12 +110,22 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
   if (recoveryFile) {
     try {
       const saved = JSON.parse(await readFile(recoveryFile, 'utf8'));
-      if (saved.project_name !== projectName || saved.project_id !== projectId) throw new Error('An earlier project approval is pending for this folder. Resume with the same project name.');
+      if (saved.project_name !== projectName || saved.project_id !== projectId) throw new Error('An earlier project approval is pending for this folder. Resume with the same project name or ID.');
       pairing = saved.pairing;
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   if (!pairing) {
-    pairing = await request(current, 'pair', { method: 'POST', body: projectName === undefined ? { project_id: projectId } : { project_name: projectName }, authenticated: false });
+    const deadline = Date.now() + 600_000;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        pairing = await request(current, 'pair', { method: 'POST', body: projectName === undefined ? { project_id: projectId } : { project_name: projectName }, authenticated: false });
+        break;
+      } catch (error) {
+        if (error.status !== 429 || attempt >= 2 || Date.now() + error.retryAfterMs >= deadline) throw error;
+        log(`Approval requests are rate limited. Retrying in ${Math.ceil(error.retryAfterMs / 1000)} seconds…`);
+        await new Promise(resolve => setTimeout(resolve, error.retryAfterMs));
+      }
+    }
     if (recoveryFile) {
       await mkdir(configDirectory(), { recursive: true, mode: 0o700 });
       await writeFile(recoveryFile, JSON.stringify({ project_name: projectName, project_id: projectId, pairing }), { mode: 0o600, flag: 'wx' });
@@ -131,11 +141,16 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
     let result;
     try { result = await request(pending, 'connection'); }
     catch (error) {
+      if (error.status === 429 && Date.now() + error.retryAfterMs < deadline) {
+        log(`Approval checks are rate limited. Retrying the same approval in ${Math.ceil(error.retryAfterMs / 1000)} seconds…`);
+        await new Promise(resolve => setTimeout(resolve, error.retryAfterMs));
+        continue;
+      }
       // Only an explicitly expired, unapproved pairing is safe to replace.
       // Revoked or inaccessible approved projects must never create a duplicate.
       if (recoveryFile && error.status === 410 && error.platformStatus === 'pairing_expired') {
         await rm(recoveryFile);
-        log('Unapproved pairing expired. Run the same create project command to request a new approval.');
+        log('Unapproved pairing expired. Run the same command to request a new approval.');
       }
       throw error;
     }
@@ -148,5 +163,5 @@ export async function login(projectId, { log = console.log, pollMs = 2000, openB
     }
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
-  throw new Error('Browser approval expired. Run login again.');
+  throw new Error('Browser approval wait ended. Run the same command to resume approval.');
 }
