@@ -2,7 +2,7 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, lstat, writeFile, rename } from 'node:fs/promises';
 import { setup } from './setup.js';
 import { retryDevRead } from './dev-retry.js';
 import { updateCli } from './update.js';
@@ -18,6 +18,8 @@ import { workspaceDev } from './workspace-dev.js';
 import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
 import { runDatabaseOperation } from './database-operations.js';
+import { setupLocalDatabase } from './local-database.js';
+import { registerApp } from './apps.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
 import { Cancelled, createInput, language, message } from './input.js';
@@ -305,6 +307,23 @@ try {
         const devOptions = { verbose: options.verbose === true, signal: shutdown.signal, port, container: options.container === true, app: selectedApps, reporter: devReporter, log, onStatus: value => session.update(value) };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+    } else if (name === 'db local') {
+      const directory = await findApp();
+      if (!directory) throw new InputError('Run nexia db local from the selected App folder.');
+      if (!await exists(path.join(directory, '.nexia', 'app.json'))) await registerApp(directory, { log });
+      const binding = await databaseBinding(directory);
+      await input.confirm(`Prepare local PostgreSQL ${process.env.PGDATABASE || '(set PGDATABASE)'} for ${binding.app.key}. This creates exactly two App roles and key-only Core reference tables. Existing App data is retained.`);
+      input.close();
+      const local = await setupLocalDatabase(binding.config, binding.app.id);
+      const file = path.join(directory, '.nexia', 'local-database.json');
+      const existing = await lstat(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('Invalid local database connection file.');
+      const temporary = `${file}.${randomUUID()}.tmp`;
+      await writeFile(temporary, JSON.stringify({ endpoint: binding.config.endpoint, project_id: binding.project.project_id,
+        app_id: binding.app.id, binding_id: local.id, database: local.database_name,
+        host: process.env.PGHOST || '127.0.0.1', port: Number(process.env.PGPORT || 5432) }) + '\n', { mode: 0o600, flag: 'wx' });
+      await rename(temporary, file);
+      console.log(`Local App database ready: ${local.database_name} (${local.id}). Keep nexia dev running to serve the sandbox runtime.`);
     } else if (name === 'db access') {
       const directory = await findApp();
       if (!directory) throw new InputError('Run nexia db access from the selected App folder.');

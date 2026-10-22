@@ -254,6 +254,34 @@ Do not commit `.nexia/` or copy the private global CLI credential file.
 
 From an App folder, `nexia db access` registers your SQL client's public IPv4 address and shows the existing App runtime DB account. The account can read and write App data. Use `--ip <address>` to allow another public IP, and `--revoke` to close external access. Use TLS hostname verification (`verify-full`). The DB account expires with the sandbox.
 
+To keep one development App's data on your PC, **use your existing local PostgreSQL server and create an empty, dedicated database**. `nexia db local` does not install or start PostgreSQL and does not create the database itself. In DBeaver, connect to the local server's existing `postgres` database with an administrator account, open its SQL editor, and run `CREATE DATABASE nexia_app;`. Then connect DBeaver to `nexia_app` to confirm it exists. You can also use `createdb -h 127.0.0.1 -p 5432 -U postgres nexia_app`. Use a different database name for each App. The account passed to `nexia db local` must be able to create login roles and an App schema in that database; a PostgreSQL cluster administrator such as `postgres` has the required permissions.
+
+From the App folder in a connected project with an active sandbox, set `PGHOST=127.0.0.1`, `PGPORT=5432`, `PGDATABASE=nexia_app`, `PGUSER` to that administrator account, and `PGPASSWORD` to its password, then run `nexia db local`. It registers App metadata first if needed, without starting runtime execution. The command creates the existing App migrator and runtime roles, copies only Core reference IDs needed by App foreign keys, and saves the non-secret connection settings in `.nexia/local-database.json`. The administrator password stays on your PC and is not saved in that file; clear `PGPASSWORD` from the shell after setup. Run this before the App's first sandbox migration; an App already allocated on the managed database cannot be moved silently.
+
+If you do not have a local PostgreSQL server, Docker is one optional way to run one. This macOS/zsh example initializes `nexia_app` only when the named volume is new; keep that volume if the App data should survive container replacement. Run it from the selected App folder **before the first `nexia dev`**.
+
+```sh
+printf 'Local PostgreSQL administrator password: '
+read -rs POSTGRES_PASSWORD
+printf '\n'
+export POSTGRES_PASSWORD
+docker run -d --name nexia-local-pg \
+  -e POSTGRES_PASSWORD -e POSTGRES_DB=nexia_app \
+  -p 127.0.0.1:55432:5432 \
+  -v nexia-local-pg-data:/var/lib/postgresql/data \
+  postgres:17
+docker exec nexia-local-pg pg_isready -U postgres -d nexia_app
+export PGHOST=127.0.0.1 PGPORT=55432 PGDATABASE=nexia_app PGUSER=postgres
+export PGPASSWORD="$POSTGRES_PASSWORD"
+nexia db local
+unset POSTGRES_PASSWORD PGPASSWORD
+nexia dev
+```
+
+Wait for `pg_isready` to report that PostgreSQL accepts connections before running `nexia db local`. Keep this terminal running `nexia dev`. Open a **second terminal** in the same App folder for `nexia db migrate`, `nexia db status`, and later migration commands. For an already running local PostgreSQL server, skip the Docker steps and create the dedicated DB with `createdb`; use its actual loopback port and administrator account in the `PG*` variables.
+
+Start or restart `nexia dev` after setup. While it runs, the CLI keeps an authenticated tunnel to the sandbox Manager, which forwards the App's PostgreSQL traffic to your loopback database. The App stops when that tunnel is unavailable; keep PostgreSQL and `nexia dev` running for migrations, SQL access and requests. Run `nexia db local` again when new Core reference IDs are needed. Existing reference IDs are retained so local App foreign keys remain valid. Local `db reset` and `db fresh` are unavailable; `migrate`, `status`, `rollback`, and `refresh` use the selected local database. This mode requires matching Core, CLI and Manager versions and an operator-configured tunnel endpoint.
+
 `nexia dev` watches source without applying migrations or initialization. Keep it running while writing migration files. From the App folder in another terminal, run `nexia db migrate` when ready. The command uploads the current local source, pins that revision, and waits for completion; the watcher then resumes. A new App waits for its first explicit migration without administrator review. Development migrations can be rolled back, edited and run again. Published migration files remain immutable; add new files for published version upgrades.
 
 From the project root, DB commands run all Apps sequentially; `--app=people` selects one, and an App folder selects that App. A failed App does not skip later Apps; any failure produces a nonzero exit code. `db status` lists migration files, batches and changed/missing/interrupted diagnostics, plus the last command. Status does not boot App PHP or initialize its schema. `db rollback` reverses the last batch (`--step` or `--batch` selects a range), `db reset` runs every `down()`, `db refresh` rolls back then migrates, and `db fresh` erases only the selected development schemas before migrating. Destructive commands confirm all selected Apps once.
