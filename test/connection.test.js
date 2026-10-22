@@ -166,3 +166,58 @@ test('preparation conflicts distinguish waiting from review and reject unsafe di
     return true;
   });
 });
+
+
+test('pairing respects Retry-After for creation and polling without replacing the pending token', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-pair-rate-limit-'));
+  process.env.NEXIA_CONFIG_HOME = root;
+  t.after(async () => { delete process.env.NEXIA_CONFIG_HOME; await rm(root, { recursive: true, force: true }); });
+  const endpoint = 'https://example.test';
+  const project = { id: '12345678-1234-1234-1234-123456789abc', name: 'Test' };
+  const token = 'd'.repeat(64), lines = [];
+  let pairs = 0, polls = 0, pairLimitedAt, pollLimitedAt;
+  await setEndpoint(endpoint);
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url.endsWith('/pair')) {
+      if (++pairs === 1) {
+        pairLimitedAt = Date.now();
+        return new Response('{}', { status: 429, headers: { 'Retry-After': '1' } });
+      }
+      assert.ok(Date.now() - pairLimitedAt >= 1000);
+      return Response.json({ token, user_code: 'CODE', verification_url: `${endpoint}/connect`, expires_in: 600 });
+    }
+    assert.equal(options.headers.Authorization, `Bearer ${token}`);
+    if (++polls === 1) {
+      pollLimitedAt = Date.now();
+      return new Response('{}', { status: 429, headers: { 'Retry-After': '1' } });
+    }
+    assert.ok(Date.now() - pollLimitedAt >= 1000);
+    return Response.json({ status: 'connected', project });
+  });
+  const connected = await login(project.id, { recoveryKey: root, openBrowser: false, log: line => lines.push(line) });
+  assert.equal(pairs, 2);
+  assert.equal(polls, 2);
+  assert.equal((await readConnection()).token, token);
+  assert.equal(JSON.parse(await readFile(connected.recoveryFile, 'utf8')).pairing.token, token);
+  assert.ok(!lines.join(' ').includes(token));
+});
+
+test('pairing does not replay an ambiguous POST or wait beyond its retry budget', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-pair-retry-budget-'));
+  process.env.NEXIA_CONFIG_HOME = root;
+  t.after(async () => { delete process.env.NEXIA_CONFIG_HOME; await rm(root, { recursive: true, force: true }); });
+  const projectId = '12345678-1234-1234-1234-123456789abc';
+  await saveConnection({ endpoint: 'https://example.test', token: 'existing-approved-token' });
+  let status = 503, pairs = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    pairs++;
+    return new Response('{}', { status, headers: { 'Retry-After': '600' } });
+  });
+  const options = { recoveryKey: root, openBrowser: false, log: () => {} };
+  await assert.rejects(login(projectId, options), { status: 503 });
+  assert.equal(pairs, 1);
+  status = 429;
+  await assert.rejects(login(projectId, options), { status: 429 });
+  assert.equal(pairs, 2);
+  assert.equal((await readConnection()).token, 'existing-approved-token');
+});

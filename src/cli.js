@@ -71,7 +71,7 @@ async function authenticate(projectId, options, workspace) {
   const endpoint = workspace?.endpoint || process.env.NEXIA_ENDPOINT || config.endpoint;
   validateEndpoint(endpoint);
   if (endpoint !== config.endpoint) await setEndpoint(endpoint);
-  return login(projectId, { log, ...(options['no-browser'] ? { openBrowser: false } : {}) });
+  return login(projectId, { recoveryKey: workspace?.root || process.cwd(), log, ...(options['no-browser'] ? { openBrowser: false } : {}) });
 }
 async function review(input, options, title, makePlan) {
   let plan = await makePlan();
@@ -210,6 +210,7 @@ try {
       } else {
         console.log(message('Signed in. Run nexia status, then nexia dev. Restart any watcher using the previous login.', '로그인했습니다. nexia status로 확인한 뒤 nexia dev를 실행하세요. 이전 인증으로 실행 중인 watcher는 재시작하세요.'));
       }
+      if (connected.recoveryFile) await rm(connected.recoveryFile);
     } else if (name === 'logout') {
       await input.confirm(message(
         'Sign out of this CLI login. Local watchers are not stopped; run nexia stop first if needed. Project bindings, sandbox data and the browser login remain. Remote CLI requests will require nexia login again.',
