@@ -88,6 +88,7 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
     assert.fail(messages.join('\n'));
   };
   const first = await waitForApps(1);
+  assert.ok(!messages.some(value => /DONE.*App registration confirmed/.test(value)), 'registration alone is not development readiness');
   assert.ok(messages.some(message => message.includes(`Local address  ${url}`)), 'print the actual listening address separately, including dynamically assigned ports');
   const metadata = path.join(root, 'people/composer.json'), before = await readFile(metadata, 'utf8');
   await writeFile(metadata, '{ broken');

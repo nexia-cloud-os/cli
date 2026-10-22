@@ -183,7 +183,7 @@ for (const expired of [true, false]) {
     assert.equal(uploads, expired ? 2 : 1);
     assert.equal(submissions.length, expired ? 2 : 1);
     if (expired) {
-      assert.ok(tasks.some(task => task.state === 'pending' && task.detail === 'Platform queue has not started runtime preparation…'));
+      assert.ok(tasks.some(task => task.state === 'running' && task.detail === 'Platform queue has not started runtime preparation…'));
       assert.notEqual(saved.request_id, oldRequest);
       assert.equal(saved.revision_id, restoredRevision);
       assert.ok(saved.operation_id);
@@ -719,7 +719,7 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
   process.env.NEXIA_CONFIG_HOME = root;
   const shutdown = new AbortController();
   const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
-  let operation, readPreview, interrupted = false, recovered = false, submissions = 0;
+  let operation, readPreview, interrupted = false, recovered = false, submissions = 0, preparationReads = 0;
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const input = raw ? JSON.parse(raw) : null;
@@ -747,9 +747,12 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
     else if (req.method === 'POST' && req.url.endsWith('/v2/runtime-operations')) {
       submissions++;
       operation = { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
-        developer_project_id: project, developer_sandbox_id: sandbox, status: 'completed' };
+        developer_project_id: project, developer_sandbox_id: sandbox, status: 'queued' };
       result = { operation };
-    } else if (req.url.includes('/v2/runtime-operations/')) result = { operation };
+    } else if (req.url.includes('/v2/runtime-operations/')) {
+      operation.status = ++preparationReads === 1 ? 'running' : 'completed';
+      result = { operation };
+    }
     else { res.writeHead(404).end('{}'); return; }
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
   });
@@ -765,11 +768,11 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
   await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
   await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
   await writeFile(path.join(root, 'composer.json'), '{}');
-  const statuses = [];
+  const statuses = [], notices = [];
   const deadline = setTimeout(() => shutdown.abort(), 10000);
   try {
     await nativeDev(root, { ...(interruption === 'source-busy' ? {} : { reporter: {
-      summary() {}, message() {}, resolve() { return false; },
+      summary() {}, message(_name, value) { notices.push(value); }, resolve() { return false; },
       task(_name, state, detail) {
         statuses.push({ state, detail });
         if (state === 'success' && recovered) shutdown.abort();
@@ -789,6 +792,10 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
   assert.equal(submissions, 1);
   if (interruption !== 'source-busy') {
     assert.equal(statuses.filter(item => item.state === 'success').length, 2);
-    assert.ok(statuses.some(item => item.state === 'running' && /retrying|Waiting/.test(item.detail)));
+    assert.ok(!statuses.some(item => item.state === 'pending'), 'runtime queueing must not return an active preparation to WAITING');
+    const ready = statuses.findIndex(item => item.state === 'success');
+    assert.ok(statuses.slice(ready).every(item => ['success', 'stopped'].includes(item.state)), 'poll interruptions must not regress readiness');
+    assert.ok(notices.some(value => /retrying|Waiting/.test(value)));
+    if (interruption === 429) assert.ok(notices.some(value => value.includes(`/developer-api/v2/apps/${app}/database-operations`)));
   }
 });

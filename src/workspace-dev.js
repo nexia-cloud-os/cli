@@ -132,7 +132,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
           const before = await readFile(path.join(app.directory, 'nexia.json'), 'utf8');
           await registerApp(app.directory, { log: () => {} });
           if (before !== await readFile(path.join(app.directory, 'nexia.json'), 'utf8')) throw new Error('App metadata changed during registration; waiting for a stable definition.');
-          output.task(app.name, 'success', 'App registration confirmed');
+          output.task(app.name, 'running', 'App registered; preparing development…');
           const controller = new AbortController();
           const worker = { key: app.key, controller, done: null };
           workers.set(app.directory, worker);
