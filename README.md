@@ -66,6 +66,7 @@ an App repository. Project/App instructions are created without overwriting your
 | `db seed [key]` | Run an App Seeder or named fixture |
 | `db rollback/reset/refresh/fresh` | Explicit development migration lifecycle |
 | `db status` | Show migration files, batches and diagnostics |
+| `db access` | Show the selected App sandbox's existing runtime DB account |
 | `submit` | Submit an existing Git version tag for review |
 | `submit list [--page N]` | List recent submissions for this project or App |
 | `submit status\|cancel\|retry [id]` | Choose a recent submission, or use an explicit ID |
@@ -250,6 +251,8 @@ wins during re-authentication. Changing endpoint clears the old authentication.
 Do not commit `.nexia/` or copy the private global CLI credential file.
 
 ## Database and submission
+
+From an App folder, `nexia db access` registers your SQL client's public IPv4 address and shows the existing App runtime DB account. The account can read and write App data. Use `--ip <address>` to allow another public IP, and `--revoke` to close external access. Use TLS hostname verification (`verify-full`). The DB account expires with the sandbox.
 
 `nexia dev` watches source without applying migrations or initialization. Keep it running while writing migration files. From the App folder in another terminal, run `nexia db migrate` when ready. The command uploads the current local source, pins that revision, and waits for completion; the watcher then resumes. A new App waits for its first explicit migration without administrator review. Development migrations can be rolled back, edited and run again. Published migration files remain immutable; add new files for published version upgrades.
 

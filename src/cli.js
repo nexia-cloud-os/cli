@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { mkdir, readFile, readdir, rm, lstat, writeFile } from 'node:fs/promises';
 import { setup } from './setup.js';
 import { retryDevRead } from './dev-retry.js';
@@ -304,6 +305,41 @@ try {
         const devOptions = { verbose: options.verbose === true, signal: shutdown.signal, port, container: options.container === true, app: selectedApps, reporter: devReporter, log, onStatus: value => session.update(value) };
         await (workspace ? workspaceDev(workspace, devOptions) : nativeDev(directory, devOptions));
       } finally { await session?.close(); process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+    } else if (name === 'db access') {
+      const directory = await findApp();
+      if (!directory) throw new InputError('Run nexia db access from the selected App folder.');
+      const binding = await databaseBinding(directory);
+      const route = `v2/apps/${binding.app.id}/database-access`;
+      let state = await request(binding.config, route);
+      if (state.status === 'needs_review' && !options.revoke) throw new Error('The database gateway credential needs platform operator review.');
+      if (options.revoke) {
+        await input.confirm(`Close external SQL access for ${binding.app.key}. Saved App data is retained.`);
+        input.close();
+        state = await request(binding.config, route, { method: 'DELETE' });
+        console.log(`Database access: ${state.status}. Existing sessions are being closed.`);
+      } else {
+        if (options.ip || ['off', 'revoked'].includes(state.status)) {
+          const address = await input.text('ip', 'SQL client public IPv4 address', {
+            value: options.ip || state.observed_ip, required: true,
+            validate: value => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value),
+          });
+          await input.confirm(`Allow the existing App runtime DB account to connect from ${address}. This account can write App data.`);
+          state = await request(binding.config, route, { method: 'POST', body: { addresses: [address] } });
+        }
+        input.close();
+        for (let attempt = 0; attempt < 36 && !['ready', 'needs_review', 'expired', 'revoked'].includes(state.status); attempt++) {
+          await delay(5000);
+          const current = await readConnection();
+          if (current.endpoint !== binding.config.endpoint || current.token !== binding.config.token) throw new Error('Login changed while waiting; check the selected App and rerun nexia db access.');
+          state = await request(binding.config, route);
+        }
+        if (state.status !== 'ready') throw new Error(`Database access is ${state.status}.${state.status === 'needs_review' ? ' Ask the platform operator to review the database role.' : ' Retry nexia db access after the platform finishes applying it.'}`);
+        let connection = state.connection;
+        try { connection = await request(binding.config, `${route}/reveal`, { method: 'POST' }); }
+        catch (error) { if (error.status !== 409) throw error; }
+        if (!connection) throw new Error('Gateway access changed while revealing the password. Run nexia db access again.');
+        console.log(`App: ${binding.app.key}\nHost: ${connection.host}\nPort: ${connection.port}\nDatabase: ${connection.database}\nSchema: ${connection.schema}\nUser: ${connection.username}\nSSL mode: ${connection.ssl_mode}\nExpires with sandbox: ${state.expires_at}\nPassword: ${connection.password}`);
+      }
     } else if (name.startsWith('db ')) {
       const action = name.split(' ')[1], directories = await appTargets(options, input, { all: true });
       if (options['request-id'] && (!isUuid(options['request-id']) || directories.length !== 1)) {
