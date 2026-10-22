@@ -150,7 +150,7 @@ try {
       // Restart explicitly so the requested operation never runs with the old loaded modules.
     } else if (name === 'setup') {
       const generatorsOnly = await input.boolean('devtools', message('Install App generators only? Choose No to also install/upgrade PHP and Composer (macOS).', '앱 생성 도구만 설치할까요? 아니요를 선택하면 PHP·Composer도 설치/업그레이드합니다 (macOS).'), false);
-      if (!generatorsOnly && process.platform !== 'darwin') throw new InputError('Automatic system installation supports macOS only. Install PHP 8.4+ and Composer, then run nexia setup --devtools.');
+      if (!generatorsOnly && process.platform !== 'darwin') throw new InputError('Automatic system installation supports macOS only. Install PHP 8.5.12+ and Composer, then run nexia setup --devtools.');
       await input.confirm(generatorsOnly ? 'Install/update managed PHP App generators.' : 'Install/upgrade Homebrew PHP and Composer, then install/update managed App generators. Existing runtime versions may change.');
       input.close();
       if (!generatorsOnly) await setup({ dryRun: options['dry-run'] });
