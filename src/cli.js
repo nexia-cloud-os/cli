@@ -258,7 +258,7 @@ try {
         catch (error) { failed = true; log(error.message); }
       }
       if (failed) throw new Error('One or more App checks failed. See the results above.');
-      console.log('Source checks passed. Runtime behavior, review and production deployment were not verified.');
+      console.log('Source checks passed. Dynamic reference querySchema/fieldSchema catalogs were not evaluated; nexia dev validates them in isolation. Runtime behavior, review and production deployment were not verified.');
     } else if (name === 'dev config') {
       const workspace = await findWorkspace(process.cwd());
       if (!workspace) throw new InputError('Run nexia dev config inside a connected project.');

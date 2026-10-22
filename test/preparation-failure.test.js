@@ -93,3 +93,23 @@ test('database probe lists every bounded platform issue without exposing private
   assert.match(output, /App code did not run/);
   assert.doesNotMatch(output, /secret|password|Correct the reported App error/);
 });
+
+test('reference query failures identify the resource and show 1000 issues with omitted counts', () => {
+  const issues = Array.from({ length: 1000 }, (_, index) => ({ field: `contracts.sample.note.query.sortable.field_${index}`, rule: 'query_field_undeclared' }));
+  const message = preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues, issues_omitted: 7 });
+  assert.match(message, /field_999/);
+  assert.match(message, /1007 total; 1000 shown/);
+  assert.match(message, /7 additional issue\(s\) omitted/);
+  assert.match(message, /ResourceDescriptor::fieldSchema/);
+  assert.match(message, /resourceListFields\(\) is a separate contract/);
+});
+
+test('developer exceptions display the message stack and truncation notice', () => {
+  const message = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'catalog', diagnostic: {
+    kind: 'runtime_error', file: 'runtime/vendor/example/Library.php', line: 42,
+    message: 'Missing public_id', trace: 'src/Module.php:12 declare', truncated: true,
+  } });
+  assert.match(message, /Missing public_id/);
+  assert.match(message, /src\/Module.php:12 declare/);
+  assert.match(message, /truncated/);
+});
