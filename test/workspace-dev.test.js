@@ -8,6 +8,7 @@ import path from 'node:path';
 import { saveConnection } from '../src/connection.js';
 import { bindWorkspace } from '../src/workspace.js';
 import { workspaceDev } from '../src/workspace-dev.js';
+import { startDevSession, listDevSessions } from '../src/dev-sessions.js';
 
 for (const selected of [false, true]) test(`project dev ${selected ? 'only watches selected Apps' : 'registers hot-added Apps'} on the same port`, { timeout: 20000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-project-dev-'));
@@ -60,9 +61,12 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
   await addApp('people');
   if (selected) await addApp('ignored');
   const shutdown = new AbortController();
+  const session = await startDevSession(root, { port: 4310, projectId: project.id, stop: () => shutdown.abort() });
+  t.after(() => session.close());
+  const sessionApps = async () => (await listDevSessions(root))[0].apps;
   let url;
   const messages = [];
-  const running = workspaceDev(workspace, { signal: shutdown.signal, port: 0, ...(selected ? { app: ['people', 'payroll'] } : {}), log: message => {
+  const running = workspaceDev(workspace, { signal: shutdown.signal, port: 0, onStatus: value => session.update(value), ...(selected ? { app: ['people', 'payroll'] } : {}), log: message => {
     messages.push(message);
     const match = message.match(/Local address\s+(http:\/\/[^\s]+)/);
     if (match) url = match[1];
@@ -88,6 +92,7 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
     assert.fail(messages.join('\n'));
   };
   const first = await waitForApps(1);
+  assert.deepEqual(await sessionApps(), ['people']);
   assert.ok(!messages.some(value => /DONE.*App registration confirmed/.test(value)), 'registration alone is not development readiness');
   assert.ok(messages.some(message => message.includes(`Local address  ${url}`)), 'print the actual listening address separately, including dynamically assigned ports');
   const metadata = path.join(root, 'people/composer.json'), before = await readFile(metadata, 'utf8');
@@ -95,6 +100,7 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
   await new Promise(resolve => setTimeout(resolve, 1500));
   assert.ok(messages.some(message => message.includes('Invalid JSON in')));
   assert.ok(!messages.some(message => message.includes('Local watch removed')));
+  assert.deepEqual(await sessionApps(), ['people']);
   await writeFile(metadata, before);
   const projectFile = path.join(root, '.nexia/project.json'), projectBefore = await readFile(projectFile, 'utf8');
   await writeFile(projectFile, '{ broken');
@@ -106,7 +112,12 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
   assert.equal(registrations.size, 2);
   assert.equal(registrations.has('ignored'), false);
   assert.equal(operations.size, 2);
+  assert.deepEqual(await sessionApps(), ['people', 'payroll']);
+  await rm(path.join(root, 'people'), { recursive: true });
+  await waitForApps(1);
+  assert.deepEqual(await sessionApps(), ['payroll']);
   shutdown.abort(); await running;
+  assert.deepEqual(await sessionApps(), []);
 });
 
 test('inactive sandbox reports its actual status without suggesting data recovery', async t => {
