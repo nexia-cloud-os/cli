@@ -582,6 +582,10 @@ development. Failed submission checks include reasons; correct the App and submi
 a new Git tag. There is no development recovery command or administrator retry
 approval. Keep `.nexia`, existing data and migration history.
 
+Failed sandbox SQL access is retried with `nexia db access`; it does not require
+an operator approval. Retry keeps the sandbox SQL identity and all App data.
+Persistent server or platform failures remain visible to platform operations.
+
 Applied migration files must retain their original contents. Use new migrations
 for subsequent changes. A partially applied nontransactional migration still
 requires its database effects to be corrected; keeping the watcher open does not
