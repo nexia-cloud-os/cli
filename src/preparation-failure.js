@@ -1,5 +1,11 @@
+import { cleanupStatus } from './cleanup-status.js';
 /** Only known diagnostics are rendered. */
 export function preparationFailureDetails(failure, check) {
+  const cleanup = cleanupStatus([{ operation: null, observations: check?.cleanup }]);
+  return failureDetails(failure, check) + cleanup;
+}
+
+function failureDetails(failure, check) {
   const stages = { source: 'source validation', database_probe: 'database access check', dependencies: 'PHP dependencies',
     catalog: 'App catalog', migration_preflight: 'applied migration source check', migrate: 'database migrations', initialize: 'App initialization', serve: 'backend startup',
     references: 'resource references', ingress: 'workspace routing', operator: 'platform preparation' };
