@@ -66,7 +66,7 @@ an App repository. Project/App instructions are created without overwriting your
 | `db seed [key]` | Run an App Seeder or named fixture |
 | `db rollback/reset/refresh/fresh` | Explicit development migration lifecycle |
 | `db status` | Show migration files, batches and diagnostics |
-| `db access` | Show the selected App sandbox's existing runtime DB account |
+| `db access` | Show one SQL account for all Apps in your personal sandbox |
 | `submit` | Submit an existing Git version tag for review |
 | `submit list [--page N]` | List recent submissions for this project or App |
 | `submit status\|cancel\|retry [id]` | Choose a recent submission, or use an explicit ID |
@@ -252,7 +252,15 @@ Do not commit `.nexia/` or copy the private global CLI credential file.
 
 ## Database and submission
 
-From an App folder, `nexia db access` registers your SQL client's public IPv4 address and shows the existing App runtime DB account. The account can read and write App data. Use `--ip <address>` to allow another public IP, and `--revoke` to close external access. Use TLS hostname verification (`verify-full`). The DB account expires with the sandbox.
+Run `nexia db access` from the connected project root or an App folder inside it. One personal sandbox account can read and write all managed App data. The CLI shows IP registration, server/gateway progress and elapsed time, then prints connection details and an **App name → schema name** list. Core data, database administration and App schema DDL are excluded. Use existing App CLI commands such as `nexia db migrate` for schema changes.
+
+Create **one** PostgreSQL connection in DBeaver using the printed `Host`, `Port`, `Database`, `User` and `Password`. Select SSL `verify-full` and keep the printed hostname. Find each App in `App schemas`. New managed App schemas include the App name, such as `dev_people_<identity>`; existing schema names and data are preserved. This does not install PostgreSQL or create a database on your computer.
+
+The account is separate from App runtime credentials. Stopping `nexia dev` or replacing an App execution does not replace it. Reuse the connection while the sandbox and your development access remain valid. New App schemas receive access during server synchronization; subsequent migration tables receive DML privileges automatically. Refresh DBeaver's schema list; do not rerun `db access` for every new App. Data stored in an App's local PostgreSQL database is not part of this server connection.
+
+When watching all Apps, `nexia dev` discovers an App created with `nexia create app` in another terminal. If watching selected Apps, restart with a selection that includes the new App. After registration and database preparation, run `nexia db migrate` in that App's folder.
+
+Use `nexia db access --ip <public-ipv4>` when your SQL client's public address changes, or `nexia db access --revoke` to close this personal sandbox SQL account's external connections while retaining data. Sandbox expiry/deletion or removal of development access ends access. Replace old per-App connection details with the new sandbox account. The new CLI requires matching Core and database gateway updates.
 
 To keep one development App's data on your PC, **use your existing local PostgreSQL server and create an empty, dedicated database**. `nexia db local` does not install or start PostgreSQL and does not create the database itself. In DBeaver, connect to the local server's existing `postgres` database with an administrator account, open its SQL editor, and run `CREATE DATABASE nexia_app;`. Then connect DBeaver to `nexia_app` to confirm it exists. You can also use `createdb -h 127.0.0.1 -p 5432 -U postgres nexia_app`. Use a different database name for each App. The account passed to `nexia db local` must be able to create login roles and an App schema in that database; a PostgreSQL cluster administrator such as `postgres` has the required permissions.
 

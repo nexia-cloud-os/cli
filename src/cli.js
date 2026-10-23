@@ -326,39 +326,53 @@ try {
       await rename(temporary, file);
       console.log(`Local App database ready: ${local.database_name} (${local.id}). Keep nexia dev running to serve the sandbox runtime.`);
     } else if (name === 'db access') {
-      const directory = await findApp();
-      if (!directory) throw new InputError('Run nexia db access from the selected App folder.');
-      const binding = await databaseBinding(directory);
-      const route = `v2/apps/${binding.app.id}/database-access`;
-      let state = await request(binding.config, route);
-      if (state.status === 'needs_review' && !options.revoke) throw new Error('The database gateway credential needs platform operator review.');
+      const workspace = await findWorkspace(process.cwd()), directory = await findApp();
+      const project = workspace || (directory ? await readBinding(directory, 'project.json') : null);
+      if (!project || !isUuid(project.project_id || '')) throw new InputError('Run nexia db access from the connected project or one of its App folders.');
+      const config = await readConnection();
+      const session = await request(config, 'connection');
+      if (session.status !== 'connected' || session.project?.id !== project.project_id
+          || validateEndpoint(project.endpoint) !== validateEndpoint(config.endpoint)) throw new InputError('Folder and login differ. Run nexia login from the intended project.');
+      const route = 'v2/database-access';
+      let state;
+      try { state = await request(config, route); }
+      catch (error) {
+        if (error.status === 404) throw new Error('Update Core to support one database connection per personal sandbox.');
+        throw error;
+      }
+      if (!isUuid(state.sandbox_id || '')) throw new Error('Platform returned an invalid sandbox database scope.');
+      const sandboxId = state.sandbox_id;
+      if (state.status === 'needs_review' && !options.revoke) throw new Error('Sandbox database access needs platform operator review.');
       if (options.revoke) {
-        await input.confirm(`Close external SQL access for ${binding.app.key}. Saved App data is retained.`);
+        await input.confirm(`Close external SQL access to your sandbox in ${session.project.name}. App data is retained.`);
         input.close();
-        state = await request(binding.config, route, { method: 'DELETE' });
-        console.log(`Database access: ${state.status}. Existing sessions are being closed.`);
+        state = await request(config, route, { method: 'DELETE' });
+        console.log(`Database access: ${state.status}. This sandbox SQL account's existing sessions are being closed.`);
       } else {
         if (options.ip || ['off', 'revoked'].includes(state.status)) {
           const address = await input.text('ip', 'SQL client public IPv4 address', {
             value: options.ip || state.observed_ip, required: true,
             validate: value => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value),
           });
-          await input.confirm(`Allow the existing App runtime DB account to connect from ${address}. This account can write App data.`);
-          state = await request(binding.config, route, { method: 'POST', body: { addresses: [address] } });
+          await input.confirm(`Allow one SQL account to read and write all App data in your personal sandbox for ${session.project.name} from ${address}. Core data and schema changes are excluded.`);
+          log(message('Registering sandbox database access…', '샌드박스 DB 접속 권한을 등록하고 있습니다…'));
+          state = await request(config, route, { method: 'POST', body: { addresses: [address] } });
         }
         input.close();
+        const started = Date.now();
         for (let attempt = 0; attempt < 36 && !['ready', 'needs_review', 'expired', 'revoked'].includes(state.status); attempt++) {
+          log(message(`Database access: ${state.status} — ${Math.floor((Date.now() - started) / 1000)}s elapsed; waiting for server and gateway (up to 3 minutes).`,
+            `DB 접속 준비: ${state.status} — ${Math.floor((Date.now() - started) / 1000)}초 경과 · 서버와 게이트웨이 적용 대기 중 (최대 3분)`));
           await delay(5000);
           const current = await readConnection();
-          if (current.endpoint !== binding.config.endpoint || current.token !== binding.config.token) throw new Error('Login changed while waiting; check the selected App and rerun nexia db access.');
-          state = await request(binding.config, route);
+          if (current.endpoint !== config.endpoint || current.token !== config.token) throw new Error('Login changed while waiting. Rerun nexia db access from the intended project.');
+          state = await request(config, route);
+          if (state.sandbox_id !== sandboxId) throw new Error('The personal sandbox changed. Rerun nexia db access.');
         }
-        if (state.status !== 'ready') throw new Error(`Database access is ${state.status}.${state.status === 'needs_review' ? ' Ask the platform operator to review the database role.' : ' Retry nexia db access after the platform finishes applying it.'}`);
-        let connection = state.connection;
-        try { connection = await request(binding.config, `${route}/reveal`, { method: 'POST' }); }
-        catch (error) { if (error.status !== 409) throw error; }
-        if (!connection) throw new Error('Gateway access changed while revealing the password. Run nexia db access again.');
-        console.log(`App: ${binding.app.key}\nHost: ${connection.host}\nPort: ${connection.port}\nDatabase: ${connection.database}\nSchema: ${connection.schema}\nUser: ${connection.username}\nSSL mode: ${connection.ssl_mode}\nExpires with sandbox: ${state.expires_at}\nPassword: ${connection.password}`);
+        if (state.status !== 'ready') throw new Error(`Database access is ${state.status}.${state.status === 'needs_review' ? ' Ask the platform operator to review this sandbox SQL account.' : ' The request is retained; rerun nexia db access to check progress.'}`);
+        const connection = await request(config, `${route}/reveal`, { method: 'POST' });
+        if (!connection?.password || connection.sandbox_id !== sandboxId) throw new Error('Sandbox access changed while revealing credentials. Rerun nexia db access.');
+        console.log(`Project: ${session.project.name}\nSandbox: ${sandboxId}\nHost: ${connection.host}\nPort: ${connection.port}\nDatabase: ${connection.database}\nUser: ${connection.username}\nSSL mode: ${connection.ssl_mode}\nExpires with sandbox: ${state.expires_at}\nPassword: ${connection.password}\nApp schemas:\n${(state.schemas ?? []).map(row => `  ${row.app}: ${row.schema}`).join('\n') || '  No managed App schemas yet; new App schemas are granted automatically.'}\nUse one DBeaver connection for all these Apps. Run schema migrations with nexia db migrate.`);
       }
     } else if (name.startsWith('db ')) {
       const action = name.split(' ')[1], directories = await appTargets(options, input, { all: true });

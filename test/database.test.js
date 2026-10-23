@@ -257,3 +257,51 @@ test('database waiting survives throttling and failed shutdown without replaying
   assert.match(logs.join('\n'), /normally clears shortly/);
   assert.match(logs.join('\n'), /request limit reached/);
 });
+
+test('db access uses one project sandbox connection from root or App and rejects a different login', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-sandbox-access-'));
+  const project = '22222222-2222-4222-8222-222222222222';
+  const sandbox = '33333333-3333-4333-8333-333333333333';
+  const calls = [];
+  let loggedInProject = project;
+  let state = { sandbox_id: sandbox, status: 'off', observed_ip: '1.1.1.1', schemas: [
+    { app: 'people', schema: 'dev_people' }, { app: 'payroll', schema: 'dev_payroll' },
+  ], expires_at: '2030-01-01T00:00:00Z' };
+  const server = createServer(async (req, res) => {
+    calls.push([req.method, req.url]);
+    for await (const part of req) { /* consume the allowlist body */ }
+    let body;
+    if (req.url.endsWith('/connection')) body = { status: 'connected', project: { id: loggedInProject, name: 'Example' } };
+    else if (req.url.endsWith('/v2/database-access/reveal')) body = { sandbox_id: sandbox, host: 'db.example.test', port: 5432,
+      database: 'personal_sandbox', username: 'dev_s_example', password: 'fixture-only', ssl_mode: 'verify-full' };
+    else if (req.url.endsWith('/v2/database-access')) {
+      if (req.method === 'POST') state = { ...state, status: 'ready' };
+      if (req.method === 'DELETE') state = { ...state, status: 'revoked' };
+      body = state;
+    } else { res.statusCode = 404; body = { message: 'Unexpected route' }; }
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); });
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  const workspace = path.join(root, 'project'), appRoot = path.join(workspace, 'people');
+  await mkdir(path.join(workspace, '.nexia'), { recursive: true }); await mkdir(appRoot);
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-token' }), { mode: 0o600 });
+  await writeFile(path.join(workspace, '.nexia', 'project.json'), JSON.stringify({ schema_version: 1, kind: 'project', endpoint, project_id: project }));
+  await writeFile(path.join(appRoot, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'people', app_table_prefix: 'people_' } }));
+  const env = { ...process.env, NEXIA_CONFIG_HOME: root, NEXIA_LANG: 'en' };
+  for (const cwd of [workspace, appRoot]) {
+    const { stdout } = await execute(process.execPath, [cli, 'db', 'access', '--yes'], { cwd, env });
+    assert.match(stdout, /people: dev_people/); assert.match(stdout, /payroll: dev_payroll/);
+    assert.match(stdout, /User: dev_s_example/); assert.match(stdout, /one DBeaver connection/);
+  }
+  assert.equal(calls.filter(([method]) => method === 'POST').length, 3); // One registration, two reveals.
+  assert.ok(calls.every(([, url]) => !url.includes('/apps/')));
+  loggedInProject = sandbox;
+  const previous = calls.length;
+  await assert.rejects(execute(process.execPath, [cli, 'db', 'access', '--yes'], { cwd: workspace, env }), /Folder and login differ/);
+  assert.equal(calls.length, previous + 1);
+  loggedInProject = project;
+  const { stdout } = await execute(process.execPath, [cli, 'db', 'access', '--revoke', '--yes'], { cwd: workspace, env });
+  assert.match(stdout, /revoked/);
+});
