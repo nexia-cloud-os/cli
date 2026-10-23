@@ -23,7 +23,7 @@ export const commands = {
   'db migrate': { description: ['Apply current App migrations and wait for completion', '현재 앱 마이그레이션 적용 및 완료 대기'], options: ['app', 'request-id', 'json', 'yes', 'step', 'pretend'] },
   'db seed': { argument: 'key', description: ['Run an App Seeder or a named fixture', '앱 Seeder 또는 지정한 fixture 실행'], options: ['app', 'request-id', 'json', 'yes', 'class'] },
   'db status': { description: ['Inspect migration files and batches', '마이그레이션 파일별 상태·배치 조회'], options: ['app', 'json', 'request-id'] },
-  'db access': { description: ['Show this App sandbox runtime DB account', '현재 앱 샌드박스 실행용 DB 계정 표시'], options: ['ip', 'revoke', 'yes'] },
+  'db access': { description: ['Connect to all Apps in your personal sandbox', '개인 샌드박스의 모든 앱 DB 접속 정보 표시'], options: ['ip', 'revoke', 'yes'] },
   'db local': { description: ['Use this App database on the developer PC', '이 앱의 DB를 개발자 PC에서 사용'], options: ['yes'] },
   'db rollback': { description: ['Roll back the last batch or selected range', '마지막 배치 또는 지정 범위 롤백'], options: ['app', 'request-id', 'json', 'yes', 'step', 'batch', 'pretend'] },
   'db reset': { description: ['Roll back all migrations using down()', '모든 마이그레이션을 down()으로 롤백'], options: ['app', 'request-id', 'json', 'yes', 'pretend'] },
