@@ -264,6 +264,7 @@ test('db access uses one project sandbox connection from root or App and rejects
   const sandbox = '33333333-3333-4333-8333-333333333333';
   const calls = [];
   let loggedInProject = project;
+  let registrationFailure = null;
   let state = { sandbox_id: sandbox, status: 'off', observed_ip: '1.1.1.1', schemas: [
     { app: 'people', schema: 'dev_people' }, { app: 'payroll', schema: 'dev_payroll' },
   ], expires_at: '2030-01-01T00:00:00Z' };
@@ -275,7 +276,7 @@ test('db access uses one project sandbox connection from root or App and rejects
     else if (req.url.endsWith('/v2/database-access/reveal')) body = { sandbox_id: sandbox, host: 'db.example.test', port: 5432,
       database: 'personal_sandbox', username: 'dev_s_example', password: 'fixture-only', ssl_mode: 'verify-full' };
     else if (req.url.endsWith('/v2/database-access')) {
-      if (req.method === 'POST') state = { ...state, status: 'ready' };
+      if (req.method === 'POST') state = { ...state, status: registrationFailure || 'ready' };
       if (req.method === 'DELETE') state = { ...state, status: 'revoked' };
       body = state;
     } else { res.statusCode = 404; body = { message: 'Unexpected route' }; }
@@ -297,6 +298,22 @@ test('db access uses one project sandbox connection from root or App and rejects
   }
   assert.equal(calls.filter(([method]) => method === 'POST').length, 3); // One registration, two reveals.
   assert.ok(calls.every(([, url]) => !url.includes('/apps/')));
+  for (const status of ['failed', 'needs_review']) {
+    state = { ...state, status };
+    const count = calls.filter(([method, url]) => method === 'POST' && url.endsWith('/v2/database-access')).length;
+    const { stdout } = await execute(process.execPath, [cli, 'db', 'access', '--yes'], { cwd: workspace, env });
+    assert.match(stdout, /User: dev_s_example/);
+    assert.equal(calls.filter(([method, url]) => method === 'POST' && url.endsWith('/v2/database-access')).length, count + 1);
+    assert.doesNotMatch(stdout, /operator review/);
+  }
+  registrationFailure = 'needs_review';
+  state = { ...state, status: 'failed' };
+  await assert.rejects(execute(process.execPath, [cli, 'db', 'access', '--yes'], { cwd: workspace, env }), error => {
+    assert.match(error.stderr, /Database access is failed.*retry/);
+    assert.doesNotMatch(error.stderr, /needs_review|operator review/);
+    return true;
+  });
+  registrationFailure = null;
   loggedInProject = sandbox;
   const previous = calls.length;
   await assert.rejects(execute(process.execPath, [cli, 'db', 'access', '--yes'], { cwd: workspace, env }), /Folder and login differ/);
