@@ -59,13 +59,14 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
   if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
   const preview = await startNativePreview(null, { workspaceOrigin, port, container, apps: new Map() });
   launch.searchParams.set('preview', preview.url);
-  onStatus({ status: 'watching', workspace_url: launch.href });
+  onStatus({ status: 'watching', workspace_url: launch.href, apps: [] });
   output.summary([
     ['Project', connection.project.name],
     ['Workspace', { link: launch.href, label: 'Open workspace' }],
     [message('Local address', '로컬 주소'), preview.url],
   ]);
   const workers = new Map(), messages = new Map(), retryAt = new Map();
+  const reportApps = () => onStatus({ apps: [...workers.values()].map(worker => worker.key) });
   const report = (key, name, state, detail) => {
     const value = `${state}:${detail}`;
     if (messages.get(key) !== value) { messages.set(key, value); output.task(name, state, detail); }
@@ -136,13 +137,17 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
           const controller = new AbortController();
           const worker = { key: app.key, controller, done: null };
           workers.set(app.directory, worker);
+          reportApps();
           worker.done = nativeDev(app.directory, { verbose, signal: controller.signal, previewHost: preview, interval: 10000,
             reporter: output, taskName: app.name, log: value => output.message(app.name, value, { verbose }),
           }).catch(error => reportFailure(app.directory, app.name, error, {
             summary: 'App execution unavailable; watching continues',
             next: 'Correct the reported issue. This App will be checked again automatically.',
           })).finally(() => {
-            if (workers.get(app.directory) === worker) workers.delete(app.directory);
+            if (workers.get(app.directory) === worker) {
+              workers.delete(app.directory);
+              reportApps();
+            }
           });
         } catch (error) {
           reportFailure(app.directory, app.name, error);
