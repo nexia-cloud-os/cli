@@ -120,14 +120,18 @@ for (const selected of [false, true]) test(`project dev ${selected ? 'only watch
   assert.deepEqual(await sessionApps(), []);
 });
 
-test('inactive sandbox reports its actual status without suggesting data recovery', async t => {
+test('failed sandbox retries once and preserves the failure guidance if preparation still fails', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-inactive-sandbox-'));
   const previous = process.env.NEXIA_CONFIG_HOME;
   process.env.NEXIA_CONFIG_HOME = root;
   const project = randomUUID();
-  const server = createServer((_req, res) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
-    status: 'connected', project: { id: project }, capabilities: { personal_sandboxes: true }, sandbox: { status: 'failed' },
-  })));
+  let retries = 0;
+  const server = createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/developer-api/sandbox') retries++;
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+      status: 'connected', project: { id: project }, capabilities: { personal_sandboxes: true }, sandbox: { status: 'failed' },
+    }));
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
@@ -141,8 +145,39 @@ test('inactive sandbox reports its actual status without suggesting data recover
   }), error => {
     assert.equal(error.code, 'SANDBOX_NOT_ACTIVE');
     assert.match(error.message, /status: failed/);
-    assert.match(error.message, /failure details/);
+    assert.equal(retries, 1);
+    assert.match(error.message, /run nexia dev again to resume safely/);
     assert.doesNotMatch(error.message, /renew or recover/);
     return true;
   });
+});
+
+
+test('failed sandbox resumes through the existing prepare endpoint before local development starts', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-resume-sandbox-'));
+  const previous = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  const project = randomUUID(), abort = new AbortController();
+  let endpoint, retries = 0, ready = false;
+  const server = createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/developer-api/sandbox') retries++;
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+      status: 'connected', project: { id: project, name: 'Retry' }, capabilities: { personal_sandboxes: true },
+      sandbox: { status: retries ? 'active' : 'failed', workspace_url: 'http://sandbox.localhost:8081', launch_url: `${endpoint}/projects/${project}/workspace` },
+    }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  endpoint = `http://127.0.0.1:${server.address().port}`;
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+  await workspaceDev({ root, endpoint, project_id: project }, {
+    signal: abort.signal, port: 0,
+    reporter: { task(_id, state) { if (state === 'success') { ready = true; abort.abort(); } }, summary() {} },
+  });
+  assert.equal(retries, 1);
+  assert.equal(ready, true);
 });
