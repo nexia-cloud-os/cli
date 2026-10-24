@@ -104,3 +104,15 @@ export async function runDatabaseOperation(directory, binding, { command, option
 export function formatDatabaseError(error) {
   return `${error.file ?? ''}${error.line ? `:${error.line}` : ''}: ${error.kind}${error.object ? ` (${error.object})` : ''}${error.sqlstate ? ` [${error.sqlstate}]` : ''}. ${error.outcome === 'rolled_back' ? 'This migration transaction was rolled back.' : 'The database outcome is not confirmed; inspect the schema before retrying.'}`;
 }
+
+
+export function formatSeedingResult(result) {
+  if (!Array.isArray(result?.seed_versions)) return '';
+  const rows = result.seed_versions.slice(0, 200).filter(row => Number.isSafeInteger(row?.version) && row.version > 0
+    && ['applied', 'skipped', 'changed', 'removed'].includes(row.status));
+  const lines = rows.map(row => `Seeding version ${row.version}: ${row.status === 'applied' ? 'applied' : row.status === 'skipped' ? 'already completed; skipped' : 'already completed; changed source was not rerun'}`);
+  if (rows.some(row => ['changed', 'removed'].includes(row.status))) {
+    lines.push('Development is not blocked. For a clean test, nexia db fresh deletes this App development database; then run nexia db seed. Preserve published versions and add a new corrective version before publication. No administrator approval is needed.');
+  }
+  return lines.join('\n');
+}

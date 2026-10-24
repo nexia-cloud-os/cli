@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { cleanupStatus } from './cleanup-status.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,7 +18,7 @@ import { startDevSession, listDevSessions, stopDevSessions, formatSessions } fro
 import { workspaceDev } from './workspace-dev.js';
 import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
-import { runDatabaseOperation } from './database-operations.js';
+import { runDatabaseOperation, formatSeedingResult } from './database-operations.js';
 import { setupLocalDatabase } from './local-database.js';
 import { registerApp } from './apps.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
@@ -33,6 +34,7 @@ const formatAppStatus = apps => ['APP\tGIT\tGIT TAG (LAST CHECK)\tSUBMITTED TAG\
   const state = app.release_status;
   return [app.key, state?.git_status ?? 'unknown', state?.git_tag ?? state?.git_tag_status ?? 'unknown', state?.submitted_tag ?? '—', state?.published_version ?? '—', state?.deployed_version ?? '—'].join('\t')
     + (state?.git_tag_checked_at ? `\n  Git checked: ${state.git_tag_checked_at}` : '')
+    + cleanupStatus(app.cleanup)
     + (state?.deployment_environment ? `\n  Deployment: ${state.deployment_environment} (${state.deployment_status ?? 'unknown'})` : '');
 })].join('\n');
 
@@ -413,7 +415,7 @@ try {
         }
       }
       const failed = results.filter(result => result.status === 'failed').length;
-      const summary = results.map(result => result.database_result?.statements?.length ? `${result.app}:\n${result.database_result.statements.join('\n')}` : result.database_result?.migrations ? `${result.app}:${result.database_result.inventory_complete === false ? '\nApp migration declarations could not be loaded. Showing database history and conventional migration files; custom pending paths may be incomplete.' : ''}\nStatus  Batch Migration\n${result.database_result.migrations.map(row => `${row.status === 'ran' ? 'Ran' : 'Pending'}  ${row.batch ?? '-'}  ${row.name}${row.diagnostic ? ` (${row.diagnostic})` : ''}`).join('\n')}` : result.error ? `${result.app}: failed — ${result.error.message}`
+      const summary = results.map(result => result.database_result?.seed_versions ? `${result.app}:\n${formatSeedingResult(result.database_result)}` : result.database_result?.statements?.length ? `${result.app}:\n${result.database_result.statements.join('\n')}` : result.database_result?.migrations ? `${result.app}:${result.database_result.inventory_complete === false ? '\nApp migration declarations could not be loaded. Showing database history and conventional migration files; custom pending paths may be incomplete.' : ''}\nStatus  Batch Migration\n${result.database_result.migrations.map(row => `${row.status === 'ran' ? 'Ran' : 'Pending'}  ${row.batch ?? '-'}  ${row.name}${row.diagnostic ? ` (${row.diagnostic})` : ''}`).join('\n')}` : result.error ? `${result.app}: failed — ${result.error.message}`
         : `${result.app}: ${result.operation ? `${result.operation.database_command}: ${result.operation.status} (${result.operation.id})` : 'No App database operation has been requested.'}`).join('\n');
       output(options, { ...(results.length === 1 ? results[0] : {}), command: action, results, failed },
         `${summary}${action === 'status' ? results.filter(row => row.last_operation).map(row => `\n${row.app}: last command ${row.last_operation.database_command} — ${row.last_operation.status}${row.last_operation.database_result?.error ? ` (${row.last_operation.database_result.error.kind})` : ''}`).join('') : ''}\n${results.length - failed} succeeded, ${failed} failed.`);

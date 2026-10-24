@@ -31,8 +31,8 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
   }
   output.summary(serverVersionRows(connection.platform_versions), { after: 'CLI version' });
   if (!connection.capabilities?.personal_sandboxes) throw new Error('This platform must be upgraded to support project development with personal sandboxes.');
-  if (!connection.sandbox) {
-    if (!(await discoverApps(workspace.root)).apps.length) {
+  if (!connection.sandbox || connection.sandbox.status === 'failed') {
+    if (!connection.sandbox && !(await discoverApps(workspace.root)).apps.length) {
       output.task('workspace', 'pending', 'Waiting for the first App before preparing a sandbox');
       while (!signal?.aborted && !(await discoverApps(workspace.root)).apps.length) {
         await delay(1000, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
@@ -42,7 +42,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     connection = await request(config, 'sandbox', { method: 'POST', body: {} });
   }
   while (connection.sandbox?.status === 'provisioning' && !signal?.aborted) {
-    output.task('workspace', 'running', 'Preparing personal sandbox…');
+    output.task('workspace', 'running', `Preparing personal sandbox${connection.sandbox.preparation_step ? ` (${connection.sandbox.preparation_step})` : ''}…`);
     await delay(5000, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
     if (signal?.aborted) return;
     const selected = await readConnection();
@@ -51,7 +51,7 @@ export async function workspaceDev(workspace, { signal, verbose = false, port = 
     if (!connection) return;
   }
   if (connection.sandbox?.status !== 'active') {
-    throw Object.assign(new Error(`Personal sandbox is not active (status: ${connection.sandbox?.status || 'unknown'}).\nOpen this project's sandbox settings in Developers and check its status and failure details. Follow the next action shown for that sandbox status; do not reset App data.\nRetry nexia dev once the sandbox is active. Local source and data were not reset.`), { code: 'SANDBOX_NOT_ACTIVE' });
+    throw Object.assign(new Error(`Personal sandbox is not active (status: ${connection.sandbox?.status || 'unknown'}).${connection.sandbox?.preparation_step ? ` Preparation stopped at: ${connection.sandbox.preparation_step}.` : ''}\nOpen this project's sandbox settings in Developers and check its status and failure details. Follow the next action shown for that sandbox status; do not reset App data.\nFor a failed preparation, run nexia dev again to resume safely, or select Retry preparation in the project's sandbox settings. Local source and data were not reset.`), { code: 'SANDBOX_NOT_ACTIVE' });
   }
   output.task('workspace', 'success', 'Personal sandbox ready');
   const workspaceOrigin = validateEndpoint(connection.sandbox.workspace_url);

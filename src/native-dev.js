@@ -284,8 +284,12 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             || (state.operation_id && operation.id !== state.operation_id)) throw new Error('Platform returned a conflicting runtime operation.');
           cancelled = operation.status === 'failed' && operation.stopped_at && selection.revision > (state.selection_revision ?? 0);
           const waitingForMigration = operation.status === 'failed' && operation.failure?.code === 'DATABASE_MIGRATION_REQUIRED';
-          if (waitingForMigration && operation.retry_allowed && databaseOperation?.status === 'completed'
-              && Date.parse(databaseOperation.created_at) >= Date.parse(operation.created_at)) cancelled = true;
+          if (waitingForMigration) {
+            // Only a completed schema command can clear this prerequisite; source edits and status reads cannot.
+            cancelled = operation.retry_allowed === true && databaseOperation?.status === 'completed'
+              && ['migrate', 'reset', 'refresh', 'fresh', 'rollback', 'rollback_all'].includes(databaseOperation.database_command)
+              && Date.parse(databaseOperation.created_at) >= Date.parse(operation.created_at);
+          }
           if (writer && (operation.writer_generation ?? state.writer_generation) !== writer.generation) {
             const reviewed = operation.status === 'failed' && operation.stopped_at && operation.retry_allowed === true;
             if (operation.status !== 'completed' && !cancelled && !reviewed && !(operation.status === 'failed' && !operation.started_at)) throw preparationFailure(operation);
@@ -320,8 +324,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             }
             lastStatus = status;
           }
-          if (waitingForMigration && operation.retry_allowed && uploadedSource.revision.digest !== state.digest) cancelled = true;
-          if (waitingForMigration && !cancelled && !renewWriter) {
+          if (waitingForMigration && !cancelled) {
             browserRuntime = null;
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
