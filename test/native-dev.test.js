@@ -657,16 +657,21 @@ test('first dev waits for explicit migration and file saves never submit databas
       capabilities: { explicit_development_migrations: true }, sandbox: { id: sandbox, status: 'active',
         workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
     else if (req.url.endsWith('/execution')) payload = { selection: { app_id: app, project_id: project,
-      sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+      sandbox_id: sandbox, mode: 'development', revision: waitingPolls >= 2 ? 2 : 1, stop_pending: false } };
     else if (req.url.endsWith('/database-operations')) {
       assert.equal(req.method, 'GET', 'watcher must not authorize database writes');
-      if (waitingPolls && ++waitingPolls === 4) database = { id: randomUUID(), database_command: 'migrate',
+      if (waitingPolls && ++waitingPolls === 2) {
+        database = { id: randomUUID(), database_command: 'status', developer_project_id: project,
+          developer_sandbox_id: sandbox, status: 'completed', created_at: '2026-10-14T05:00:00Z' };
+      }
+      if (waitingPolls === 4) database = { id: randomUUID(), database_command: 'migrate',
         developer_project_id: project, developer_sandbox_id: sandbox, status: 'completed', created_at: '2026-10-14T05:00:00Z' };
       payload = { operation: database };
     } else if (req.url.endsWith('/v2/sources')) {
       uploads++;
       payload = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
     } else if (req.url.endsWith('/v2/runtime-operations')) {
+      if (submissions > 0) assert.equal(database?.database_command, 'migrate', 'status reads and selection changes must not retry migration-required preparation');
       submissions++;
       assert.equal(input.database_command, undefined);
       const operation = { id: submissions === 1 ? first : randomUUID(), request_id: input.request_id,
