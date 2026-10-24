@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { cleanupStatus } from './cleanup-status.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -33,6 +34,7 @@ const formatAppStatus = apps => ['APP\tGIT\tGIT TAG (LAST CHECK)\tSUBMITTED TAG\
   const state = app.release_status;
   return [app.key, state?.git_status ?? 'unknown', state?.git_tag ?? state?.git_tag_status ?? 'unknown', state?.submitted_tag ?? '—', state?.published_version ?? '—', state?.deployed_version ?? '—'].join('\t')
     + (state?.git_tag_checked_at ? `\n  Git checked: ${state.git_tag_checked_at}` : '')
+    + cleanupStatus(app.cleanup)
     + (state?.deployment_environment ? `\n  Deployment: ${state.deployment_environment} (${state.deployment_status ?? 'unknown'})` : '');
 })].join('\n');
 
