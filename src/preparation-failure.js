@@ -7,7 +7,7 @@ export function preparationFailureDetails(failure, check) {
 
 function failureDetails(failure, check) {
   const stages = { source: 'source validation', database_probe: 'database access check', dependencies: 'PHP dependencies',
-    catalog: 'App catalog', migration_preflight: 'applied migration source check', migrate: 'database migrations', initialize: 'App initialization', seed: 'App fixture seeding', serve: 'backend startup',
+    catalog: 'App catalog', migration_preflight: 'applied migration source check', migrate: 'database migrations', initialize: 'App initialization', seed: 'App seeding', serve: 'backend startup',
     references: 'resource references', ingress: 'workspace routing', operator: 'platform preparation' };
   if (!failure || !Object.hasOwn(stages, failure.stage)) return '';
   const diagnostic = failure.diagnostic;
@@ -68,7 +68,7 @@ function failureDetails(failure, check) {
     return `[${failure.code}] ${stage}\nOwner: ${failure.code === 'MIGRATION_OWNERSHIP_MISMATCH' ? 'platform database allocation' : 'App migration state'}.\n${causes[failure.code]}\n${files ? `${files}\n` : ''}No App code ran in this attempt. Do not reset data or delete migration history.\n`;
   }
   if (failure.code === 'PREPARATION_FAILED' && failure.stage === 'seed') {
-    return `[PREPARATION_FAILED] ${stage}\nOwner: ${location ? 'App fixture or its prerequisites' : 'undetermined fixture execution'}.\nCheck the fixture and its prerequisites, then explicitly rerun nexia db seed <key> --app <app>. Existing data is retained; do not reset the database. A transport failure can leave the outcome uncertain, so inspect the result before retrying.\n`;
+    return `[PREPARATION_FAILED] ${stage}\nOwner: ${location ? 'App seeder or its prerequisites' : 'undetermined seeding execution'}.\nCorrect the reported seeder or prerequisite, then rerun the same nexia db seed command (include the fixture key only for named fixtures). Completed versions are retained; no database reset or administrator approval is needed. A transport failure can leave the outcome uncertain, so inspect the result before retrying.\n`;
   }
   if (failure.code === 'PREPARATION_FAILED') {
     const action = { source: 'Check the App manifest and uploaded source.', catalog: 'Check App metadata and contribution declarations.',

@@ -56,6 +56,16 @@ export function formatSubmission(result) {
       if (['failed', 'error', 'blocked'].includes(check.status)) {
         if (check.key === 'migration_history') {
           for (const finding of (check.details?.findings ?? []).slice(0, 100)) {
+            if (finding.kind === 'seed_version' && Number.isSafeInteger(finding.version) && finding.version > 0
+                && ['changed', 'removed', 'out_of_order'].includes(finding.reason)) {
+              const release = typeof finding.release_version === 'string' && /^[0-9A-Za-z.+-]{1,100}$/.test(finding.release_version) ? finding.release_version : 'previous release';
+              lines.push(`    Seeding version ${finding.version}: ${finding.reason} since App ${release}. Restore the published Seeder and register a corrective Seeder in a new version. Development remains available without administrator approval.`);
+              for (const file of (Array.isArray(finding.files) ? finding.files : []).slice(0, 200)) {
+                if (typeof file === 'string' && /^[A-Za-z0-9_./-]+\.php$/.test(file)) lines.push(`      ${file}`);
+              }
+              if (/^[a-f0-9]{64}$/.test(finding.published_sha256 ?? '')) lines.push(`    Published seeding hash: ${finding.published_sha256}`);
+              if (/^[a-f0-9]{64}$/.test(finding.source_digest ?? '')) lines.push(`    Published source hash: ${finding.source_digest}`);
+            }
             if (typeof finding.migration === 'string' && /^[A-Za-z0-9_-]{1,255}$/.test(finding.migration) && ['changed', 'removed'].includes(finding.reason)) {
               lines.push(`    ${finding.migration}.php: ${finding.reason} since publication`);
             }

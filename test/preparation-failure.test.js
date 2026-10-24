@@ -119,7 +119,7 @@ test('fixture failures identify the real step and preserve a safe explicit retry
   const message = preparationFailureDetails({code: 'PREPARATION_FAILED', stage: 'seed',
     diagnostic: {kind: 'runtime_error', file: 'src/Contribution/Demo.php', line: 12,
       message: 'Configure the customer reference.', trace: '', truncated: false}});
-  assert.match(message, /App fixture seeding/);
+  assert.match(message, /App seeding/);
   assert.match(message, /src\/Contribution\/Demo.php:12/);
   assert.match(message, /Configure the customer reference/);
   assert.match(message, /nexia db seed/);
