@@ -136,3 +136,16 @@ test('submission migration history failures identify each changed or removed fil
   assert.match(output, /001_employees.php: changed since publication/);
   assert.match(output, /002_sites.php: removed since publication/);
 });
+
+
+test('published seeder changes identify original version, file and hashes without blocking development', () => {
+  const output = formatSubmission({ submission: { id: '22222222-2222-4222-8222-222222222222', status: 'failed', tag: 'v2.0.0' }, review: { checks: [{ key: 'migration_history', status: 'failed', details: { findings: [
+    { kind: 'seed_version', version: 1, release_version: '1.0.0', reason: 'changed', files: ['src/Database/Seeders/Defaults.php', '../secret'], published_sha256: 'a'.repeat(64), source_digest: 'b'.repeat(64) },
+  ] } }] } });
+  assert.match(output, /Seeding version 1/);
+  assert.match(output, /1.0.0/);
+  assert.match(output, /src\/Database\/Seeders\/Defaults.php/);
+  assert.match(output, /a{64}/);
+  assert.doesNotMatch(output, /secret/);
+  assert.match(output, /no administrator permission is needed/i);
+});

@@ -113,3 +113,16 @@ test('developer exceptions display the message stack and truncation notice', () 
   assert.match(message, /src\/Module.php:12 declare/);
   assert.match(message, /truncated/);
 });
+
+
+test('fixture failures identify the real step and preserve a safe explicit retry path', () => {
+  const message = preparationFailureDetails({code: 'PREPARATION_FAILED', stage: 'seed',
+    diagnostic: {kind: 'runtime_error', file: 'src/Contribution/Demo.php', line: 12,
+      message: 'Configure the customer reference.', trace: '', truncated: false}});
+  assert.match(message, /App seeding/);
+  assert.match(message, /src\/Contribution\/Demo.php:12/);
+  assert.match(message, /Configure the customer reference/);
+  assert.match(message, /nexia db seed/);
+  assert.doesNotMatch(message, /Owner: platform|restore platform service/);
+  assert.match(preparationFailureDetails({code: 'PREPARATION_FAILED', stage: 'seed'}), /outcome uncertain/);
+});

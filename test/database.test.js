@@ -322,3 +322,19 @@ test('db access uses one project sandbox connection from root or App and rejects
   const { stdout } = await execute(process.execPath, [cli, 'db', 'access', '--revoke', '--yes'], { cwd: workspace, env });
   assert.match(stdout, /revoked/);
 });
+
+
+test('versioned seeding reports skipped changes and a developer-owned reset path', async () => {
+  const { formatSeedingResult } = await import('../src/database-operations.js');
+  const text = formatSeedingResult({ seed_versions: [
+    { version: 1, status: 'skipped' }, { version: 2, status: 'applied' }, { version: 3, status: 'changed' },
+    { version: '\x1b[31m', status: 'changed' }, { version: 4, status: 'injected' },
+  ] });
+  assert.match(text, /version 1: already completed; skipped/);
+  assert.match(text, /version 2: applied/);
+  assert.match(text, /version 3: already completed; changed source was not rerun/);
+  assert.match(text, /fresh deletes this App development database/);
+  assert.match(text, /No administrator approval is needed/);
+  assert.doesNotMatch(text, /injected|31m/);
+  assert.equal(formatSeedingResult({}), '');
+});
