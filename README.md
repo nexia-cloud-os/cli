@@ -632,3 +632,5 @@ claimed when the SDK has not scheduled one; type-only and PHP annotations are
 not detected by the emitted-JavaScript import check.
 
 Versioned seeding records each version in its own transaction. Failed versions can be fixed and retried without administrator approval; completed versions are skipped. Editing completed code produces a development warning. `db fresh --seed` deletes the selected App development data and history before running all versions. Full `db refresh --seed` also clears seeding history; `db rollback` only reverses migrations. Published seeder changes must be restored and implemented as a new version/class before publication. Named `db seed demo` fixtures and explicit `--class` calls remain repeatable and do not update version checkpoints.
+
+CLI alpha.42 sandbox self-recovery requires Core 0.8.153. Versioned seeding also requires PHP SDK 0.10.11 and Manager alpha.76 runtime adoption; upgrading the CLI alone does not upgrade a sandbox runtime.
