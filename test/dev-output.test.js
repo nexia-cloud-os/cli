@@ -206,7 +206,7 @@ test('live frames reserve the cursor row even with overflowing details or summar
   }
 });
 
-test('long failure headlines and all diagnostic lines survive outside the live dashboard', () => {
+test('long failure diagnostics are retained once below the final dashboard', () => {
   for (const isTTY of [false, true]) {
     const output = [];
     const reporter = createDevReporter(value => output.push(value), {
@@ -216,10 +216,35 @@ test('long failure headlines and all diagnostic lines survive outside the live d
     const lines = Array.from({ length: 20 }, (_, i) => `diagnostic-${i}`);
     reporter.failure('dev', new Error([headline, ...lines].join('\n')));
     reporter.task('other', 'running', 'Preparing');
+    reporter.close();
     const text = output.map(value => value.split('\n').map(plain).join('\n')).join('\n');
     const unwrapped = text.replace(/✕ dev  /g, '').replace(/\n/g, '');
     assert.ok(unwrapped.includes(headline));
     for (const line of lines) assert.ok(text.includes(line));
     reporter.close();
+  }
+});
+
+
+test('structured preparation failures are red and never printed above the live dashboard', () => {
+  const output = [];
+  const previous = { NO_COLOR: process.env.NO_COLOR, TERM: process.env.TERM };
+  delete process.env.NO_COLOR; process.env.TERM = 'xterm';
+  try {
+    const reporter = createDevReporter(() => {}, {
+      stream: { isTTY: true, columns: 120, rows: 40, write: value => output.push(value) }, heartbeatMs: 0,
+    });
+    reporter.task('payroll', 'error', 'Migration required');
+    reporter.message('payroll', '[DATABASE_MIGRATION_REQUIRED] Run nexia db migrate.', { failure: true });
+    const frame = output.at(-1);
+    assert.match(frame, /\x1b\[31m\[DATABASE_MIGRATION_REQUIRED\]/);
+    assert.equal(plain(frame).split('[DATABASE_MIGRATION_REQUIRED]').length - 1, 1);
+    assert.ok(output.every(value => !plain(value).startsWith('Details')));
+    reporter.close();
+    assert.equal(plain(output.at(-1)).split('[DATABASE_MIGRATION_REQUIRED]').length - 1, 1);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
   }
 });
