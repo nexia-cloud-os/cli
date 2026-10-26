@@ -257,9 +257,24 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         let renewWriter = false;
         if (state?.source_update) {
           const pending = state.source_update;
-          const result = await request(config, `v2/runtime-operations/${state.operation_id}/source`, { method: 'POST', body: {
-            source_revision_id: pending.revision_id, request_id: pending.request_id, writer_session: writerSession,
-          } });
+          let result;
+          try {
+            result = await request(config, `v2/runtime-operations/${state.operation_id}/source`, { method: 'POST', body: {
+              source_revision_id: pending.revision_id, request_id: pending.request_id, writer_session: writerSession,
+            } });
+          } catch (error) {
+            if (error.status !== 409) throw error;
+            const { operation: previous } = await request(config, `v2/runtime-operations/${state.operation_id}`);
+            if (previous?.id !== state.operation_id || previous.developer_project_id !== scope.project_id
+                || previous.developer_sandbox_id !== scope.sandbox_id || !previous.stopped_at
+                || !['completed', 'failed', 'needs_review'].includes(previous.status)) throw error;
+            // A confirmed stop cannot accept code updates; retain the pending source for fresh preparation.
+            await persist({ ...scope, revision_id: pending.revision_id, digest: pending.digest,
+              runtime_digest: pending.runtime_digest, request_id: randomUUID(), selection_revision: selection.revision,
+              ...(writer ? { writer_generation: writer.generation } : {}) });
+            notice('The previous execution has stopped. Preparing the pending source again; data is retained.');
+            continue;
+          }
           const update = result.update;
           if (update?.id !== pending.request_id || update.operation_id !== state.operation_id
               || update.source_revision_id !== pending.revision_id || result.operation?.id !== state.operation_id

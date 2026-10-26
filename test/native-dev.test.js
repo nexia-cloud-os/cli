@@ -19,10 +19,12 @@ const managedDatabase = handler => async (req, res) => {
 };
 const createServer = handler => httpServer(managedDatabase(handler));
 
-for (const mode of ['legacy', 'failed', 'persistent']) {
+for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfirmed-update', 'foreign-update']) {
   const safeFailure = mode === 'failed';
-  const persistent = mode === 'persistent';
-  test(persistent ? 'successive Backend edits retain one execution and retry ambiguous source-update responses' : safeFailure
+  const conflict = mode.endsWith('-update');
+  const recover = mode === 'stopped-update';
+  const persistent = mode === 'persistent' || conflict;
+  test(conflict ? `source update conflict recovery: ${mode}` : persistent ? 'successive Backend edits retain one execution and retry ambiguous source-update responses' : safeFailure
     ? 'stopped App execution failure accepts corrected source without administrator approval'
     : 'frontend-only edits reuse a completed runtime and the next Backend edit uploads complete source', async t => {
     const root = await mkdtemp(path.join(tmpdir(), 'nexia-frontend-reuse-'));
@@ -60,6 +62,13 @@ for (const mode of ['legacy', 'failed', 'persistent']) {
         const operation = operations.values().next().value;
         assert.equal(req.url.split('/').at(-2), operation.id);
         assert.ok(input.writer_session);
+        if (conflict) {
+          if (mode !== 'unconfirmed-update') operation.stopped_at = new Date().toISOString();
+          if (mode === 'foreign-update') operation.developer_sandbox_id = randomUUID();
+          res.writeHead(409, { 'Content-Type': 'application/json' }).end(JSON.stringify({ message: 'Conflict' }));
+          if (!recover && updatePosts === 2) shutdown.abort();
+          return;
+        }
         let update = appliedUpdates.get(input.request_id);
         if (!update) {
           update = { id: input.request_id, operation_id: operation.id, source_revision_id: input.source_revision_id, status: 'completed' };
@@ -81,7 +90,7 @@ for (const mode of ['legacy', 'failed', 'persistent']) {
         result = { operation };
       } else { res.writeHead(404).end('{}'); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
-      if (persistent ? updates === 2 : operations.size === 2) shutdown.abort();
+      if (persistent && !recover ? updates === 2 : operations.size === 2) shutdown.abort();
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const endpoint = `http://127.0.0.1:${server.address().port}`;
@@ -116,7 +125,7 @@ for (const mode of ['legacy', 'failed', 'persistent']) {
     const deadline = setTimeout(() => shutdown.abort(), 5000);
     const readyStates = [];
     try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {}, reporter: {
-      summary() {}, message() {}, resolve() { return false; },
+      summary() {}, message() {}, failure() {}, resolve() { return false; },
       task(_name, state, detail) {
         readyStates.push({ state, detail });
         if (state === 'success') assert.ok([...operations.values()].some(operation => operation.status === 'completed'));
@@ -125,9 +134,21 @@ for (const mode of ['legacy', 'failed', 'persistent']) {
     finally { clearTimeout(deadline); }
     assert.ok(readyStates.some(item => item.state === 'running' && item.detail.startsWith('Frontend build ready')));
     assert.ok(readyStates.every(item => item.state !== 'success' || item.detail === 'Development ready'));
-    assert.equal(sources.length, persistent ? 4 : 3);
-    assert.equal(operations.size, persistent ? 1 : 2);
-    if (persistent) { assert.equal(updates, 2); assert.ok(updatePosts >= 3); }
+    assert.equal(sources.length, persistent && !conflict ? 4 : 3);
+    assert.equal(operations.size, persistent && !recover ? 1 : 2);
+    if (persistent && !conflict) { assert.equal(updates, 2); assert.ok(updatePosts >= 3); }
+    if (conflict) {
+      assert.equal(updates, 0);
+      const saved = JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8'));
+      if (recover) {
+        assert.equal(updatePosts, 1);
+        assert.equal(saved.source_update, undefined);
+        assert.equal([...operations.values()][1].source_revision_id, saved.revision_id);
+      } else {
+        assert.equal(updatePosts, 2);
+        assert.ok(saved.source_update, 'unconfirmed or foreign shutdown must retain pending request');
+      }
+    }
     const frontend = sources[1].files.find(file => file.path === 'resources/js/Page.tsx');
     assert.equal(Buffer.from(frontend.content, 'base64').toString(), 'frontend-only change');
   });
