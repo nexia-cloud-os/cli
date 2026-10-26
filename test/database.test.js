@@ -155,6 +155,7 @@ test('project DB commands run all Apps sequentially and retain per-App failures 
       submitted.push({ appId, requestId: input.request_id, command: input.command, options: input.options });
       result = { operation: { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
         database_command: input.command, database_options: input.options, ...(input.command === 'status' ? { database_result: { command: 'status', migrations: [{ name: '001_first', batch: 1, status: 'ran' }] } } : {}), developer_project_id: project, developer_sandbox_id: sandbox,
+        ...(input.command !== 'status' ? { database_result: {command: input.command, logs: '[warning] RECIPE_SOURCE_LOOKUP ' + appId} } : {}),
         status: appId === apps.get('a-broken') ? 'failed' : 'completed',
         ...(appId === apps.get('a-broken') ? { failure: { code: 'PREPARATION_FAILED', stage: 'migrate' } } : {}) } };
     } else result = { operation: null };
@@ -184,6 +185,10 @@ test('project DB commands run all Apps sequentially and retain per-App failures 
     assert.equal(result.failed, 1);
     assert.deepEqual(result.results.map(item => [item.app, item.status]), [['a-broken', 'failed'], ['people', 'success']]);
     assert.match(error.stderr, /Database migrate targets/);
+    for (const row of result.results) {
+      assert.match(row.database_result.logs, /RECIPE_SOURCE_LOOKUP/);
+      assert.ok(error.stderr.includes(row.database_result.logs));
+    }
     return true;
   });
   assert.deepEqual(submitted.map(item => item.appId), [...apps.values()]);
@@ -337,4 +342,12 @@ test('versioned seeding reports skipped changes and a developer-owned reset path
   assert.match(text, /No administrator approval is needed/);
   assert.doesNotMatch(text, /injected|31m/);
   assert.equal(formatSeedingResult({}), '');
+});
+
+test('database fixture logs preserve messages and context while removing terminal controls', async () => {
+  const { formatDatabaseLogs } = await import('../src/database-operations.js');
+  assert.equal(formatDatabaseLogs({logs: '[warning] RECIPE_SOURCE_LOOKUP\n{"stage_code":"availability_status"}'}), '[warning] RECIPE_SOURCE_LOOKUP\n{"stage_code":"availability_status"}');
+  assert.equal(formatDatabaseLogs({logs: '\x1b[31mwarning\x1b[0m\u202e'}), 'warning');
+  assert.equal(formatDatabaseLogs({logs: 'x'.repeat(16385)}), '');
+  assert.equal(formatDatabaseLogs(null), '');
 });

@@ -88,6 +88,8 @@ export async function runDatabaseOperation(directory, binding, { command, option
         throw new Error('The database operation identity changed while waiting. Keep the request ID for recovery.');
       }
     }
+    const logs = formatDatabaseLogs(operation.database_result);
+    if (logs) log(logs);
     if (operation.status !== 'completed') {
       const next = operation.status === 'failed' && (operation.retry_allowed || !operation.started_at)
         ? 'Fix the reported source error, then run the database command again with a new request ID.'
@@ -115,4 +117,9 @@ export function formatSeedingResult(result) {
     lines.push('Development is not blocked. For a clean test, nexia db fresh deletes this App development database; then run nexia db seed. Preserve published versions and add a new corrective version before publication. No administrator approval is needed.');
   }
   return lines.join('\n');
+}
+
+export function formatDatabaseLogs(result) {
+  return typeof result?.logs === 'string' && result.logs.length <= 16384
+    ? result.logs.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g, '') : '';
 }
