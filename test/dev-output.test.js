@@ -248,3 +248,15 @@ test('structured preparation failures are red and never printed above the live d
     }
   }
 });
+
+test('verbose development failure identifies the request and platform status', () => {
+  const output = [];
+  const reporter = createDevReporter(line => output.push(line), { stream: { isTTY: false }, heartbeatMs: 0 });
+  const error = Object.assign(new Error('Platform HTTP 409: Conflict'), {
+    platformRequest: 'POST /developer-api/v2/runtime-operations/example/source', platformStatus: 'runtime_inactive',
+  });
+  reporter.failure('trial', error, { verbose: true });
+  reporter.close();
+  assert.match(output.join('\n'), /Request: POST \/developer-api\/v2\/runtime-operations\/example\/source/);
+  assert.match(output.join('\n'), /Status: runtime_inactive/);
+});

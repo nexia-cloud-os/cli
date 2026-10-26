@@ -219,6 +219,8 @@ export function createDevReporter(log = console.error, {
     },
     failure(name, error, { verbose = false, next, summary } = {}) {
       const lines = safeLines(error?.message || error || 'Unknown failure.');
+      if (verbose && error?.platformRequest) lines.push(...safeLines(`Request: ${error.platformRequest}`));
+      if (verbose && error?.platformStatus) lines.push(...safeLines(`Status: ${error.platformStatus}`));
       const headline = lines.shift() || 'Unknown failure.';
       task(name, 'error', summary || headline);
       const details = lines.map(line => formatDetail('✕', name, line, 'error', true));
