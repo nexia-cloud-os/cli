@@ -69,6 +69,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     || !uuid(state.request_id) || !uuid(state.revision_id) || !/^[a-f0-9]{64}$/.test(state.digest)
     || (state.runtime_digest !== undefined && !/^[a-f0-9]{64}$/.test(state.runtime_digest))
     || (state.operation_id && !uuid(state.operation_id))
+    || (state.source_update && (!uuid(state.source_update.request_id) || !uuid(state.source_update.revision_id)
+      || !/^[a-f0-9]{64}$/.test(state.source_update.digest ?? '') || !/^[a-f0-9]{64}$/.test(state.source_update.runtime_digest ?? '')))
     || (state.selection_revision !== undefined && (!Number.isSafeInteger(state.selection_revision) || state.selection_revision < 0)))) throw new Error('Runtime state does not match this App binding. Keep it for recovery and restore the original binding.');
   async function persist(next) {
     const temporary = path.join(local, `runtime-${randomUUID()}.tmp`);
@@ -91,7 +93,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   // A preparing identity grants no operation or source authority.
   const previewState = () => browserRuntime ? { ...browserRuntime,
     update_status: preparationFailed ? 'runtime_failed' : build?.failed() ? 'build_failed' : (build && !build.ready())
-      || (state && state.revision_id !== browserRuntime.source_revision_id) ? 'preparing' : 'ready',
+      || state?.source_update || (state && state.revision_id !== browserRuntime.source_revision_id) ? 'preparing' : 'ready',
   } : { mode: preparationFailed ? 'runtime_failed' : build?.failed() ? 'build_failed' : 'preparing', app_id: scope.app_id, app_key: identity.key };
   try {
     while (!signal?.aborted) {
@@ -253,6 +255,36 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         let operation;
         let cancelled = false;
         let renewWriter = false;
+        if (state?.source_update) {
+          const pending = state.source_update;
+          const result = await request(config, `v2/runtime-operations/${state.operation_id}/source`, { method: 'POST', body: {
+            source_revision_id: pending.revision_id, request_id: pending.request_id, writer_session: writerSession,
+          } });
+          const update = result.update;
+          if (update?.id !== pending.request_id || update.operation_id !== state.operation_id
+              || update.source_revision_id !== pending.revision_id || result.operation?.id !== state.operation_id
+              || !['queued', 'running', 'completed', 'failed'].includes(update.status)) throw new Error('Platform returned a conflicting source update.');
+          if (['queued', 'running'].includes(update.status)) {
+            task('running', 'Applying code changes…');
+            await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+            continue;
+          }
+          if (update.status === 'failed') {
+            preparationFailed = true;
+            task('error', 'Code changes could not be applied; the previous version is still running.');
+            notice(preparationFailureDetails(update.failure).trim());
+            if (runtimeSourceDigest(await sourceSnapshot(directory)) === pending.runtime_digest) {
+              await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+              continue;
+            }
+          }
+          const { source_update: _finished, ...current } = state;
+          if (update.status === 'completed') {
+            if (result.operation.source_revision_id !== pending.revision_id) throw new Error('Applied source revision differs.');
+            preparationFailed = false;
+            await persist({ ...current, revision_id: pending.revision_id, digest: pending.digest, runtime_digest: pending.runtime_digest });
+          } else await persist(current);
+        }
         if (state) {
           let result;
           try {
@@ -368,7 +400,12 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             const { revision, runtime_digest } = uploadedSource;
             // Persist the idempotency key BEFORE submitting. Ambiguous responses reuse it on restart.
             preparationFailed = false;
-            await persist({ ...scope, digest: revision.digest, runtime_digest, revision_id: revision.id, request_id: randomUUID(), selection_revision: selection.revision, ...(writer ? { writer_generation: writer.generation } : {}) });
+            if (operation?.status === 'completed' && operation.source_updates_supported === true
+                && !operation.stop_requested_at && !operation.stopped_at && !renewWriter && writer) {
+              await persist({ ...state, source_update: { revision_id: revision.id, request_id: randomUUID(), digest: revision.digest, runtime_digest } });
+            } else {
+              await persist({ ...scope, digest: revision.digest, runtime_digest, revision_id: revision.id, request_id: randomUUID(), selection_revision: selection.revision, ...(writer ? { writer_generation: writer.generation } : {}) });
+            }
             continue;
           }
           // Persisting legacy metadata can yield to the build worker. Recheck

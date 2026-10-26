@@ -634,3 +634,15 @@ not detected by the emitted-JavaScript import check.
 Versioned seeding records each version in its own transaction. Failed versions can be fixed and retried without administrator approval; completed versions are skipped. Editing completed code produces a development warning. `db fresh --seed` deletes the selected App development data and history before running all versions. Full `db refresh --seed` also clears seeding history; `db rollback` only reverses migrations. Published seeder changes must be restored and implemented as a new version/class before publication. Named `db seed demo` fixtures and explicit `--class` calls remain repeatable and do not update version checkpoints.
 
 CLI alpha.42 sandbox self-recovery requires Core 0.8.153. Versioned seeding also requires PHP SDK 0.10.11 and Manager alpha.76 runtime adoption; upgrading the CLI alone does not upgrade a sandbox runtime.
+
+### Saving code during development
+
+With a compatible platform/runtime, `nexia dev` applies PHP source changes to the
+existing development environment. It preserves the execution and DB connection;
+source saves do not rerun migrations or seeders. Use explicit `nexia db` commands
+for schema/data changes. Failed source validation leaves the previous code running.
+Interrupted update requests resume with the same receipt on reconnect.
+
+This requires matching Core, Manager, runtime-image and CLI support. Existing
+legacy environments keep their previous preparation behavior until a compatible
+environment is prepared. SDK/dependency changes must fit the pinned runtime image.
