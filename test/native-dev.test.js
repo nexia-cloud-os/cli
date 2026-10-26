@@ -19,96 +19,119 @@ const managedDatabase = handler => async (req, res) => {
 };
 const createServer = handler => httpServer(managedDatabase(handler));
 
-for (const safeFailure of [false, true]) test(safeFailure
-  ? 'stopped App execution failure accepts corrected source without administrator approval'
-  : 'frontend-only edits reuse a completed runtime and the next Backend edit uploads complete source', async t => {
-  const root = await mkdtemp(path.join(tmpdir(), 'nexia-frontend-reuse-'));
-  const previousConfig = process.env.NEXIA_CONFIG_HOME;
-  process.env.NEXIA_CONFIG_HOME = root;
-  const shutdown = new AbortController();
-  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
-  const sources = [], operations = new Map();
-  let polls = 0;
-  const server = createServer(async (req, res) => {
-    let raw = ''; for await (const chunk of req) raw += chunk;
-    const input = raw ? JSON.parse(raw) : null;
-    let result;
-    if (req.url.endsWith('/database-operations')) result = { operation: null };
-    else if (req.url.endsWith('/connection')) result = { status: 'connected', project: { id: project },
-      capabilities: { explicit_development_migrations: true }, sandbox: { id: sandbox, status: 'active',
-        workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
-    else if (req.url.endsWith('/execution')) result = { selection: { app_id: app, project_id: project,
-      sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
-    else if (req.url.endsWith('/v2/sources')) {
-      sources.push(input.source);
-      result = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
-    } else if (req.method === 'POST' && req.url.endsWith('/v2/runtime-operations')) {
-      const operation = { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
-        developer_project_id: project, developer_sandbox_id: sandbox, status: safeFailure && operations.size === 0 ? 'failed' : 'completed',
-        ...(safeFailure && operations.size === 0 ? { retry_allowed: true, started_at: new Date().toISOString(),
-          stopped_at: new Date().toISOString(), failure: { code: 'PREPARATION_FAILED', stage: 'serve' } } : {}) };
-      operations.set(operation.id, operation);
-      result = { operation };
-    } else if (req.url.includes('/v2/runtime-operations/')) {
-      const operation = operations.get(req.url.split('/').at(-1));
-      if (++polls === 2) await writeFile(path.join(root, 'resources/js/Page.tsx'), 'frontend-only change');
-      if (polls === 5) {
-        assert.equal(sources.length, 2, 'frontend source still synchronizes while execution is unchanged');
-        assert.equal(operations.size, 1);
-        await writeFile(path.join(root, 'src/Handler.php'), '<?php // backend change');
-      }
-      result = { operation };
-    } else { res.writeHead(404).end('{}'); return; }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
-    if (operations.size === 2) shutdown.abort();
+for (const mode of ['legacy', 'failed', 'persistent']) {
+  const safeFailure = mode === 'failed';
+  const persistent = mode === 'persistent';
+  test(persistent ? 'successive Backend edits retain one execution and retry ambiguous source-update responses' : safeFailure
+    ? 'stopped App execution failure accepts corrected source without administrator approval'
+    : 'frontend-only edits reuse a completed runtime and the next Backend edit uploads complete source', async t => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nexia-frontend-reuse-'));
+    const previousConfig = process.env.NEXIA_CONFIG_HOME;
+    process.env.NEXIA_CONFIG_HOME = root;
+    const shutdown = new AbortController();
+    const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
+    const sources = [], operations = new Map();
+    let polls = 0, updates = 0, updatePosts = 0;
+    const appliedUpdates = new Map();
+    const writerSession = { writer: { generation: 1, app_id: app, sandbox_id: sandbox } };
+    const server = createServer(async (req, res) => {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const input = raw ? JSON.parse(raw) : null;
+      let result;
+      if (req.url.endsWith('/database-operations')) result = { operation: null };
+      else if (req.url.endsWith('/connection')) result = { status: 'connected', project: { id: project },
+        capabilities: { explicit_development_migrations: true, runtime_writers: persistent }, sandbox: { id: sandbox, status: 'active',
+          workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+      else if (req.url.endsWith('/writer')) result = writerSession;
+      else if (req.url.endsWith('/execution')) result = { selection: { app_id: app, project_id: project,
+        sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+      else if (req.url.endsWith('/v2/sources')) {
+        sources.push(input.source);
+        result = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
+      } else if (req.method === 'POST' && req.url.endsWith('/v2/runtime-operations')) {
+        const operation = { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
+          developer_project_id: project, developer_sandbox_id: sandbox, source_updates_supported: persistent, writer_generation: 1, status: safeFailure && operations.size === 0 ? 'failed' : 'completed',
+          ...(safeFailure && operations.size === 0 ? { retry_allowed: true, started_at: new Date().toISOString(),
+            stopped_at: new Date().toISOString(), failure: { code: 'PREPARATION_FAILED', stage: 'serve' } } : {}) };
+        operations.set(operation.id, operation);
+        result = { operation };
+      } else if (persistent && req.url.endsWith('/source')) {
+        updatePosts++;
+        const operation = operations.values().next().value;
+        assert.equal(req.url.split('/').at(-2), operation.id);
+        assert.ok(input.writer_session);
+        let update = appliedUpdates.get(input.request_id);
+        if (!update) {
+          update = { id: input.request_id, operation_id: operation.id, source_revision_id: input.source_revision_id, status: 'completed' };
+          appliedUpdates.set(update.id, update);
+          operation.source_revision_id = input.source_revision_id;
+          updates++;
+          if (updates === 1) { res.destroy(); return; }
+        }
+        result = { update, operation };
+      } else if (req.url.includes('/v2/runtime-operations/')) {
+        const operation = operations.get(req.url.split('/').at(-1));
+        if (++polls === 2) await writeFile(path.join(root, 'resources/js/Page.tsx'), 'frontend-only change');
+        if (polls === 5) {
+          assert.equal(sources.length, 2, 'frontend source still synchronizes while execution is unchanged');
+          assert.equal(operations.size, 1);
+          await writeFile(path.join(root, 'src/Handler.php'), '<?php // backend change');
+        }
+        if (persistent && updates === 1 && polls >= 7) await writeFile(path.join(root, 'src/Handler.php'), '<?php // next Backend change');
+        result = { operation };
+      } else { res.writeHead(404).end('{}'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result));
+      if (persistent ? updates === 2 : operations.size === 2) shutdown.abort();
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    t.after(async () => {
+      shutdown.abort(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+      if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
+      await rm(root, { recursive: true, force: true });
+    });
+    for (const dir of ['.nexia', 'src', 'resources/js', 'node_modules/vite/dist/node']) await mkdir(path.join(root, dir), { recursive: true });
+    await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+    await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+    await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+    await writeFile(path.join(root, 'composer.json'), '{}');
+    await writeFile(path.join(root, 'vite.config.mjs'), 'export default {}');
+    await writeFile(path.join(root, 'src/Handler.php'), '<?php // initial');
+    await writeFile(path.join(root, 'resources/js/Page.tsx'), 'initial');
+    await writeFile(path.join(root, 'node_modules/vite/dist/node/index.js'), `
+      exports.build = async () => {
+        const fs = require('node:fs');
+        const watcher = new (require('node:events').EventEmitter)();
+        const timer = setTimeout(() => {
+          watcher.emit('event', { code: 'START' });
+          fs.mkdirSync('dist/frontend/.vite', { recursive: true });
+          fs.writeFileSync('dist/frontend/index.js', 'export default {}');
+          fs.writeFileSync('dist/frontend/.vite/manifest.json', '{}');
+          watcher.emit('event', { code: 'END' });
+        }, 10);
+        watcher.close = async () => clearTimeout(timer);
+        return watcher;
+      };
+    `);
+    const deadline = setTimeout(() => shutdown.abort(), 5000);
+    const readyStates = [];
+    try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {}, reporter: {
+      summary() {}, message() {}, resolve() { return false; },
+      task(_name, state, detail) {
+        readyStates.push({ state, detail });
+        if (state === 'success') assert.ok([...operations.values()].some(operation => operation.status === 'completed'));
+      },
+    } }); }
+    finally { clearTimeout(deadline); }
+    assert.ok(readyStates.some(item => item.state === 'running' && item.detail.startsWith('Frontend build ready')));
+    assert.ok(readyStates.every(item => item.state !== 'success' || item.detail === 'Development ready'));
+    assert.equal(sources.length, persistent ? 4 : 3);
+    assert.equal(operations.size, persistent ? 1 : 2);
+    if (persistent) { assert.equal(updates, 2); assert.ok(updatePosts >= 3); }
+    const frontend = sources[1].files.find(file => file.path === 'resources/js/Page.tsx');
+    assert.equal(Buffer.from(frontend.content, 'base64').toString(), 'frontend-only change');
   });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const endpoint = `http://127.0.0.1:${server.address().port}`;
-  t.after(async () => {
-    shutdown.abort(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
-    await rm(root, { recursive: true, force: true });
-  });
-  for (const dir of ['.nexia', 'src', 'resources/js', 'node_modules/vite/dist/node']) await mkdir(path.join(root, dir), { recursive: true });
-  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
-  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
-  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
-  await writeFile(path.join(root, 'composer.json'), '{}');
-  await writeFile(path.join(root, 'vite.config.mjs'), 'export default {}');
-  await writeFile(path.join(root, 'src/Handler.php'), '<?php // initial');
-  await writeFile(path.join(root, 'resources/js/Page.tsx'), 'initial');
-  await writeFile(path.join(root, 'node_modules/vite/dist/node/index.js'), `
-    exports.build = async () => {
-      const fs = require('node:fs');
-      const watcher = new (require('node:events').EventEmitter)();
-      const timer = setTimeout(() => {
-        watcher.emit('event', { code: 'START' });
-        fs.mkdirSync('dist/frontend/.vite', { recursive: true });
-        fs.writeFileSync('dist/frontend/index.js', 'export default {}');
-        fs.writeFileSync('dist/frontend/.vite/manifest.json', '{}');
-        watcher.emit('event', { code: 'END' });
-      }, 10);
-      watcher.close = async () => clearTimeout(timer);
-      return watcher;
-    };
-  `);
-  const deadline = setTimeout(() => shutdown.abort(), 5000);
-  const readyStates = [];
-  try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {}, reporter: {
-    summary() {}, message() {}, resolve() { return false; },
-    task(_name, state, detail) {
-      readyStates.push({ state, detail });
-      if (state === 'success') assert.ok([...operations.values()].some(operation => operation.status === 'completed'));
-    },
-  } }); }
-  finally { clearTimeout(deadline); }
-  assert.ok(readyStates.some(item => item.state === 'running' && item.detail.startsWith('Frontend build ready')));
-  assert.ok(readyStates.every(item => item.state !== 'success' || item.detail === 'Development ready'));
-  assert.equal(sources.length, 3);
-  assert.equal(operations.size, 2);
-  const frontend = sources[1].files.find(file => file.path === 'resources/js/Page.tsx');
-  assert.equal(Buffer.from(frontend.content, 'base64').toString(), 'frontend-only change');
-});
+}
 
 for (const expired of [true, false]) {
   test(`native dev ${expired ? 'reuploads an expired unbound source' : 'preserves a pending request on an unrelated 410'}`, async t => {
