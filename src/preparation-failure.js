@@ -70,6 +70,21 @@ function failureDetails(failure, check) {
   if (failure.code === 'PREPARATION_FAILED' && failure.stage === 'seed') {
     return `[PREPARATION_FAILED] ${stage}\nOwner: ${location ? 'App seeder or its prerequisites' : 'undetermined seeding execution'}.\nCorrect the reported seeder or prerequisite, then rerun the same nexia db seed command (include the fixture key only for named fixtures). Completed versions are retained; no database reset or administrator approval is needed. A transport failure can leave the outcome uncertain, so inspect the result before retrying.\n`;
   }
+  if (failure.code === 'PREPARATION_FAILED' && failure.stage === 'source') {
+    const reasons = {
+      runtime_stopped: 'The previous execution stopped before the source update could run. Retained source can be prepared again; no data reset is needed.',
+      runtime_unavailable: 'The previous execution is no longer authorized or available. Inspect the execution status; App source validation did not run.',
+      writer_changed: 'Editing ownership changed before this update ran. Resume from the current development session.',
+      revision_changed: 'The serving source changed before this update ran. Reconcile the pending source with the current execution.',
+      source_invalid: 'The uploaded source snapshot failed validation. Check its manifest, registered App identity, paths, size and digest.',
+      source_access_denied: 'Access to the retained source was denied. Check the project and App binding; do not reset data.',
+      source_missing: 'The retained source record is unavailable. Upload the source again from the linked App.',
+      source_expired: 'The retained source has expired. Upload it again from the linked App; existing data is retained.',
+      source_unavailable: 'The retained source or sandbox is unavailable. Inspect the operation details before changing App code.',
+      source_export_failed: 'The platform could not export the retained source. Contact developer support with the execution and update IDs.',
+    };
+    if (Object.hasOwn(reasons, failure.source_reason ?? '')) return `[PREPARATION_FAILED] ${stage}\nReason: ${failure.source_reason}\n${reasons[failure.source_reason]}\n`;
+  }
   if (failure.code === 'PREPARATION_FAILED') {
     const action = { source: 'Check the App manifest and uploaded source.', catalog: 'Check App metadata and contribution declarations.',
       migrate: 'Check the App migrations; do not delete migration history or reset data.', initialize: 'Check App initialization code; preserve existing data.' };
@@ -116,4 +131,14 @@ export function preparationNextAction(operation) {
     return 'Platform recovery is required. Keep nexia dev running; no App data reset or App source change is indicated by this failure.';
   }
   return 'Correct the reported issue and keep nexia dev running. Changed source is checked automatically; no administrator approval is required.';
+}
+
+/** Identify the failed candidate separately from the previous serving source. */
+export function sourceUpdateFailureDetails(update, operation, endpoint) {
+  const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
+  if (!uuid(update?.id) || !uuid(update.source_revision_id) || !uuid(operation?.id)
+      || update.operation_id !== operation.id) return '';
+  return `Operation: ${operation.id}\nSource update: ${update.id}\nFailed source revision: ${update.source_revision_id}\n`
+    + preparationFailureDetails(update.failure)
+    + preparationLocation({ ...operation, source_revision_id: null }, endpoint);
 }

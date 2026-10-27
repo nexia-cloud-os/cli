@@ -4,7 +4,7 @@ import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
 import { message } from './input.js';
 import { randomUUID } from 'node:crypto';
-import { preparationFailureDetails, preparationLocation, preparationNextAction } from './preparation-failure.js';
+import { preparationFailureDetails, preparationLocation, preparationNextAction, sourceUpdateFailureDetails } from './preparation-failure.js';
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
@@ -36,7 +36,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   const identity = await readLocal('app.json');
   const name = taskName || identity.key;
   const task = (state, detail) => reporter ? reporter.task(name, state, detail) : log(devTask(name, state, detail));
-  const detailLog = value => reporter ? reporter.message(name, value, { verbose }) : log(value);
+  const detailLog = (value, options = {}) => reporter ? reporter.message(name, value, { verbose, ...options }) : log(value);
   const scope = { endpoint: config.endpoint, project_id: binding.project_id, app_id: identity.id };
   const consoleUrl = new URL(`/projects/${scope.project_id}/development#project-apps`, config.endpoint);
   function preparationFailure(operation) {
@@ -79,8 +79,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     state = next;
   }
   let lastNotice;
-  const notice = value => {
-    if (lastNotice !== value) detailLog(value);
+  const notice = (value, options) => {
+    if (lastNotice !== value) detailLog(value, options);
     lastNotice = value;
   };
   let lastStatus, lastDatabaseStatus, quietDigest = null, platformCheckedAt = 0, uploadedSource = null;
@@ -278,6 +278,8 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           const update = result.update;
           if (update?.id !== pending.request_id || update.operation_id !== state.operation_id
               || update.source_revision_id !== pending.revision_id || result.operation?.id !== state.operation_id
+              || result.operation.developer_project_id !== scope.project_id
+              || (scope.sandbox_id && result.operation.developer_sandbox_id !== scope.sandbox_id)
               || !['queued', 'running', 'completed', 'failed'].includes(update.status)) throw new Error('Platform returned a conflicting source update.');
           if (['queued', 'running'].includes(update.status)) {
             task('running', 'Applying code changes…');
@@ -286,8 +288,15 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           }
           if (update.status === 'failed') {
             preparationFailed = true;
-            task('error', 'Code changes could not be applied; the previous version is still running.');
-            notice(preparationFailureDetails(update.failure).trim());
+            task('error', 'Code changes could not be applied. Source and data are retained.');
+            notice(sourceUpdateFailureDetails(update, result.operation, config.endpoint).trim(), { failure: true });
+            if (result.operation.stopped_at && ['completed', 'failed', 'needs_review'].includes(result.operation.status)) {
+              await persist({ ...scope, revision_id: pending.revision_id, digest: pending.digest,
+                runtime_digest: pending.runtime_digest, request_id: randomUUID(), selection_revision: selection.revision,
+                ...(writer ? { writer_generation: writer.generation } : {}) });
+              notice('The previous execution has stopped. Preparing the pending source again; data is retained.');
+              continue;
+            }
             if (runtimeSourceDigest(await sourceSnapshot(directory)) === pending.runtime_digest) {
               await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
               continue;
