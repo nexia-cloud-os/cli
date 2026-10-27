@@ -260,3 +260,25 @@ test('verbose development failure identifies the request and platform status', (
   assert.match(output.join('\n'), /Request: POST \/developer-api\/v2\/runtime-operations\/example\/source/);
   assert.match(output.join('\n'), /Status: runtime_inactive/);
 });
+
+test('source update diagnostics retain candidate identity and complete failure text in piped output', async () => {
+  const { sourceUpdateFailureDetails } = await import('../src/preparation-failure.js');
+  const id = '11111111-1111-4111-8111-111111111111';
+  const revision = '22222222-2222-4222-8222-222222222222';
+  const updateId = '33333333-3333-4333-8333-333333333333';
+  const diagnostic = { kind: 'runtime_error', file: 'src/Failure.php', line: 42, message: 'x'.repeat(1300) + ' end-of-failure' };
+  const value = sourceUpdateFailureDetails({ id: updateId, operation_id: id, source_revision_id: revision,
+    failure: { code: 'PREPARATION_FAILED', stage: 'source', diagnostic } },
+  { id, source_revision_id: id, diagnostic_path: `/projects/${id}/development?operation=${id}#operation-${id}` }, 'https://developers.example.com');
+  const output = [];
+  const reporter = createDevReporter(value => output.push(value), { stream: { isTTY: false, columns: 40 }, heartbeatMs: 0 });
+  reporter.message('time-absence', value, { failure: true, verbose: true });
+  reporter.close();
+  const text = output.join('\n').split('\n').map(plain).join('\n');
+  assert.ok(text.includes(`Operation: ${id}`));
+  assert.ok(text.includes(`Source update: ${updateId}`));
+  assert.ok(text.includes(`Failed source revision: ${revision}`));
+  assert.ok(text.includes('end-of-failure'));
+  assert.ok(text.includes(`https://developers.example.com/projects/${id}/development?operation=${id}#operation-${id}`));
+  assert.ok(!text.includes('[truncated]'));
+});

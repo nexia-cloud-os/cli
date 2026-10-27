@@ -465,6 +465,20 @@ use `nexia dev --verbose` when the complete file-level build detail is needed.
 
 ### Preparation error details
 
+Source-update failures retain the operation ID, update ID, failed source revision,
+and same-platform Details URL when supplied by Core. Failure text wraps without
+being shortened, including piped output:
+
+```sh
+nexia dev --verbose 2>&1 | tee nexia-dev.log
+```
+
+A source validation label alone does not establish an App PHP error. Newer Core
+responses distinguish stopped executions, changed editing ownership, and unavailable
+or invalid source. When the previous execution is confirmed stopped, the CLI
+prepares the pending source again without resetting data or running migrations.
+Existing source-update receipts remain available for diagnosis.
+
 When the server provides safe failure details, `nexia dev` shows the failed step
 and recovery guidance. `SDK_VERSION_MISMATCH` includes the App's required PHP SDK
 range and the server version: contact developer support with those versions and
