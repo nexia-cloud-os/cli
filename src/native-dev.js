@@ -287,6 +287,17 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             continue;
           }
           if (update.status === 'failed') {
+            const { operation: previous } = await request(config, `v2/runtime-operations/${state.operation_id}`);
+            if (previous?.id === state.operation_id && previous.developer_project_id === scope.project_id
+                && previous.developer_sandbox_id === scope.sandbox_id && previous.stopped_at
+                && ['completed', 'failed', 'needs_review'].includes(previous.status)) {
+              await persist({ ...scope, revision_id: pending.revision_id, digest: pending.digest,
+                runtime_digest: pending.runtime_digest, request_id: randomUUID(), selection_revision: selection.revision,
+                ...(writer ? { writer_generation: writer.generation } : {}) });
+              preparationFailed = false;
+              notice('The previous execution has stopped. Preparing the pending source again; data is retained.');
+              continue;
+            }
             preparationFailed = true;
             task('error', 'Code changes could not be applied. Source and data are retained.');
             notice(sourceUpdateFailureDetails(update, result.operation, config.endpoint).trim(), { failure: true });
