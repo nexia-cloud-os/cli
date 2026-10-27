@@ -39,7 +39,8 @@ export async function receiveBrowserLogs(req, res, app) {
   const minute = Math.floor(Date.now() / 60000);
   if (app.logMinute !== minute) { app.logMinute = minute; app.logCount = 0; }
   for (const event of events) {
-    if (!app.verbose && !['warn', 'error'].includes(event.level)) continue;
+    const batchInfo = event.level === 'info' && event.message.startsWith('[NEXIA_READ_BATCH_INFO] ');
+    if (!app.verbose && !batchInfo && !['warn', 'error'].includes(event.level)) continue;
     app.logCount++;
     if (app.logCount <= 120) devLog(app.log, 'browser', event.level, event.message, { verbose: app.verbose });
     else if (app.logCount === 121) devLog(app.log, 'browser', 'warn', 'Log limit reached (120/minute). Further messages remain in the browser console.', { verbose: app.verbose });
