@@ -260,6 +260,7 @@ try {
         catch (error) { failed = true; log(error.message); }
       }
       if (failed) throw new Error('One or more App checks failed. See the results above.');
+      console.info('[NEXIA_READ_BATCH_INFO] Registered route batching is checked during runtime catalog extraction, not source checks. Undeclared reads run individually; batching advice never blocks build or submission.');
       console.log('Source checks passed. Dynamic reference querySchema/fieldSchema catalogs were not evaluated; nexia dev validates them in isolation. Runtime behavior, review and production deployment were not verified.');
     } else if (name === 'dev config') {
       const workspace = await findWorkspace(process.cwd());

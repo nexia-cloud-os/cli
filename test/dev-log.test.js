@@ -23,6 +23,9 @@ test('browser diagnostics require the workspace origin, private App token and li
   assert.equal(manifest.verbose_logs, false);
   assert.equal((await send([{ level: 'info', message: 'quiet by default' }])).status, 204);
   assert.equal(logs.length, 2);
+  assert.equal((await send([{ level: 'info', message: '[NEXIA_READ_BATCH_INFO] Undeclared read runs individually; deployment is not blocked.' }])).status, 204);
+  assert.equal(logs.length, 3);
+  assert.match(logs[2], /browser info/);
   assert.ok(logs.every(line => !line.includes('\x1b[2J')));
   assert.equal((await send([], 'http://evil.example')).status, 403);
   assert.equal((await send([], origin, `${server.url}/${'0'.repeat(64)}/__nexia_diagnostics`)).status, 404);
