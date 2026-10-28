@@ -19,10 +19,10 @@ const managedDatabase = handler => async (req, res) => {
 };
 const createServer = handler => httpServer(managedDatabase(handler));
 
-for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfirmed-update', 'foreign-update']) {
+for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfirmed-update', 'foreign-update', 'failed-stopped-update', 'failed-unconfirmed-update', 'failed-foreign-update']) {
   const safeFailure = mode === 'failed';
   const conflict = mode.endsWith('-update');
-  const recover = mode === 'stopped-update';
+  const recover = mode === 'stopped-update' || mode === 'failed-stopped-update';
   const persistent = mode === 'persistent' || conflict;
   test(conflict ? `source update conflict recovery: ${mode}` : persistent ? 'successive Backend edits retain one execution and retry ambiguous source-update responses' : safeFailure
     ? 'stopped App execution failure accepts corrected source without administrator approval'
@@ -63,9 +63,14 @@ for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfi
         assert.equal(req.url.split('/').at(-2), operation.id);
         assert.ok(input.writer_session);
         if (conflict) {
-          if (mode !== 'unconfirmed-update') operation.stopped_at = new Date().toISOString();
-          if (mode === 'foreign-update') operation.developer_sandbox_id = randomUUID();
-          res.writeHead(409, { 'Content-Type': 'application/json' }).end(JSON.stringify({ message: 'Conflict' }));
+          if (!mode.includes('unconfirmed-update')) operation.stopped_at = new Date().toISOString();
+          if (mode.includes('foreign-update')) operation.developer_sandbox_id = randomUUID();
+          if (mode.startsWith('failed-')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ operation, update: {
+              id: input.request_id, operation_id: operation.id, source_revision_id: input.source_revision_id,
+              status: 'failed', failure: { code: 'PREPARATION_FAILED', stage: 'source', source_reason: 'runtime_stopped' },
+            } }));
+          } else res.writeHead(409, { 'Content-Type': 'application/json' }).end(JSON.stringify({ message: 'Conflict' }));
           if (!recover && updatePosts === 2) shutdown.abort();
           return;
         }

@@ -126,3 +126,13 @@ test('fixture failures identify the real step and preserve a safe explicit retry
   assert.doesNotMatch(message, /Owner: platform|restore platform service/);
   assert.match(preparationFailureDetails({code: 'PREPARATION_FAILED', stage: 'seed'}), /outcome uncertain/);
 });
+
+test('source failures distinguish runtime loss and reject unknown reason text', () => {
+  const stopped = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'source', source_reason: 'runtime_stopped' });
+  assert.match(stopped, /previous execution stopped/);
+  assert.doesNotMatch(stopped, /Correct the reported App error/);
+  const invalid = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'source', source_reason: 'source_invalid' });
+  assert.match(invalid, /snapshot failed validation/);
+  const unknown = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'source', source_reason: 'PRIVATE secret' });
+  assert.doesNotMatch(unknown, /PRIVATE|secret/);
+});

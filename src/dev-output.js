@@ -147,7 +147,7 @@ export function createDevReporter(log = console.error, {
   };
   const formatDetail = (marker, name, value, style, wrap = false) => {
     const prefix = `${marker} ${plain(name)}  `;
-    const width = Math.max(20, outputWidth() - displayWidth(prefix));
+    const width = stream.isTTY ? Math.max(20, outputWidth() - displayWidth(prefix)) : Infinity;
     const details = [];
     let remaining = plain(value);
     do {
