@@ -42,7 +42,9 @@ for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update
       let result;
       if (req.url.endsWith('/database-operations?include_selection=1')) {
         batchCalls++;
-        result = { operation: null, selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+        result = batchCalls === 1
+          ? { operation: { id: randomUUID(), developer_project_id: project, developer_sandbox_id: sandbox, database_command: 'seed', status: 'queued' } }
+          : { operation: null, selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
       }
       else if (req.url.endsWith('/database-operations')) result = { operation: null };
       else if (req.url.endsWith('/connection')) result = { status: 'connected', project: { id: project },
