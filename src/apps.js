@@ -57,6 +57,10 @@ export async function registerApp(directory, { log = console.log } = {}) {
 
 export async function readExecutionSelection(config, scope) {
   const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`);
+  return validateExecutionSelection(selection, scope);
+}
+
+export function validateExecutionSelection(selection, scope) {
   if (!selection || selection.app_id !== scope.app_id || selection.project_id !== scope.project_id
       || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(selection.sandbox_id ?? '')
       || ![null, 'development', 'off'].includes(selection.mode)
