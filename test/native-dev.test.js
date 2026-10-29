@@ -19,7 +19,7 @@ const managedDatabase = handler => async (req, res) => {
 };
 const createServer = handler => httpServer(managedDatabase(handler));
 
-for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfirmed-update', 'foreign-update', 'failed-stopped-update', 'failed-unconfirmed-update', 'failed-foreign-update']) {
+for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update', 'unconfirmed-update', 'foreign-update', 'failed-stopped-update', 'failed-unconfirmed-update', 'failed-foreign-update']) {
   const safeFailure = mode === 'failed';
   const conflict = mode.endsWith('-update');
   const recover = mode === 'stopped-update' || mode === 'failed-stopped-update';
@@ -33,20 +33,26 @@ for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfi
     const shutdown = new AbortController();
     const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
     const sources = [], operations = new Map();
-    let polls = 0, updates = 0, updatePosts = 0;
+    let polls = 0, updates = 0, updatePosts = 0, batchCalls = 0, selectionCalls = 0;
     const appliedUpdates = new Map();
     const writerSession = { writer: { generation: 1, app_id: app, sandbox_id: sandbox } };
     const server = createServer(async (req, res) => {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const input = raw ? JSON.parse(raw) : null;
       let result;
-      if (req.url.endsWith('/database-operations')) result = { operation: null };
+      if (req.url.endsWith('/database-operations?include_selection=1')) {
+        batchCalls++;
+        result = batchCalls === 1
+          ? { operation: { id: randomUUID(), developer_project_id: project, developer_sandbox_id: sandbox, database_command: 'seed', status: 'queued' } }
+          : { operation: null, selection: { app_id: app, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+      }
+      else if (req.url.endsWith('/database-operations')) result = { operation: null };
       else if (req.url.endsWith('/connection')) result = { status: 'connected', project: { id: project },
-        capabilities: { explicit_development_migrations: true, runtime_writers: persistent }, sandbox: { id: sandbox, status: 'active',
+        capabilities: { explicit_development_migrations: true, runtime_writers: persistent, development_status_batch: mode === 'batched' }, sandbox: { id: sandbox, status: 'active',
           workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
       else if (req.url.endsWith('/writer')) result = writerSession;
-      else if (req.url.endsWith('/execution')) result = { selection: { app_id: app, project_id: project,
-        sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } };
+      else if (req.url.endsWith('/execution')) { selectionCalls++; result = { selection: { app_id: app, project_id: project,
+        sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } }; }
       else if (req.url.endsWith('/v2/sources')) {
         sources.push(input.source);
         result = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
@@ -100,6 +106,7 @@ for (const mode of ['legacy', 'failed', 'persistent', 'stopped-update', 'unconfi
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const endpoint = `http://127.0.0.1:${server.address().port}`;
     t.after(async () => {
+      if (mode === 'batched') { assert.ok(batchCalls > 0); assert.equal(selectionCalls, 0); }
       shutdown.abort(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
       if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
       await rm(root, { recursive: true, force: true });

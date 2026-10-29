@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request, validateEndpoint } from './connection.js';
 import { sourceSnapshot, runtimeSourceDigest } from './source-snapshot.js';
 import { syncSource } from './sync.js';
-import { readExecutionSelection, selectExecution } from './apps.js';
+import { readExecutionSelection, selectExecution, validateExecutionSelection } from './apps.js';
 import { startNativePreview } from './native-preview.js';
 import { startFrontendBuild } from './frontend-build.js';
 import { devPanel, devTask, serverVersionRows } from './dev-output.js';
@@ -179,7 +179,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           task('running', 'Checking development execution…');
           connectionChecked = true;
         }
-        const databaseOperation = (await request(config, `v2/apps/${scope.app_id}/database-operations`)).operation;
+        const batchedStatus = initialConnection.capabilities?.development_status_batch === true;
+        const status = await request(config, `v2/apps/${scope.app_id}/database-operations${batchedStatus ? '?include_selection=1' : ''}`);
+        const databaseOperation = status.operation;
         if (databaseOperation) {
           if (!uuid(databaseOperation.id) || databaseOperation.developer_project_id !== scope.project_id
               || databaseOperation.developer_sandbox_id !== scope.sandbox_id
@@ -213,7 +215,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           writerCheckedAt = Date.now();
         }
         // This authenticated endpoint rechecks the connection/project/sandbox each poll.
-        let selection = await readExecutionSelection(config, scope);
+        let selection = batchedStatus ? validateExecutionSelection(status.selection, scope) : await readExecutionSelection(config, scope);
         if (scope.sandbox_id && selection.sandbox_id !== scope.sandbox_id) throw new Error('Personal sandbox changed. Restart dev; previous state was retained.');
         if (!startupSelectionChecked) {
           startupSelectionChecked = true;
