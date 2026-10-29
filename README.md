@@ -16,6 +16,10 @@ rejected, not hidden aliases. Platform authentication, resource generation,
 source synchronization, database requests and version review keep their existing
 contracts. SSO and named profiles are not implemented.
 
+`nexia dev` combines database and execution status into one request when the
+platform advertises support. Older platforms keep the existing separate requests;
+App, project, sandbox and selection revision checks still apply.
+
 ## Start a project
 
 ```sh
