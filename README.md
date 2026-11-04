@@ -524,6 +524,11 @@ files belong to developers and are never synchronized by this feature.
 
 ## Submission selection and sign-in lifecycle
 
+Automatic checks report `succeeded` when they pass; administrator approval and
+publication remain separate. For a failed build, inspect the displayed cause and
+submit a new version tag after fixing it. Image cleanup failures are shown
+separately and do not change the review result.
+
 `nexia submit status` shows recent submissions for the current App, or the whole
 project from its root. Choose by App, Git tag, state and creation time with
 ↑/↓ and Enter; Esc or Ctrl+C cancels. Older/newer pages remain available in the
