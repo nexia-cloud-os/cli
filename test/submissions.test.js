@@ -70,6 +70,9 @@ test('submission failure identifies the observed stage and cause without exposin
   const unknown = formatSubmission({ submission: { ...submission, failure_detail: { phase: 'private secret', code: 'private secret',
     stage: 'private secret', diagnostic: 'private secret', action: 'private secret', exit_code: -1 } } });
   assert.doesNotMatch(unknown, /private secret|Exit code/);
+  const failedUnknown = formatSubmission({ submission: { ...submission, failure_detail: {
+    code: 'artifact_execution_failed', diagnostic: 'unknown' } } });
+  assert.match(failedUnknown, /build failed; the platform did not provide a specific cause/);
   const oldServer = formatSubmission({ submission: { ...submission, failure_detail: undefined } });
   assert.match(oldServer, /cause is unknown/);
   const unavailable = formatSubmission({ submission: { ...submission, failure_detail: { stage: 'images', diagnostic: 'process_unavailable' } } });
@@ -192,6 +195,7 @@ test('registry and App build failures show actionable fixed causes', () => {
     registry_authentication_failed: /could not authenticate/,
     app_manifest_invalid: /valid version 2 nexia\.json/,
     frontend_contract_missing: /dist\/frontend\/nexia-host\.json/,
+    worker_lease_expired: /worker stopped responding or timed out/,
   };
   for (const [diagnostic, message] of Object.entries(messages)) {
     const output = formatSubmission({submission:{id:'test',tag:'v1.0.0',status:'failed',

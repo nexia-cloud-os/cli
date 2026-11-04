@@ -67,7 +67,10 @@ export function formatSubmission(result) {
       registry_authentication_failed: 'The platform could not authenticate to the image registry.',
       app_manifest_invalid: 'Add a valid version 2 nexia.json App manifest.',
       frontend_contract_missing: 'The frontend build must produce dist/frontend/nexia-host.json.',
-      unknown: 'The execution result could not be confirmed; the cause is unknown.',
+      worker_lease_expired: 'The build worker stopped responding or timed out; submit a new version tag.',
+      unknown: detail.code === 'artifact_execution_failed'
+        ? 'The build failed; the platform did not provide a specific cause.'
+        : 'The execution result could not be confirmed; the cause is unknown.',
     };
     if (typeof detail.diagnostic === 'string' && Object.hasOwn(diagnostics, detail.diagnostic)) lines.push(`Cause: ${diagnostics[detail.diagnostic]}`);
     if (Number.isInteger(detail.exit_code) && detail.exit_code >= 0 && detail.exit_code <= 255) lines.push(`Exit code: ${detail.exit_code}`);
