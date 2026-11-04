@@ -62,6 +62,11 @@ export function formatSubmission(result) {
       process_timeout: 'The build process timed out.',
       process_unavailable: 'The build process could not be started.',
       registry_manifest_mismatch: 'The uploaded image does not match the built image.',
+      registry_empty_image: 'The image has no filesystem layer and was rejected by the registry.',
+      registry_access_denied: 'The platform does not have access to the image registry.',
+      registry_authentication_failed: 'The platform could not authenticate to the image registry.',
+      app_manifest_invalid: 'Add a valid version 2 nexia.json App manifest.',
+      frontend_contract_missing: 'The frontend build must produce dist/frontend/nexia-host.json.',
       unknown: 'The execution result could not be confirmed; the cause is unknown.',
     };
     if (typeof detail.diagnostic === 'string' && Object.hasOwn(diagnostics, detail.diagnostic)) lines.push(`Cause: ${diagnostics[detail.diagnostic]}`);

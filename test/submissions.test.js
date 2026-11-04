@@ -183,3 +183,19 @@ test('published seeder changes identify original version, file and hashes withou
   assert.doesNotMatch(output, /secret/);
   assert.match(output, /no administrator permission is needed/i);
 });
+
+
+test('registry and App build failures show actionable fixed causes', () => {
+  const messages = {
+    registry_empty_image: /no filesystem layer/,
+    registry_access_denied: /does not have access/,
+    registry_authentication_failed: /could not authenticate/,
+    app_manifest_invalid: /valid version 2 nexia\.json/,
+    frontend_contract_missing: /dist\/frontend\/nexia-host\.json/,
+  };
+  for (const [diagnostic, message] of Object.entries(messages)) {
+    const output = formatSubmission({submission:{id:'test',tag:'v1.0.0',status:'failed',
+      failure_detail:{phase:'assembly',stage:'build',diagnostic}}});
+    assert.match(output,message);
+  }
+});
