@@ -47,7 +47,41 @@ export function formatSubmission(result) {
   lines.push(`${submission.tag}: ${submission.status}`, `Submission: ${submission.id}`);
   if (submission.commit_sha) lines.push(`Commit: ${submission.commit_sha}`);
   if (submission.failure) lines.push(`Failure: ${submission.failure}`);
+  if ((submission.failure === 'artifact_execution_unconfirmed' || submission.failure_detail?.code === 'artifact_execution_unconfirmed')
+      && !submission.failure_detail?.diagnostic) {
+    lines.push('Cause: The execution result could not be confirmed; the cause is unknown.');
+  }
+  const detail = submission.status === 'failed' ? submission.failure_detail : null;
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    for (const field of ['phase', 'code']) {
+      if (typeof detail[field] === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(detail[field])) lines.push(`Failure ${field}: ${detail[field]}`);
+    }
+    if (['source', 'images', 'inventory', 'build', 'export'].includes(detail.stage)) lines.push(`Failure stage: ${detail.stage}`);
+    const diagnostics = {
+      process_failed: 'The build process failed.',
+      process_timeout: 'The build process timed out.',
+      process_unavailable: 'The build process could not be started.',
+      registry_manifest_mismatch: 'The uploaded image does not match the built image.',
+      unknown: 'The execution result could not be confirmed; the cause is unknown.',
+    };
+    if (typeof detail.diagnostic === 'string' && Object.hasOwn(diagnostics, detail.diagnostic)) lines.push(`Cause: ${diagnostics[detail.diagnostic]}`);
+    if (Number.isInteger(detail.exit_code) && detail.exit_code >= 0 && detail.exit_code <= 255) lines.push(`Exit code: ${detail.exit_code}`);
+    const actions = {
+      await_reconciliation: 'Wait for the platform to confirm that the previous execution stopped.',
+      retry_existing: 'Retry the existing submission when it is ready.',
+      wait: 'Check this submission again later.',
+      inspect_checks: 'Inspect the failed checks below.',
+      check_repository_access: 'Check the repository and its access permissions.',
+      contact_support: 'Contact support with this submission ID.',
+    };
+    if (typeof detail.action === 'string' && Object.hasOwn(actions, detail.action)) lines.push(`Action: ${actions[detail.action]}`);
+  }
   if (submission.failure === 'test_recipe_mismatch') lines.push('App checks stopped before execution because the platform test environment versions did not match. No App code change or new tag is needed.');
+  if (submission.cleanup?.status === 'failed' && submission.cleanup.reason === 'registry_error') {
+    lines.push('Image cleanup: failed due to a registry error; the platform will retry. This does not change the review result.');
+  } else if (submission.cleanup?.status === 'removed') {
+    lines.push('Image cleanup: removed.');
+  }
   if (build?.review_note) lines.push(`Review note: ${build.review_note}`);
   if (review) {
     lines.push(`Review: ${review.status}`);
@@ -88,6 +122,9 @@ export function formatSubmission(result) {
     case 'building':
     case 'running':
       next = 'Build is pending or running. Check status later; do not submit again.';
+      break;
+    case 'succeeded':
+      next = 'Automatic checks passed. Await administrator review; approval and publication are separate.';
       break;
     case 'built':
       if (submission.retryable && submission.retry_kind === 'toolchain_rebuild') {
