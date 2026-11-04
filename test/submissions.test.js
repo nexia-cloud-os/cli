@@ -48,10 +48,47 @@ test('submission guidance follows state without suggesting unsafe retries or cla
   assert.match(result('failed', { retryable: true }), /nexia submit retry receipt-id/);
   assert.doesNotMatch(result('failed', { retryable: false }), /nexia submit retry/);
   assert.match(result('needs_review'), /Keep developing with nexia dev/);
+  assert.match(result('succeeded'), /Automatic checks passed\. Await administrator review/);
+  assert.doesNotMatch(result('succeeded'), /Approved|Published|deployment/);
   assert.match(result('approved'), /Await administrator publication/);
   assert.match(result('published'), /does not confirm deployment or installation/);
   for (const status of ['rejected', 'cancelled']) assert.match(result(status), /new version tag/);
   assert.match(result('future-state'), /Inspect the current submission/);
+});
+
+test('submission failure identifies the observed stage and cause without exposing arbitrary detail', () => {
+  const submission = { id: 'receipt-id', tag: 'v1.0.0', status: 'failed', failure: 'artifact_execution_unconfirmed',
+    retry_blocked_reason: 'worker_reconciliation', failure_detail: { phase: 'assembly', code: 'artifact_execution_unconfirmed',
+      stage: 'build', diagnostic: 'process_timeout', exit_code: 124, action: 'await_reconciliation', raw_output: 'private secret' } };
+  const output = formatSubmission({ submission });
+  assert.match(output, /Failure phase: assembly/);
+  assert.match(output, /Failure stage: build/);
+  assert.match(output, /build process timed out/);
+  assert.match(output, /Exit code: 124/);
+  assert.match(output, /confirm that the previous execution stopped/);
+  assert.doesNotMatch(output, /private secret/);
+  const unknown = formatSubmission({ submission: { ...submission, failure_detail: { phase: 'private secret', code: 'private secret',
+    stage: 'private secret', diagnostic: 'private secret', action: 'private secret', exit_code: -1 } } });
+  assert.doesNotMatch(unknown, /private secret|Exit code/);
+  const failedUnknown = formatSubmission({ submission: { ...submission, failure_detail: {
+    code: 'artifact_execution_failed', diagnostic: 'unknown' } } });
+  assert.match(failedUnknown, /build failed; the platform did not provide a specific cause/);
+  const oldServer = formatSubmission({ submission: { ...submission, failure_detail: undefined } });
+  assert.match(oldServer, /cause is unknown/);
+  const unavailable = formatSubmission({ submission: { ...submission, failure_detail: { stage: 'images', diagnostic: 'process_unavailable' } } });
+  assert.match(unavailable, /Failure stage: images/);
+  assert.match(unavailable, /could not be started/);
+});
+
+test('image cleanup failure does not change the review outcome', () => {
+  const output = formatSubmission({ submission: { id: 'receipt-id', tag: 'v1.0.0', status: 'succeeded',
+    cleanup: { status: 'failed', reason: 'registry_error' } } });
+  assert.match(output, /Automatic checks passed\. Await administrator review/);
+  assert.match(output, /Image cleanup: failed due to a registry error/);
+  assert.match(output, /does not change the review result/);
+  assert.doesNotMatch(output, /Failure:|failed checks|correct the source/);
+  const removed = formatSubmission({ submission: { id: 'receipt-id', tag: 'v1.0.0', status: 'failed', cleanup: { status: 'removed', reason: null } } });
+  assert.match(removed, /Image cleanup: removed/);
 });
 
 test('status includes check progress and review notes, with terminal control characters removed', () => {
@@ -148,4 +185,21 @@ test('published seeder changes identify original version, file and hashes withou
   assert.match(output, /a{64}/);
   assert.doesNotMatch(output, /secret/);
   assert.match(output, /no administrator permission is needed/i);
+});
+
+
+test('registry and App build failures show actionable fixed causes', () => {
+  const messages = {
+    registry_empty_image: /no filesystem layer/,
+    registry_access_denied: /does not have access/,
+    registry_authentication_failed: /could not authenticate/,
+    app_manifest_invalid: /valid version 2 nexia\.json/,
+    frontend_contract_missing: /dist\/frontend\/nexia-host\.json/,
+    worker_lease_expired: /worker stopped responding or timed out/,
+  };
+  for (const [diagnostic, message] of Object.entries(messages)) {
+    const output = formatSubmission({submission:{id:'test',tag:'v1.0.0',status:'failed',
+      failure_detail:{phase:'assembly',stage:'build',diagnostic}}});
+    assert.match(output,message);
+  }
 });
