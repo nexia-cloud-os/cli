@@ -263,6 +263,44 @@ test('database waiting survives throttling and failed shutdown without replaying
   assert.match(logs.join('\n'), /request limit reached/);
 });
 
+test('database requests wait for a source update without changing their request identity', async t => {
+  const { runDatabaseOperation } = await import('../src/database-operations.js');
+  const { randomUUID } = await import('node:crypto');
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-db-source-wait-'));
+  const previous = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  t.after(async () => { if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous; await rm(root, { recursive: true, force: true }); });
+  const id = randomUUID(), requestId = randomUUID(), updateId = randomUUID();
+  const config = { endpoint: 'http://127.0.0.1:43210', token: 'local-test' };
+  const connection = { status: 'connected', sandbox: { id, status: 'active' }, project: { id }, capabilities: { explicit_development_migrations: true, development_database_commands: 2 } };
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify(config));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint: config.endpoint, project_id: id }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint: config.endpoint, id }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  let posts = 0;
+  const requests = [], logs = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const send = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+    if (url.endsWith('/connection')) return send(connection);
+    if (url.endsWith('/v2/sources')) return send({ revision: { id, digest: JSON.parse(options.body).source.digest, file_count: 1 } });
+    if (options.method === 'POST') {
+      requests.push(JSON.parse(options.body));
+      if (++posts === 1) return send({ status: 'preparation_pending', blocking_source_update: {
+        id: updateId, operation_id: id, status: 'running', created_at: new Date(Date.now() - 121000).toISOString(),
+      } }, 409);
+      return send({ operation: { id, request_id: requestId, source_revision_id: id, developer_project_id: id,
+        developer_sandbox_id: id, database_command: 'migrate', database_options: {}, status: 'completed' } });
+    }
+    return send({ operation: null });
+  });
+  await runDatabaseOperation(root, { config, app: { id }, project: { project_id: id }, connection },
+    { command: 'migrate', requestId, log: line => logs.push(line) });
+  assert.equal(posts, 2);
+  assert.ok(requests.every(request => request.request_id === requestId && request.source_revision_id === id));
+  assert.ok(logs.some(line => line.includes(updateId) && line.includes('contact platform support')));
+});
+
 test('db access uses one project sandbox connection from root or App and rejects a different login', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-sandbox-access-'));
   const project = '22222222-2222-4222-8222-222222222222';
