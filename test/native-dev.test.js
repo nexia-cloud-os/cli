@@ -19,6 +19,57 @@ const managedDatabase = handler => async (req, res) => {
 };
 const createServer = handler => httpServer(managedDatabase(handler));
 
+for (const outcome of ['lost response', 'another writer']) test(`shutdown after ${outcome} only releases its own writer session`, async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'nexia-writer-release-'));
+  const previousConfig = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = root;
+  const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
+  const shutdown = new AbortController(), otherSession = randomUUID();
+  let owner = outcome === 'another writer' ? otherSession : null, claimed, release;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const input = raw ? JSON.parse(raw) : null;
+    let payload;
+    if (req.url.endsWith('/connection')) payload = { status: 'connected', project: { id: project }, capabilities: { explicit_development_migrations: true, runtime_writers: true }, sandbox: { id: sandbox, status: 'active', workspace_url: 'http://workspace.localhost:8081', launch_url: `${endpoint}/launch` } };
+    else if (req.url.endsWith('/v2/sources')) payload = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
+    else if (req.url.endsWith('/database-operations')) payload = { operation: null };
+    else if (req.url.endsWith('/writer')) {
+      if (input.release) {
+        release = input.session_id;
+        if (owner !== release) { res.writeHead(409).end('{}'); return; }
+        owner = null;
+        payload = { writer: { released: true } };
+      } else {
+        claimed = input.session_id;
+        shutdown.abort();
+        if (owner) { res.writeHead(409).end('{}'); return; }
+        owner = claimed;
+        res.destroy();
+        return;
+      }
+    } else { res.writeHead(404).end('{}'); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    shutdown.abort(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previousConfig === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previousConfig;
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, 'connection.json'), JSON.stringify({ endpoint, token: 'test-only' }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app, key: 'trial' }));
+  await writeFile(path.join(root, 'composer.json'), '{}');
+  const timeout = setTimeout(() => shutdown.abort(), 5000);
+  try { await nativeDev(root, { port: 0, interval: 1, signal: shutdown.signal, log: () => {} }); }
+  finally { clearTimeout(timeout); }
+  assert.ok(claimed);
+  assert.equal(release, claimed);
+  assert.equal(owner, outcome === 'another writer' ? otherSession : null);
+});
+
 for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update', 'unconfirmed-update', 'foreign-update', 'failed-stopped-update', 'failed-unconfirmed-update', 'failed-foreign-update']) {
   const safeFailure = mode === 'failed';
   const conflict = mode.endsWith('-update');
