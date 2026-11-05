@@ -774,7 +774,7 @@ test('first dev waits for explicit migration and file saves never submit databas
   assert.ok(messages.some(message => message.includes('nexia db migrate')));
 });
 
-for (const interruption of [503, 429, 409, 'source-busy']) test(`completed preview survives ${interruption} without another runtime submission`, async t => {
+for (const interruption of [503, 429, 409, 'source-busy', 'source-pending']) test(`completed preview survives ${interruption} without another runtime submission`, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-preview-continuity-'));
   const previousConfig = process.env.NEXIA_CONFIG_HOME;
   process.env.NEXIA_CONFIG_HOME = root;
@@ -793,7 +793,7 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
         if (!interrupted) {
           interrupted = true;
           if (interruption === 'source-busy') await writeFile(path.join(root, '.git/index.lock'), '');
-          else { res.writeHead(interruption, { 'Content-Type': 'application/json', 'Retry-After': '1' }).end(JSON.stringify(interruption === 409 ? { status: 'preparation_pending', blocking_operation: { id: operation.id, status: 'running', diagnostic_path: `/projects/${project}/development?operation=${operation.id}#operation-${operation.id}` } } : {})); return; }
+          else { res.writeHead(interruption === 'source-pending' ? 409 : interruption, { 'Content-Type': 'application/json', 'Retry-After': '1' }).end(JSON.stringify(interruption === 409 ? { status: 'preparation_pending', blocking_operation: { id: operation.id, status: 'running', diagnostic_path: `/projects/${project}/development?operation=${operation.id}#operation-${operation.id}` } } : interruption === 'source-pending' ? { status: 'preparation_pending', blocking_source_update: { id: app, operation_id: operation.id, status: 'running', created_at: new Date(Date.now() - 121000).toISOString() } } : {})); return; }
         } else {
           assert.equal(readPreview().operation_id, operation.id);
           recovered = true;
@@ -855,8 +855,9 @@ for (const interruption of [503, 429, 409, 'source-busy']) test(`completed previ
     assert.equal(statuses.filter(item => item.state === 'success').length, 2);
     assert.ok(!statuses.some(item => item.state === 'pending'), 'runtime queueing must not return an active preparation to WAITING');
     const ready = statuses.findIndex(item => item.state === 'success');
-    assert.ok(statuses.slice(ready).every(item => ['success', 'stopped'].includes(item.state)), 'poll interruptions must not regress readiness');
-    assert.ok(notices.some(value => /retrying|Waiting/.test(value)));
+    assert.ok(statuses.slice(ready).every(item => ['success', 'stopped', ...(interruption === 'source-pending' ? ['warning'] : [])].includes(item.state)), 'poll interruptions must not regress readiness');
+    assert.ok(notices.some(value => /retrying|waiting/i.test(value)));
+    if (interruption === 'source-pending') assert.ok(notices.some(value => value.includes(app) && value.includes('contact platform support')));
     if (interruption === 429) assert.ok(notices.some(value => value.includes(`/developer-api/v2/apps/${app}/database-operations`)));
   }
 });

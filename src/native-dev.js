@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { preparationFailureDetails, preparationLocation, preparationNextAction, sourceUpdateFailureDetails } from './preparation-failure.js';
 import { lstat, readFile, writeFile, rename } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readConnection, request, validateEndpoint } from './connection.js';
+import { readConnection, request, sourceWaitDetails, validateEndpoint } from './connection.js';
 import { sourceSnapshot, runtimeSourceDigest } from './source-snapshot.js';
 import { syncSource } from './sync.js';
 import { readExecutionSelection, selectExecution, validateExecutionSelection } from './apps.js';
@@ -284,7 +284,11 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
               || (scope.sandbox_id && result.operation.developer_sandbox_id !== scope.sandbox_id)
               || !['queued', 'running', 'completed', 'failed'].includes(update.status)) throw new Error('Platform returned a conflicting source update.');
           if (['queued', 'running'].includes(update.status)) {
-            task('running', 'Applying code changes…');
+            const details = sourceWaitDetails(update);
+            if (Date.now() - Date.parse(update.started_at || update.created_at) >= 120_000) {
+              task('warning', 'Code changes are still waiting for platform confirmation.');
+              notice(details);
+            } else task('running', 'Applying code changes…');
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
           }
@@ -477,6 +481,15 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           continue;
         }
         if ([401, 403].includes(error.status) || error.code === 'APP_BINDING_CHANGED') throw error;
+        if (error.status === 409 && error.platformStatus === 'preparation_pending' && error.blockingSourceUpdate) {
+          const update = error.blockingSourceUpdate;
+          if (Date.now() - Date.parse(update.started_at || update.created_at) >= 120_000) {
+            task('warning', 'Code changes are still waiting for platform confirmation.');
+          } else task('running', 'Waiting for the previous code update…');
+          notice(sourceWaitDetails(error.blockingSourceUpdate));
+          await delay(Math.max(5000, interval), undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          continue;
+        }
         if (error.status === 409 && error.platformStatus === 'preparation_pending'
             && ['queued', 'running', 'failed'].includes(error.blockingOperation?.status)) {
           notice('Waiting for the previous App execution to finish stopping or preparing. Development will continue automatically.');

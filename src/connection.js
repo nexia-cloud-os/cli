@@ -9,6 +9,15 @@ import path from 'node:path';
 export const configDirectory = () => process.env.NEXIA_CONFIG_HOME || path.join(os.homedir(), '.config', 'nexia');
 const configFile = () => path.join(configDirectory(), 'connection.json');
 const defaultEndpoint = 'https://developers.nexia.to';
+const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
+
+export function sourceWaitDetails(update) {
+  const since = Date.parse(update.started_at || update.created_at);
+  const overdue = Number.isFinite(since) && Date.now() - since >= 120_000;
+  return `Source update ${update.id} (${update.status}). ${overdue
+    ? 'Still waiting; contact platform support with this ID. Source and data are retained.'
+    : 'Waiting for the existing update; source and data are retained.'}`;
+}
 
 export function validateEndpoint(value) {
   const url = new URL(value);
@@ -64,6 +73,11 @@ export async function request(config, route, { method = 'GET', body, authenticat
   if (!response.ok) {
     const error = new Error(`Platform HTTP ${response.status}: ${Object.values(payload.errors || {}).flat().join(' ') || payload.message || response.statusText}`);
     if (response.status === 409 && payload.status === 'preparation_pending') {
+      const update = payload.blocking_source_update;
+      if (uuid(update?.id) && uuid(update.operation_id) && ['queued', 'running'].includes(update.status)) {
+        error.blockingSourceUpdate = update;
+        error.message += `\n${sourceWaitDetails(update)}`;
+      }
       const op = payload.blocking_operation;
       const location = preparationLocation(op, config.endpoint);
       if (location && ['queued', 'running', 'failed', 'needs_review'].includes(op.status)) {

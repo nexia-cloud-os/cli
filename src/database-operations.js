@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { readConnection, request } from './connection.js';
+import { readConnection, request, sourceWaitDetails } from './connection.js';
 import { preparationFailureDetails, preparationLocation, preparationNextAction } from './preparation-failure.js';
 import { syncSource } from './sync.js';
 
@@ -59,6 +59,13 @@ export async function runDatabaseOperation(directory, binding, { command, option
           if (operation.source_revision_id !== revision.id) throw new Error('The database operation does not match the uploaded source. Keep the request ID for recovery.');
           break;
         } catch (error) {
+          if (error.status === 409 && error.platformStatus === 'preparation_pending' && error.blockingSourceUpdate) {
+            const details = sourceWaitDetails(error.blockingSourceUpdate);
+            if (waiting !== details) log(details);
+            waiting = details;
+            await delay(5000, undefined, { signal: stopped });
+            continue;
+          }
           if (error.status !== 409 || error.platformStatus !== 'preparation_pending'
               || !['queued', 'running', 'failed'].includes(error.blockingOperation?.status)) throw error;
           if (!waiting) log('Waiting for the previous App execution to finish stopping or preparing. This normally clears shortly; the database command will continue automatically.');

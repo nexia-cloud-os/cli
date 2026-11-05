@@ -4,7 +4,7 @@ import { mkdtemp, readFile, stat, rm, writeFile, symlink } from 'node:fs/promise
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { readConnection, saveConnection, setEndpoint, validateEndpoint, request, login } from '../src/connection.js';
+import { readConnection, saveConnection, setEndpoint, validateEndpoint, request, login, sourceWaitDetails } from '../src/connection.js';
 import { initProject } from '../src/project.js';
 import { bundleProject } from '../src/deploy.js';
 
@@ -163,6 +163,27 @@ test('preparation conflicts distinguish waiting from review and reject unsafe di
   operation.diagnostic_path = 'https://untrusted.example';
   await assert.rejects(request(config, 'v2/runtime-operations'), error => {
     assert.equal(error.message, 'Platform HTTP 409: Preparation pending.');
+    return true;
+  });
+});
+
+test('source update waits retain identity and show support guidance after a bounded delay', async t => {
+  const update = { id: '11111111-1111-4111-8111-111111111111', operation_id: '22222222-2222-4222-8222-222222222222',
+    status: 'queued', created_at: new Date(Date.now() - 121000).toISOString() };
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 409,
+    json: async () => ({ status: 'preparation_pending', message: 'Preparation pending.', blocking_source_update: update }) }));
+  const config = { endpoint: 'https://developers.example', token: 'test-secret' };
+  await assert.rejects(request(config, 'v2/runtime-operations'), error => {
+    assert.equal(error.blockingSourceUpdate.id, update.id);
+    assert.match(error.message, /contact platform support/);
+    assert.doesNotMatch(error.message, /test-secret/);
+    return true;
+  });
+  update.created_at = new Date().toISOString();
+  assert.match(sourceWaitDetails(update), /Waiting for the existing update/);
+  update.id = 'not-an-id';
+  await assert.rejects(request(config, 'v2/runtime-operations'), error => {
+    assert.equal(error.blockingSourceUpdate, undefined);
     return true;
   });
 });
