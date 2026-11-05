@@ -85,7 +85,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   };
   let lastStatus, lastDatabaseStatus, quietDigest = null, platformCheckedAt = 0, uploadedSource = null;
   const writerSession = randomUUID();
-  let writer = null, writerCheckedAt = 0;
+  let writer = null, writerCheckedAt = 0, writerClaimAttempted = false;
   let connectionChecked = false, startupSelectionChecked = false;
   let preview, build, runtimeLogs, browserRuntime = null, preparationFailed = false;
   let localDatabase, localTunnel, localTunnelClosed = false;
@@ -208,6 +208,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         }
         if (initialConnection.capabilities?.runtime_writers && Date.now() - writerCheckedAt >= 30000) {
           // The same session can safely renew its lease after a lost response.
+          writerClaimAttempted = true;
           const response = await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession } });
           if (response.writer?.app_id !== scope.app_id || response.writer.sandbox_id !== scope.sandbox_id
             || !Number.isSafeInteger(response.writer.generation) || response.writer.generation < 1) throw new Error('Invalid development writer lease.');
@@ -515,10 +516,13 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     if (!reporter) task('error', String(error.message || error).split(/\r?\n/, 1)[0]);
     throw error;
   } finally {
-    localTunnel?.close();
-    await runtimeLogs?.close(); await preview?.close(); await build?.close();
-    if (writer) await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession, release: true } })
-      .catch(() => detailLog('Writer release was not confirmed; it expires automatically. Runtime data was retained.'));
+    try {
+      localTunnel?.close();
+      await runtimeLogs?.close(); await preview?.close(); await build?.close();
+    } finally {
+      if (writerClaimAttempted) await request(config, `v2/apps/${scope.app_id}/writer`, { method: 'PUT', body: { session_id: writerSession, release: true } })
+        .catch(error => { if (error.status !== 409) detailLog('Writer release was not confirmed; it expires automatically. Runtime data was retained.'); });
+    }
   }
   if (reporter) task('stopped', 'Local source watch stopped; sandbox data retained');
   else log('Source watch stopped. Sandbox data and pending preparation requests were retained.');
