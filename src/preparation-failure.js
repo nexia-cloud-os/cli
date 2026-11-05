@@ -7,7 +7,7 @@ export function preparationFailureDetails(failure, check) {
 
 function failureDetails(failure, check) {
   const stages = { source: 'source validation', database_probe: 'database access check', dependencies: 'PHP dependencies',
-    catalog: 'App catalog', migration_preflight: 'applied migration source check', migrate: 'database migrations', initialize: 'App initialization', seed: 'App seeding', serve: 'backend startup',
+    catalog: 'App catalog', migration_preflight: 'applied migration source check', runtime_schema: 'platform runtime database preparation', migrate: 'database migrations', initialize: 'App initialization', seed: 'App seeding', serve: 'backend startup',
     references: 'resource references', ingress: 'workspace routing', operator: 'platform preparation' };
   if (!failure || !Object.hasOwn(stages, failure.stage)) return '';
   const diagnostic = failure.diagnostic;
@@ -88,6 +88,23 @@ function failureDetails(failure, check) {
   if (failure.code === 'PREPARATION_FAILED') {
     const action = { source: 'Check the App manifest and uploaded source.', catalog: 'Check App metadata and contribution declarations.',
       migrate: 'Check the App migrations; do not delete migration history or reset data.', initialize: 'Check App initialization code; preserve existing data.' };
+    if (failure.stage === 'runtime_schema') {
+      const reasons = {
+        schema_not_ready: 'The existing App database initialization or an earlier migration is not confirmed.',
+        partial_metadata: 'Platform runtime database metadata is only partially applied.',
+        schema_owner_mismatch: 'The platform migrator is not the owner of the selected App schema.',
+        invalid_authority: 'The platform runtime preparation authority does not match this sandbox.',
+        permission_denied: 'The platform migrator lacks permission to prepare runtime metadata.',
+        database_lock_timeout: 'Platform database preparation could not acquire a lock before its deadline.',
+        required_table_missing: 'A required platform runtime table is missing.',
+        required_column_missing: 'A required platform runtime column is missing.',
+        database_or_runtime_error: 'Runtime database preparation failed; its specific cause was not recorded.',
+        diagnostic_unavailable: 'The runtime did not provide a recognized schema preparation diagnostic.',
+      };
+      const reason = failure.runtime_schema?.reason;
+      const sqlstate = /^[A-Z0-9]{5}$/.test(failure.runtime_schema?.sqlstate ?? '') ? `\nPostgreSQL SQLSTATE: ${failure.runtime_schema.sqlstate}` : '';
+      return `[PREPARATION_FAILED] ${stage}\nOwner: platform runtime database preparation.\n${reasons[reason] ?? reasons.diagnostic_unavailable}${sqlstate}\nPlatform support must inspect this operation. Existing App data and migration history must be retained.\n`;
+    }
     if (failure.stage === 'database_probe') {
       const reasons = {
         connection: 'Database connection failed', database_identity: 'Connected to the wrong database',
@@ -127,7 +144,7 @@ export function preparationLocation(operation, endpoint) {
 export function preparationNextAction(operation) {
   if (operation?.database_command) return 'Correct the reported database issue, then run the database command explicitly. Source watching continues; existing data and execution history are retained.';
   if (operation?.failure?.code === 'PREPARATION_FAILED'
-      && ['database_probe', 'ingress', 'operator'].includes(operation.failure.stage)) {
+      && ['database_probe', 'runtime_schema', 'ingress', 'operator'].includes(operation.failure.stage)) {
     return 'Platform recovery is required. Keep nexia dev running; no App data reset or App source change is indicated by this failure.';
   }
   return 'Correct the reported issue and keep nexia dev running. Changed source is checked automatically; no administrator approval is required.';
