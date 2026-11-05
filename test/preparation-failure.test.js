@@ -136,3 +136,11 @@ test('source failures distinguish runtime loss and reject unknown reason text', 
   const unknown = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'source', source_reason: 'PRIVATE secret' });
   assert.doesNotMatch(unknown, /PRIVATE|secret/);
 });
+
+test('platform runtime schema failure reports the bounded cause and SQLSTATE', () => {
+  const message = preparationFailureDetails({ code: 'PREPARATION_FAILED', stage: 'runtime_schema',
+    runtime_schema: { reason: 'permission_denied', sqlstate: '42501' } });
+  assert.match(message, /permission/i);
+  assert.match(message, /42501/);
+  assert.doesNotMatch(message, /delete|reset/i);
+});
