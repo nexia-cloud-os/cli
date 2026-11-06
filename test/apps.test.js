@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { mkdtemp, mkdir, readFile, writeFile, rm, rename, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -218,4 +221,91 @@ test('startup resume uses the observed revision, accepts pending shutdown, and r
   await assert.rejects(selectExecution(root, 'development', { expected }), /changed before startup/);
   assert.equal((await selectExecution(root, 'development', { log: () => {} })).revision, 5);
   assert.equal(writes, 2);
+});
+
+test('project restart requests each watched development App and preserves stopped, unwatched and changed selections', async t => {
+  const { bindWorkspace } = await import('../src/workspace.js');
+  const { startDevSession } = await import('../src/dev-sessions.js');
+  const { restartProjectExecutions } = await import('../src/apps.js');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-project-restart-'));
+  const previous = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = path.join(root, 'config');
+  const project = '22345678-1234-4123-8123-123456789abc';
+  const sandbox = '32345678-1234-4123-8123-123456789abc';
+  const names = ['a-first', 'b-second', 'c-off', 'd-unwatched', 'e-changed'];
+  const selections = new Map(), operations = new Map(), writes = [], reads = new Map();
+  const server = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/developer-api/connection') return res.end(JSON.stringify({ status: 'connected', project: { id: project } }));
+    if (req.url === '/developer-api/apps') return res.end(JSON.stringify({ apps: [...selections].map(([id, selection]) => ({ id, key: selection.key })) }));
+    const operationId = req.url.match(/\/v2\/runtime-operations\/([^/]+)$/)?.[1];
+    if (operationId) return res.end(JSON.stringify({ operation: operations.get(operationId) }));
+    const id = req.url.match(/\/v2\/apps\/([^/]+)\/execution$/)?.[1];
+    const selection = selections.get(id);
+    if (!selection) { res.writeHead(404).end('{}'); return; }
+    if (req.method === 'PUT') {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw); writes.push({ id, ...body });
+      if (body.revision !== selection.revision) { res.writeHead(409).end('{}'); return; }
+      selection.mode = body.mode; selection.revision++; selection.stop_pending = false;
+    } else {
+      reads.set(id, (reads.get(id) || 0) + 1);
+      if (id.endsWith('0005') && reads.get(id) === 2) { selection.mode = 'off'; selection.revision++; }
+    }
+    res.end(JSON.stringify({ selection }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let session;
+  t.after(async () => {
+    await session?.close();
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  await saveConnection({ endpoint, token: 'test-token' });
+  const workspace = await bindWorkspace(root, { endpoint, project: { id: project, name: 'Test' } });
+  for (const [index, name] of names.entries()) {
+    const id = `12345678-1234-4123-8123-${String(index + 1).padStart(12, '0')}`;
+    const directory = path.join(root, name);
+    await mkdir(path.join(directory, '.nexia'), { recursive: true });
+    await writeFile(path.join(directory, 'composer.json'), JSON.stringify({ name: `example/${name}` }));
+    await writeFile(path.join(directory, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: name } }));
+    await writeFile(path.join(directory, '.nexia/app.json'), JSON.stringify({ endpoint, id, key: name }));
+    await writeFile(path.join(directory, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+    const operationId = `42345678-1234-4123-8123-${String(index + 1).padStart(12, '0')}`;
+    await writeFile(path.join(directory, '.nexia/runtime.json'), JSON.stringify({ endpoint, project_id: project, app_id: id, sandbox_id: sandbox, operation_id: operationId }));
+    operations.set(operationId, { id: operationId, developer_project_id: project, developer_sandbox_id: sandbox, status: 'completed', stopped_at: null, stop_requested_at: null });
+    selections.set(id, { key: name, app_id: id, project_id: project, sandbox_id: sandbox, mode: name === 'c-off' ? 'off' : 'development', revision: 1, stop_pending: false, restart_cleanup_supported: true });
+  }
+  const remoteId = '12345678-1234-4123-8123-000000000006';
+  selections.set(remoteId, { key: 'f-remote', app_id: remoteId, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false });
+  const unboundId = '12345678-1234-4123-8123-000000000007';
+  const unbound = path.join(root, 'g-unbound');
+  await mkdir(unbound);
+  await writeFile(path.join(unbound, 'composer.json'), JSON.stringify({ name: 'example/g-unbound' }));
+  await writeFile(path.join(unbound, 'nexia.json'), JSON.stringify({ schema_version: '2', runtime: 'laravel', app: { app_key: 'g-unbound' } }));
+  selections.set(unboundId, { key: 'g-unbound', app_id: unboundId, project_id: project, sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false });
+  session = await startDevSession(root, { port: 4310, projectId: project, stop: () => {} });
+  session.update({ status: 'watching', apps: ['a-first', 'b-second', 'c-off', 'e-changed'] });
+  const logs = [];
+  await assert.rejects(restartProjectExecutions(workspace, { log: line => logs.push(line) }), /d-unwatched, e-changed, g-unbound, f-remote/);
+  assert.deepEqual(writes.map(({ id, mode }) => [names[Number(id.slice(-4)) - 1], mode]), [
+    ['a-first', 'off'], ['a-first', 'development'], ['b-second', 'off'], ['b-second', 'development'],
+  ]);
+  assert.match(logs.join('\n'), /Restart requested: 2; skipped: 1; not confirmed: 4/);
+  assert.match(logs.join('\n'), /No active local nexia dev watcher/);
+
+  writes.length = 0; reads.clear();
+  for (const selection of selections.values()) {
+    selection.revision = 1;
+    selection.mode = selection.key === 'c-off' ? 'off' : 'development';
+  }
+  const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+  await assert.rejects(promisify(execFile)(process.execPath, [cli, 'dev', 'restart', '--no-interactive'], {
+    cwd: root, env: { ...process.env, CI: '1' }, timeout: 10000,
+  }), error => error.code === 1 && /Restart requested: 2; skipped: 1; not confirmed: 4/.test(error.stderr));
+  assert.deepEqual(writes.map(({ id, mode }) => [names[Number(id.slice(-4)) - 1], mode]), [
+    ['a-first', 'off'], ['a-first', 'development'], ['b-second', 'off'], ['b-second', 'development'],
+  ]);
 });
