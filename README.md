@@ -218,6 +218,9 @@ running for that App, or start it again, and wait for `Development ready`.
 The App is temporarily unavailable while its execution is replaced. Source and
 sandbox data are retained. A restart cannot install a newer platform runtime;
 if the SDK mismatch remains, check the platform's selected runtime and App requirement.
+With a compatible Core and Manager, confirmed replacement also permits early
+collection of the stopped execution's disposable containers. Otherwise normal
+retention applies; cleanup never removes App data.
 
 `dev` handles registration, sandbox preparation, immutable source snapshots and
 frontend watching. A snapshot is limited to 2000 files, 2 MiB/file, 16 MiB total;

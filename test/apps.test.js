@@ -12,7 +12,7 @@ test('restart waits for shutdown and requests a revision-bound resume without cl
   const previous = process.env.NEXIA_CONFIG_HOME;
   process.env.NEXIA_CONFIG_HOME = path.join(root, 'config');
   const app = '12345678-1234-4123-8123-123456789abc', project = '22345678-1234-4123-8123-123456789abc';
-  let selection = { app_id: app, project_id: project, sandbox_id: '32345678-1234-4123-8123-123456789abc', mode: 'development', revision: 1, stop_pending: false };
+  let selection = { app_id: app, project_id: project, sandbox_id: '32345678-1234-4123-8123-123456789abc', mode: 'development', revision: 1, stop_pending: false, restart_cleanup_supported: true };
   const writes = [];
   const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
@@ -40,12 +40,15 @@ test('restart waits for shutdown and requests a revision-bound resume without cl
   await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
   const lines = [];
   const result = await restartExecution(root, { log: line => lines.push(line), wait: async () => { selection.stop_pending = false; } });
-  assert.deepEqual(writes, [{ mode: 'off', revision: 1 }, { mode: 'development', revision: 2 }]);
+  assert.deepEqual(writes, [{ mode: 'off', revision: 1, restart_cleanup: true }, { mode: 'development', revision: 2 }]);
   assert.equal(result.mode, 'development');
   assert.match(lines.join('\n'), /wait for Development ready/);
   selection = { ...selection, revision: 1, stop_pending: false };
   await assert.rejects(restartExecution(root, { log: () => {}, wait: async () => { selection.revision++; } }), /selection changed while waiting/);
-  assert.deepEqual(writes.slice(2), [{ mode: 'off', revision: 1 }]);
+  assert.deepEqual(writes.slice(2), [{ mode: 'off', revision: 1, restart_cleanup: true }]);
+  selection = { ...selection, mode: 'development', revision: 1, stop_pending: false, restart_cleanup_supported: false };
+  await restartExecution(root, { log: () => {}, wait: async () => { selection.stop_pending = false; } });
+  assert.deepEqual(writes.slice(3), [{ mode: 'off', revision: 1 }, { mode: 'development', revision: 2 }]);
 });
 
 test('execution selection uses server revision and refuses stale or rebound choices', async t => {

@@ -71,7 +71,7 @@ export function validateExecutionSelection(selection, scope) {
   return selection;
 }
 
-export async function selectExecution(directory, mode, { log = console.log, expected } = {}) {
+export async function selectExecution(directory, mode, { log = console.log, expected, restartCleanup = false } = {}) {
   if (!['development', 'off'].includes(mode)) throw new Error('Development execution mode must be development or off.');
   const config = await readConnection();
   const readBinding = async () => {
@@ -97,7 +97,8 @@ export async function selectExecution(directory, mode, { log = console.log, expe
   }
   const latest = await readConnection(), binding = await readBinding();
   if (latest.endpoint !== config.endpoint || latest.token !== config.token || binding.project_id !== scope.project_id || binding.app_id !== scope.app_id) throw new Error('App binding or CLI connection changed. No execution choice was submitted.');
-  const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`, { method: 'PUT', body: { mode, revision: current.revision } });
+  const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`, { method: 'PUT', body: { mode, revision: current.revision,
+    ...(restartCleanup && mode === 'off' && current.restart_cleanup_supported === true ? { restart_cleanup: true } : {}) } });
   const pendingResume = mode === 'development' && selection?.mode === 'off' && selection.resume_pending === true && selection.stop_pending === true;
   if (selection?.app_id !== scope.app_id || selection.project_id !== scope.project_id || selection.sandbox_id !== current.sandbox_id
       || (!pendingResume && selection.mode !== mode) || (!Number.isSafeInteger(selection.revision) || selection.revision < current.revision || selection.revision > current.revision + 1)
@@ -108,7 +109,7 @@ export async function selectExecution(directory, mode, { log = console.log, expe
 }
 
 export async function restartExecution(directory, { log = console.log, wait = delay } = {}) {
-  const stopped = await selectExecution(directory, 'off', { log });
+  const stopped = await selectExecution(directory, 'off', { log, restartCleanup: true });
   const config = await readConnection();
   const scope = { app_id: stopped.app_id, project_id: stopped.project_id };
   let current = stopped;
