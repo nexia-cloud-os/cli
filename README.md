@@ -213,7 +213,8 @@ To replace the remote development runtimes of this project's running Apps, keep
 `nexia dev` running and run `nexia dev restart` from the project folder in another
 terminal. The command checks linked local Apps and requests replacement only for
 those with a running runtime in stable development mode and an active local watcher.
-Off or unregistered Apps are skipped. Pending or unwatched Apps are reported
+Off or unregistered Apps are skipped. The summary counts requested, skipped,
+and unconfirmed Apps. Pending or unwatched Apps are reported
 as incomplete; check their state and start `nexia dev` for the desired Apps.
 A project App missing from this folder is reported if development is selected;
 connect its local source and watcher before retrying that App individually.
