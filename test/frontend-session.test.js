@@ -17,7 +17,8 @@ async function waitFor(predicate, label) {
 
 test('opt-in session preserves legacy output and old snapshots across rebuilds and failure', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'nexia-session-test-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const retained = [];
+  t.after(async () => { for (const session of retained) await rm(session, { recursive: true, force: true }); await rm(root, { recursive: true, force: true }); });
   const viteDir = path.join(root, 'node_modules/vite/dist/node');
   await mkdir(viteDir, { recursive: true });
   await mkdir(path.join(root, 'resources'), { recursive: true });
@@ -103,6 +104,17 @@ test('opt-in session preserves legacy output and old snapshots across rebuilds a
     }, 'new watcher after layout change');
     await assert.rejects(lstat(previousSession), /ENOENT/);
     assert.match(await readFile(path.join(firstRoot, oldPart), 'utf8'), /first/);
+    const unsafeSession = session, beforeUnsafeLayout = build.snapshot();
+    retained.push(unsafeSession);
+    await symlink(path.join(root, 'dist/frontend/user-owned.txt'), path.join(unsafeSession, 'user-link'));
+    await writeFile(path.join(root, 'resources/another.ts'), 'export {};');
+    await waitFor(async () => {
+      session = await readFile(path.join(root, 'session-path'), 'utf8');
+      return session !== unsafeSession && build.ready() && build.snapshot() !== beforeUnsafeLayout;
+    }, 'new watcher after unsafe session retirement');
+    assert.ok((await lstat(unsafeSession)).isDirectory());
+    assert.match(await readFile(path.join(firstRoot, oldPart), 'utf8'), /first/);
+    assert.equal(await readFile(path.join(root, 'dist/frontend/user-owned.txt'), 'utf8'), 'preserve');
     const generations = path.join(root, 'dist/frontend-generations');
     const before = new Set(await readdir(generations));
     await mkdir(path.join(session, 'many-files'));

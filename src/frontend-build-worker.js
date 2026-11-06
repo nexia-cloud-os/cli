@@ -144,17 +144,22 @@ async function startWatcher() {
 }
 async function checkLayout() {
   if (closing) return;
+  let sessionTransition = false;
   try {
     if (await resourceLayout() !== layout) {
       process.send?.({ phase: 'building' });
       const previous = watcher;
       const previousSession = watcherSession;
+      sessionTransition = Boolean(previousSession);
       const retirement = (async () => {
         try {
           await previous.close();
           if (previousSession) {
             await Promise.all([...pendingCopies]);
-            if (!retainedSessions.has(previousSession) && await removeSession(previousSession)) sessions.delete(previousSession);
+            if (!retainedSessions.has(previousSession)) {
+              try { if (await removeSession(previousSession)) sessions.delete(previousSession); }
+              catch { retainedSessions.add(previousSession); console.error('Frontend session could not be safely removed; it was retained.'); }
+            }
           }
         } catch (error) {
           if (previousSession) retainedSessions.add(previousSession);
@@ -168,7 +173,11 @@ async function checkLayout() {
       if (!closing) await start();
     }
     if (!closing) timer = setTimeout(checkLayout, 250);
-  } catch (error) { console.error(error); await close(); }
+  } catch (error) {
+    console.error(error);
+    if (sessionTransition) process.send?.({ phase: 'failed', detail: 'Frontend watcher could not be safely replaced; its files were retained.' });
+    else await close();
+  }
 }
 const close = async () => {
   if (closing) return;
