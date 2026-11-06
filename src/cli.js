@@ -20,7 +20,7 @@ import { testApp } from './app-tests.js';
 import { nativeDev } from './native-dev.js';
 import { runDatabaseOperation, formatSeedingResult } from './database-operations.js';
 import { setupLocalDatabase } from './local-database.js';
-import { registerApp } from './apps.js';
+import { registerApp, restartExecution } from './apps.js';
 import { bindWorkspace, findWorkspace, discoverApps } from './workspace.js';
 import { commands, groups, parseCommand, validateOptions, helpText, InputError } from './commands.js';
 import { Cancelled, createInput, language, message } from './input.js';
@@ -262,6 +262,10 @@ try {
       if (failed) throw new Error('One or more App checks failed. See the results above.');
       console.info('[NEXIA_READ_BATCH_INFO] Registered route batching is checked during runtime catalog extraction, not source checks. Undeclared reads run individually; batching advice never blocks build or submission.');
       console.log('Source checks passed. Dynamic reference querySchema/fieldSchema catalogs were not evaluated; nexia dev validates them in isolation. Runtime behavior, review and production deployment were not verified.');
+    } else if (name === 'dev restart') {
+      const [directory] = await appTargets(options, input);
+      input.close();
+      await restartExecution(directory);
     } else if (name === 'dev config') {
       const workspace = await findWorkspace(process.cwd());
       if (!workspace) throw new InputError('Run nexia dev config inside a connected project.');

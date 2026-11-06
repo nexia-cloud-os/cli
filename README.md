@@ -209,6 +209,16 @@ permission failure, or uncertain response stops that App with its cause and a
 link to development settings; inspect the state before restarting. Automatic
 resume is a request, not proof that runtime preparation has completed.
 
+To replace one App's remote development execution with the currently selected
+platform runtime, run `nexia dev restart` inside its App folder, or
+`nexia dev restart --app <folder-or-key>` in the project. This requests a stop
+and waits for confirmed shutdown before a revision-bound resume. If shutdown
+does not finish within two minutes, inspect the App in Developers. Keep `nexia dev`
+running for that App, or start it again, and wait for `Development ready`.
+The App is temporarily unavailable while its execution is replaced. Source and
+sandbox data are retained. A restart cannot install a newer platform runtime;
+if the SDK mismatch remains, check the platform's selected runtime and App requirement.
+
 `dev` handles registration, sandbox preparation, immutable source snapshots and
 frontend watching. A snapshot is limited to 2000 files, 2 MiB/file, 16 MiB total;
 it excludes secrets/dotfiles, dependencies and symlinks. Snapshot retention limits
