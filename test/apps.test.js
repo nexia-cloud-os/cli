@@ -4,8 +4,52 @@ import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, writeFile, rm, rename, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { registerApp, selectExecution } from '../src/apps.js';
+import { registerApp, selectExecution, restartExecution } from '../src/apps.js';
 import { saveConnection } from '../src/connection.js';
+
+test('restart waits for shutdown and requests a revision-bound resume without claiming readiness', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-restart-'));
+  const previous = process.env.NEXIA_CONFIG_HOME;
+  process.env.NEXIA_CONFIG_HOME = path.join(root, 'config');
+  const app = '12345678-1234-4123-8123-123456789abc', project = '22345678-1234-4123-8123-123456789abc';
+  let selection = { app_id: app, project_id: project, sandbox_id: '32345678-1234-4123-8123-123456789abc', mode: 'development', revision: 1, stop_pending: false, restart_cleanup_supported: true };
+  const writes = [];
+  const server = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'PUT') {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw); writes.push(body);
+      if (body.mode === 'off') selection = { ...selection, mode: 'off', revision: 2, stop_pending: true };
+      else {
+        assert.equal(selection.stop_pending, false);
+        selection = { ...selection, mode: 'development', revision: 3 };
+      }
+    }
+    res.end(JSON.stringify({ selection }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    if (previous === undefined) delete process.env.NEXIA_CONFIG_HOME; else process.env.NEXIA_CONFIG_HOME = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const endpoint = `http://127.0.0.1:${server.address().port}`;
+  await saveConnection({ endpoint, token: 'test-token' });
+  await mkdir(path.join(root, '.nexia'));
+  await writeFile(path.join(root, '.nexia/app.json'), JSON.stringify({ endpoint, id: app }));
+  await writeFile(path.join(root, '.nexia/project.json'), JSON.stringify({ endpoint, project_id: project }));
+  const lines = [];
+  const result = await restartExecution(root, { log: line => lines.push(line), wait: async () => { selection.stop_pending = false; } });
+  assert.deepEqual(writes, [{ mode: 'off', revision: 1, restart_cleanup: true }, { mode: 'development', revision: 2 }]);
+  assert.equal(result.mode, 'development');
+  assert.match(lines.join('\n'), /wait for Development ready/);
+  selection = { ...selection, revision: 1, stop_pending: false };
+  await assert.rejects(restartExecution(root, { log: () => {}, wait: async () => { selection.revision++; } }), /selection changed while waiting/);
+  assert.deepEqual(writes.slice(2), [{ mode: 'off', revision: 1, restart_cleanup: true }]);
+  selection = { ...selection, mode: 'development', revision: 1, stop_pending: false, restart_cleanup_supported: false };
+  await restartExecution(root, { log: () => {}, wait: async () => { selection.stop_pending = false; } });
+  assert.deepEqual(writes.slice(3), [{ mode: 'off', revision: 1 }, { mode: 'development', revision: 2 }]);
+});
 
 test('execution selection uses server revision and refuses stale or rebound choices', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-execution-'));

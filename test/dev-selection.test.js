@@ -12,7 +12,8 @@ test('only dev permits repeated App flags, regardless of option position', () =>
     assert.deepEqual(parseCommand(args).options.app, ['people', 'payroll']);
   }
   assert.equal(parseCommand(['dev', '--app', 'people']).options.app, 'people');
-  for (const command of [['check'], ['db', 'migrate'], ['submit'], ['make', 'resource']]) {
+  assert.equal(parseCommand(['dev', 'restart', '--app', 'people']).name, 'dev restart');
+  for (const command of [['dev', 'restart'], ['check'], ['db', 'migrate'], ['submit'], ['make', 'resource']]) {
     assert.throws(() => parseCommand([...command, '--app', 'people', '--app', 'payroll']), /Only nexia dev/);
   }
 });

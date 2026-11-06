@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile, lstat } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { readConnection, request } from './connection.js';
 
 async function optionalJson(file) {
@@ -70,7 +71,7 @@ export function validateExecutionSelection(selection, scope) {
   return selection;
 }
 
-export async function selectExecution(directory, mode, { log = console.log, expected } = {}) {
+export async function selectExecution(directory, mode, { log = console.log, expected, restartCleanup = false } = {}) {
   if (!['development', 'off'].includes(mode)) throw new Error('Development execution mode must be development or off.');
   const config = await readConnection();
   const readBinding = async () => {
@@ -96,12 +97,34 @@ export async function selectExecution(directory, mode, { log = console.log, expe
   }
   const latest = await readConnection(), binding = await readBinding();
   if (latest.endpoint !== config.endpoint || latest.token !== config.token || binding.project_id !== scope.project_id || binding.app_id !== scope.app_id) throw new Error('App binding or CLI connection changed. No execution choice was submitted.');
-  const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`, { method: 'PUT', body: { mode, revision: current.revision } });
+  const { selection } = await request(config, `v2/apps/${scope.app_id}/execution`, { method: 'PUT', body: { mode, revision: current.revision,
+    ...(restartCleanup && mode === 'off' && current.restart_cleanup_supported === true ? { restart_cleanup: true } : {}) } });
   const pendingResume = mode === 'development' && selection?.mode === 'off' && selection.resume_pending === true && selection.stop_pending === true;
   if (selection?.app_id !== scope.app_id || selection.project_id !== scope.project_id || selection.sandbox_id !== current.sandbox_id
       || (!pendingResume && selection.mode !== mode) || (!Number.isSafeInteger(selection.revision) || selection.revision < current.revision || selection.revision > current.revision + 1)
       || typeof selection.stop_pending !== 'boolean') throw new Error('Execution choice acknowledgement was not confirmed. Check status before retrying.');
   log(pendingResume ? 'Development switch pending. Waiting for shutdown confirmation; keep nexia dev running.'
     : `Development execution: ${selection.mode}${selection.stop_pending ? ' (operator shutdown pending)' : ''}. Source and data retained. No published App was installed.`);
+  return selection;
+}
+
+export async function restartExecution(directory, { log = console.log, wait = delay } = {}) {
+  const stopped = await selectExecution(directory, 'off', { log, restartCleanup: true });
+  const config = await readConnection();
+  const scope = { app_id: stopped.app_id, project_id: stopped.project_id };
+  let current = stopped;
+  const deadline = Date.now() + 120_000;
+  while (current.stop_pending) {
+    if (Date.now() >= deadline) throw new Error('Shutdown is still pending. Check the App in Developers before resuming; source and data are retained.');
+    await wait(1000);
+    const latest = await readConnection();
+    if (latest.endpoint !== config.endpoint || latest.token !== config.token) throw new Error('CLI connection changed while waiting for shutdown. Check the App in Developers.');
+    current = await readExecutionSelection(config, scope);
+    if (current.sandbox_id !== stopped.sandbox_id || current.revision !== stopped.revision || current.mode !== 'off' || current.resume_pending) {
+      throw new Error('Development selection changed while waiting for shutdown. Check the App in Developers; no resume was requested.');
+    }
+  }
+  const selection = await selectExecution(directory, 'development', { log, expected: current });
+  log('Restart requested. Keep nexia dev running, or start it for this App; wait for Development ready. Source and data are retained.');
   return selection;
 }
