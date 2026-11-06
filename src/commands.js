@@ -15,6 +15,7 @@ export const commands = {
   'make page': { argument: 'name', description: ['Generate a business page in an App', '앱에 업무 페이지 생성'], options: ['app', 'label-ko', 'record', 'navigation', 'navigation-group', 'sort', 'dry-run', 'yes'] },
   dev: { description: ['Choose All Apps, configured Apps, or individual Apps (up to 20)', '전체·Config 설정·개별 앱 선택 (최대 20개)'], options: ['app', 'port', 'container', 'verbose'] },
   'dev config': { description: ['Config Apps: save the default development selection', 'Config Apps: 기본 개발 앱 선택 저장'], options: ['app', 'yes'] },
+  'dev restart': { description: ['Restart one App’s remote development runtime', '앱 하나의 원격 개발 런타임 재시작'], options: ['app'] },
   test: { description: ['Run the App’s independent test suite', 'App의 독립 테스트 실행'], options: ['app', 'frontend', 'database', 'filter', 'testsuite'] },
   check: { description: ['Check this App, or all Apps from the project root', '현재 앱 또는 프로젝트 루트의 전체 앱 검사'], options: ['app'] },
   ps: { description: ['List local development sessions, ports and Apps', '로컬 개발 세션·포트·앱 조회'], options: ['json'] },
@@ -131,7 +132,7 @@ export function helpText(name = '') {
     ? [{ title: [name, name], names: groups[name].map(child => `${name} ${child}`) }]
     : [
       { title: ['Start & connect', '시작·연결'], names: ['setup', 'update', 'create project', 'connect', 'login', 'logout', 'status'] },
-      { title: ['Build & develop', '생성·개발'], names: ['create app', 'make resource', 'make page', 'dev', 'dev config', 'check', 'test', 'ps', 'stop'] },
+      { title: ['Build & develop', '생성·개발'], names: ['create app', 'make resource', 'make page', 'dev', 'dev config', 'dev restart', 'check', 'test', 'ps', 'stop'] },
       { title: ['Sandbox database', '샌드박스 데이터'], names: groups.db.map(child => `db ${child}`) },
       { title: ['Submit & review', '제출·심사'], names: ['submit', 'submit list', 'submit status', 'submit cancel', 'submit retry'] },
       { title: ['Documentation', '개발 문서'], names: ['docs', 'docs search', 'docs read'] },
