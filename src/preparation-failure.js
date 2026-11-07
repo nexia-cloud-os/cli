@@ -1,4 +1,10 @@
 import { cleanupStatus } from './cleanup-status.js';
+
+// Reserved Core-owned diagnostic; older Core versions never emit this field.
+const catalogStorageFailure = failure => failure?.code === 'CATALOG_VALIDATION_FAILED' && failure.stage === 'catalog'
+  && failure.issues_omitted === 0 && Array.isArray(failure.issues) && failure.issues.length === 1
+  && failure.issues[0]?.field === 'catalog.storage_roundtrip_platform' && failure.issues[0]?.rule === 'invalid'
+  && failure.issues[0]?.limit === null && failure.issues[0]?.actual === null;
 /** Only known diagnostics are rendered. */
 export function preparationFailureDetails(failure, check) {
   const cleanup = cleanupStatus([{ operation: null, observations: check?.cleanup }]);
@@ -22,6 +28,9 @@ function failureDetails(failure, check) {
   const trace = location && typeof diagnostic.trace === 'string' && diagnostic.trace.length <= 16384 ? `\n${clean(diagnostic.trace)}` : '';
   const truncated = location && diagnostic.truncated === true ? '\nException details were truncated by the size/frame limit.' : '';
   const stage = `Failed step: ${stages[failure.stage]}.${location}${message}${trace}${truncated}`;
+  if (catalogStorageFailure(failure)) {
+    return `[CATALOG_VALIDATION_FAILED] ${stage}\nOwner: platform.\nThe platform could not preserve the App catalog identity during storage. Report the operation to the platform operator; changing App declarations is not indicated by this diagnostic.\n`;
+  }
   if (failure.code === 'CATALOG_VALIDATION_FAILED' && failure.stage === 'catalog') {
     const issues = Array.isArray(failure.issues) ? failure.issues.slice(0, 1000) : [];
     const details = issues.filter(issue => issue && typeof issue.field === 'string'
@@ -142,6 +151,7 @@ export function preparationLocation(operation, endpoint) {
 
 /** A failed execution is a diagnostic, never a development approval request. */
 export function preparationNextAction(operation) {
+  if (catalogStorageFailure(operation?.failure)) return 'Platform recovery is required. Report the operation to the platform operator.';
   if (operation?.database_command) return 'Correct the reported database issue, then run the database command explicitly. Source watching continues; existing data and execution history are retained.';
   if (operation?.failure?.code === 'PREPARATION_FAILED'
       && ['database_probe', 'runtime_schema', 'ingress', 'operator'].includes(operation.failure.stage)) {
