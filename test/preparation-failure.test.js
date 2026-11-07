@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { preparationFailureDetails } from '../src/preparation-failure.js';
+import { preparationFailureDetails, preparationNextAction, sourceUpdateFailureDetails } from '../src/preparation-failure.js';
 
 const mismatch = { code: 'SDK_VERSION_MISMATCH', stage: 'dependencies', required_sdk: '^0.8.6 || ^0.9.0', installed_sdk: 'v0.8.4' };
 
@@ -62,6 +62,29 @@ test('catalog errors name the file, exact dotted key and lengths without grantin
   assert.match(message, /nexia check/);
   assert.doesNotMatch(message, /PRIVATE|safe to retry|No App code ran/);
   assert.match(preparationFailureDetails({ code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [] }), /Fix the reported catalog declarations/);
+});
+
+test('only the reserved platform catalog storage diagnostic changes the guidance', () => {
+  const issue = { field: 'catalog.storage_roundtrip_platform', rule: 'invalid', limit: null, actual: null };
+  const failure = { code: 'CATALOG_VALIDATION_FAILED', stage: 'catalog', issues: [issue], issues_omitted: 0 };
+  const message = preparationFailureDetails(failure);
+  assert.match(message, /Owner: platform/);
+  assert.match(message, /catalog identity during storage/);
+  assert.doesNotMatch(message, /Owner: App catalog|Fix the reported catalog declarations/);
+  assert.match(preparationNextAction({ database_command: 'seed', failure }), /Platform recovery/);
+  const operation = { id: '11111111-1111-4111-8111-111111111111' };
+  const update = { id: '22222222-2222-4222-8222-222222222222', source_revision_id: '33333333-3333-4333-8333-333333333333', operation_id: operation.id, failure };
+  assert.match(sourceUpdateFailureDetails(update, operation, 'https://developers.example'), /Owner: platform/);
+  for (const changed of [
+    { ...failure, issues_omitted: 1 },
+    { ...failure, issues: [{ ...issue, field: 'catalog.storage_roundtrip' }] },
+    { ...failure, issues: [{ ...issue, rule: 'too_long' }] },
+    { ...failure, issues: [{ ...issue, actual: 1 }] },
+    { ...failure, issues: [issue, { ...issue, field: 'catalog.permissions.0.key' }] },
+    { ...failure, issues: [] },
+  ]) {
+    assert.doesNotMatch(preparationFailureDetails(changed), /Owner: platform/);
+  }
 });
 
 test('catalog diagnostics show more than ten issue codes and disclose the limit', () => {
