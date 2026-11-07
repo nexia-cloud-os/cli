@@ -39,6 +39,29 @@ test('submission receipts distinguish new, reused and older-server acknowledgeme
   assert.doesNotMatch(formatSubmission({ submission }), /Already submitted|Submission received/);
 });
 
+test('dashboard inventory warnings are nonblocking and do not claim route or permission safety', () => {
+  const submission = { id: 'receipt-id', tag: 'v1.0.0', status: 'succeeded' };
+  const review = { status: 'ready_for_human_review', ready_for_human_review: true, checks: [] };
+  const baseline = formatSubmission({ submission, review });
+  assert.doesNotMatch(baseline, /Dashboard route inventory/);
+  const advisory = { scope: 'inventory_only', missing: [
+    { key: 'inventory.overview.read', kind: 'source', path: '/api/inventory/dashboard/overview/total' },
+    { key: 'inventory.overview.read', kind: 'widget', path: '/api/inventory/widget' },
+    { key: 'private secret', kind: 'source', path: '/api/test' },
+    { key: 'inventory.read', kind: 'source', path: '/api/test?token=secret' },
+  ], omitted: 2 };
+  const output = formatSubmission({ submission, review: { ...review, dashboard_route_advisory: advisory } });
+  assert.match(output, /route order, parameter bindings and permissions are not verified/);
+  assert.match(output, /inventory.overview.read \(source\).*absent from the route inventory/);
+  assert.match(output, /inventory.overview.read \(widget\)/);
+  assert.match(output, /warnings omitted: 2/);
+  assert.match(output, /Await administrator review/);
+  assert.doesNotMatch(output, /private secret|token=secret/);
+  assert.match(formatSubmission({ submission, review: { ...review, dashboard_route_advisory: { scope: 'inventory_only', missing: [] } } }), /not verified/);
+  assert.match(formatSubmission({ submission, review: { ...review, dashboard_route_advisory: { scope: 'unavailable' } } }), /unavailable/);
+  assert.equal(formatSubmission({ submission, review: { ...review, dashboard_route_advisory: { scope: 'future' } } }), baseline);
+});
+
 test('submission guidance follows state without suggesting unsafe retries or claiming deployment', () => {
   const result = (status, extra = {}) => formatSubmission({ submission: { id: 'receipt-id', tag: 'v1.0.0', status, ...extra } });
   for (const status of ['waiting', 'queued', 'building', 'running']) {
