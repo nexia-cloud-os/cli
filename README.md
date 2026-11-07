@@ -331,6 +331,8 @@ missing, interactive submission opens Developers for approval. Automated callers
 must connect it in Developers first. Submission does not create tags, push code,
 publish or install an App. Use the returned ID with `submit status`; cancel/retry
 are subject to server state and authorization. New source requires a new tag.
+After the build, `submit status` can show dashboard route inventory warnings.
+These are advisory; route ordering, bindings, and permissions still need review.
 
 ### Submission receipts and next actions
 

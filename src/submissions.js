@@ -93,6 +93,20 @@ export function formatSubmission(result) {
   if (build?.review_note) lines.push(`Review note: ${build.review_note}`);
   if (review) {
     lines.push(`Review: ${review.status}`);
+    const advisory = review.dashboard_route_advisory;
+    if (advisory && advisory.scope === 'inventory_only' && Array.isArray(advisory.missing)) {
+      lines.push('Dashboard route inventory is partial: route order, parameter bindings and permissions are not verified.');
+      for (const item of advisory.missing.slice(0, 50)) {
+        if (item && ['source', 'widget'].includes(item.kind)
+            && typeof item.key === 'string' && /^[a-z][a-z0-9_.-]{0,190}$/.test(item.key)
+            && typeof item.path === 'string' && /^\/[A-Za-z0-9_.\/:{}-]{1,511}$/.test(item.path)) {
+          lines.push(`  Warning: ${item.key} (${item.kind}) is absent from the route inventory: ${item.path}. Check the registered route.`);
+        }
+      }
+      if (Number.isSafeInteger(advisory.omitted) && advisory.omitted > 0) lines.push(`  Additional inventory warnings omitted: ${advisory.omitted}`);
+    } else if (advisory?.scope === 'unavailable') {
+      lines.push('Dashboard route inventory is unavailable; routes, bindings and permissions are not verified.');
+    }
     for (const check of review.checks ?? []) {
       lines.push(`  ${check.title || check.key}: ${check.status}`);
       if (['failed', 'error', 'blocked'].includes(check.status)) {
