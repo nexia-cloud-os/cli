@@ -127,6 +127,15 @@ export function formatSubmission(result) {
             }
           }
         }
+        if (check.key === 'migration_compatibility') {
+          for (const finding of (check.details?.findings ?? []).slice(0, 100)) {
+            if (typeof finding.table === 'string' && /^[A-Za-z0-9_]{1,63}$/.test(finding.table)
+                && typeof finding.reason === 'string' && /^[a-z_]{1,80}$/.test(finding.reason)
+                && (finding.column == null || (typeof finding.column === 'string' && /^[A-Za-z0-9_]{1,63}$/.test(finding.column)))) {
+              lines.push(`    ${finding.table}${finding.column ? '.' + finding.column : ''}: ${finding.reason}`);
+            }
+          }
+        }
         for (const field of ['stage', 'reason', 'failure_code']) {
           const value = check.details?.[field];
           if (typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value)) lines.push(`    ${field}: ${value}`);

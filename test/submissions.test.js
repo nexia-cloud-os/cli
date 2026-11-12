@@ -197,6 +197,17 @@ test('submission migration history failures identify each changed or removed fil
   assert.match(output, /002_sites.php: removed since publication/);
 });
 
+test('migration compatibility failures show the affected table and column', () => {
+  const output = formatSubmission({submission: {id: 'test', status: 'built'}, review: {checks: [
+    {key: 'migration_compatibility', status: 'failed', details: {findings: [
+      {table: 'records', column: 'name', reason: 'column_removed'},
+      {table: 'records', column: null, reason: 'row_count_decreased'},
+    ]}},
+  ]}});
+  assert.match(output, /records\.name: column_removed/);
+  assert.match(output, /records: row_count_decreased/);
+});
+
 
 test('published seeder changes identify original version, file and hashes without blocking development', () => {
   const output = formatSubmission({ submission: { id: '22222222-2222-4222-8222-222222222222', status: 'failed', tag: 'v2.0.0' }, review: { checks: [{ key: 'migration_history', status: 'failed', details: { findings: [
