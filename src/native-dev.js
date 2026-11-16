@@ -15,6 +15,7 @@ import { startNativePreview } from './native-preview.js';
 import { startFrontendBuild } from './frontend-build.js';
 import { devPanel, devTask, serverVersionRows } from './dev-output.js';
 import { connectDatabaseTunnel } from './local-database-tunnel.js';
+import { sourceWakeup } from './source-wakeup.js';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
@@ -89,6 +90,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   let connectionChecked = false, startupSelectionChecked = false;
   let preview, build, runtimeLogs, browserRuntime = null, preparationFailed = false;
   let localDatabase, localTunnel, localTunnelClosed = false;
+  const sourceChanges = sourceWakeup(directory);
   // Keep the App discoverable while its current execution is unavailable.
   // A preparing identity grants no operation or source authority.
   const previewState = () => browserRuntime ? { ...browserRuntime,
@@ -135,7 +137,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
         if (browserRuntime && quietDigest && Date.now() - platformCheckedAt < Math.min(15000, interval * 3)
             && (!initialConnection.capabilities?.runtime_writers || Date.now() - writerCheckedAt < 30000)
             && (await sourceSnapshot(directory)).digest === quietDigest) {
-          await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+          await sourceChanges.wait(interval, signal);
           continue;
         }
         platformCheckedAt = Date.now();
@@ -154,6 +156,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           if (launch.origin !== new URL(config.endpoint).origin || launch.username || launch.password) throw new Error('Invalid workspace launch address.');
           task('running', 'Building frontend…');
           build = await startFrontendBuild(directory, { verbose, signal, log: detailLog, onInvalidate: () => {}, onState: (phase, detail) => {
+            if (phase === 'ready' || phase === 'failed') sourceChanges.notify();
             if (phase === 'building') task('running', 'Building frontend…');
             if (phase === 'failed') task('error', detail || 'Frontend build failed. Fix the build output; watching continues.');
             if (phase === 'ready') task('running', 'Frontend build ready; checking runtime preparation…');
@@ -517,6 +520,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     throw error;
   } finally {
     try {
+      sourceChanges.close();
       localTunnel?.close();
       await runtimeLogs?.close(); await preview?.close(); await build?.close();
     } finally {

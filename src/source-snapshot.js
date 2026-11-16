@@ -8,6 +8,13 @@ const files = new Set(['composer.json', 'composer.lock', 'package.json', 'packag
 const extensions = new Set(['.php', '.json', '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.html', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.woff', '.woff2', '.yaml', '.yml', '.xml']);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
+export function isSourceChange(file) {
+  if (!file) return true;
+  const parts = String(file).replaceAll('\\', '/').split('/');
+  return (roots.has(parts[0]) || (parts.length === 1 && files.has(parts[0])))
+    && !parts.some(part => part.startsWith('.') || part === 'node_modules' || part === 'vendor');
+}
+
 // Only browser source in the standard frontend roots can reuse a prepared
 // Backend. Shared translations, views, public files, manifests, dependencies,
 // tests and unknown extensions remain part of the runtime fingerprint.
