@@ -21,6 +21,11 @@ test('source notification wakes a pending wait and polling works without a watch
     const waiting = changes.wait(3000);
     event('change', 'src/Example.php');
     await waiting;
+    // An edit arriving during a completed loop must also wake the next wait.
+    changes.notify();
+    const immediate = changes.wait(3000);
+    const finished = await Promise.race([immediate.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 100))]);
+    assert.equal(finished, true);
     const aborted = new AbortController();
     aborted.abort();
     await changes.wait(3000, aborted.signal);

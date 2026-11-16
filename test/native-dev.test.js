@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { nativeDev } from '../src/native-dev.js';
+import { runtimeSourceDigest } from '../src/source-snapshot.js';
 
 const managedDatabase = handler => async (req, res) => {
   if (req.method === 'GET' && req.url.endsWith('/local-database')) {
@@ -84,6 +85,9 @@ for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update
     const shutdown = new AbortController();
     const project = randomUUID(), app = randomUUID(), sandbox = randomUUID();
     const sources = [], operations = new Map();
+    const revisions = new Map();
+    const hmrAdmissions = [];
+    let previewUrl;
     let polls = 0, updates = 0, updatePosts = 0, batchCalls = 0, selectionCalls = 0;
     const appliedUpdates = new Map();
     const writerSession = { writer: { generation: 1, app_id: app, sandbox_id: sandbox } };
@@ -106,7 +110,9 @@ for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update
         sandbox_id: sandbox, mode: 'development', revision: 1, stop_pending: false } }; }
       else if (req.url.endsWith('/v2/sources')) {
         sources.push(input.source);
-        result = { revision: { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length } };
+        const revision = { id: randomUUID(), digest: input.source.digest, file_count: input.source.files.length };
+        revisions.set(revision.id, input.source);
+        result = { revision };
       } else if (req.method === 'POST' && req.url.endsWith('/v2/runtime-operations')) {
         const operation = { id: randomUUID(), request_id: input.request_id, source_revision_id: input.source_revision_id,
           developer_project_id: project, developer_sandbox_id: sandbox, source_updates_supported: persistent, writer_generation: 1, status: safeFailure && operations.size === 0 ? 'failed' : 'completed',
@@ -187,7 +193,21 @@ for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update
     `);
     const deadline = setTimeout(() => shutdown.abort(), 5000);
     const readyStates = [];
-    try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {}, reporter: {
+    try { await nativeDev(root, { port: 0, interval: 5, signal: shutdown.signal, log: () => {},
+      onStatus(status) { if (status.workspace_url) previewUrl = new URL(status.workspace_url).searchParams.get('preview'); },
+      hmrFactory: () => ({
+        async approve(snapshot) {
+          const response = await fetch(`${previewUrl}/__nexia_native`, { headers: { Origin: 'http://workspace.localhost:8081' } });
+          const manifest = await response.json();
+          const operation = operations.get(manifest.operation_id);
+          const backend = revisions.get(manifest.source_revision_id);
+          hmrAdmissions.push({ snapshot: snapshot.digest, manifestRevision: manifest.source_revision_id, operationRevision: operation?.source_revision_id,
+            backendMatches: backend && runtimeSourceDigest(snapshot) === runtimeSourceDigest(backend) });
+        },
+        async suspend() {},
+        async close() {},
+      }),
+      reporter: {
       summary() {}, message() {}, failure() {}, resolve() { return false; },
       task(_name, state, detail) {
         readyStates.push({ state, detail });
@@ -200,6 +220,11 @@ for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update
     assert.equal(sources.length, persistent && !conflict ? 4 : 3);
     assert.equal(operations.size, persistent && !recover ? 1 : 2);
     if (persistent && !conflict) { assert.equal(updates, 2); assert.ok(updatePosts >= 3); }
+    if (persistent && !conflict) {
+      assert.ok(hmrAdmissions.length > 0);
+      assert.ok(hmrAdmissions.every(item => item.manifestRevision === item.operationRevision), 'HMR publishes only after the matching runtime identity is exposed');
+      assert.ok(hmrAdmissions.every(item => item.backendMatches), 'HMR frontend snapshot matches the confirmed backend digest');
+    }
     if (conflict) {
       assert.equal(updates, 0);
       const saved = JSON.parse(await readFile(path.join(root, '.nexia/runtime.json'), 'utf8'));
