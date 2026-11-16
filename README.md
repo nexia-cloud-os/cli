@@ -242,13 +242,22 @@ Developers; a writer lease or pending preparation may prevent another writer.
 Generated Vite Apps reuse their prepared Backend when only browser source changes:
 JS/JSX/TS/TSX/CSS/SCSS in `resources/js/`, or CSS/SCSS in `resources/css/` and
 `resources/scss/`. These roots are browser-only inputs; Backend code must not read
-them as runtime data. The frontend still rebuilds locally. With a matching Core
-and an App rebuilt with the SDK's development-update contract, the Shell replaces
-that App without reloading other tabs. Unsaved forms and pending/uncertain writes
-defer replacement. This is App-scoped module replacement, not React Fast Refresh:
-component-local state can reset when a clean generation is applied. Old SDKs keep
-the explicit refresh path. Completed builds use immutable asset directories,
-retained during this watch session for existing pages and lazy chunks.
+them as runtime data. The frontend still rebuilds locally. React Fast Refresh
+requires a matching CLI and React SDK, a sandbox Core serving its
+`build:sandbox-hmr` assets, Vite 7.3.x, and the standard
+`nexiaAppConfig(import.meta.url)` configuration. Compatible component edits retain
+their local state; App styles remain scoped. Custom Vite configurations, older SDKs
+and unavailable sandbox assets use the compiled development path. Completed builds
+use immutable asset directories retained during this watch session.
+
+Adding or removing a resource module can change glob registrations; save drafts
+and refresh the workspace explicitly to load that new module list.
+
+An update that cannot be safely refreshed, or a lost HMR connection, leaves the
+current Shell open and asks for an explicit refresh. Save drafts first: that action
+reloads the workspace page. A failed initial HMR negotiation uses the compiled
+path; after HMR starts, a worker failure or execution replacement requires an
+explicit refresh rather than an automatic switch.
 
 PHP, routes, declarations, migrations, shared `resources/lang` translations,
 Blade views, public files, build configuration and dependencies still prepare a
