@@ -12,6 +12,7 @@ import { sourceSnapshot, runtimeSourceDigest } from './source-snapshot.js';
 import { syncSource } from './sync.js';
 import { readExecutionSelection, selectExecution, validateExecutionSelection } from './apps.js';
 import { startNativePreview } from './native-preview.js';
+import { createFrontendHmr } from './frontend-hmr.js';
 import { startFrontendBuild } from './frontend-build.js';
 import { devPanel, devTask, serverVersionRows } from './dev-output.js';
 import { connectDatabaseTunnel } from './local-database-tunnel.js';
@@ -20,7 +21,7 @@ import { sourceWakeup } from './source-wakeup.js';
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 
 // Only public source/preparation APIs; no operator credentials or local App execution.
-export async function nativeDev(directory, { signal, verbose = false, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {}, reporter = null, taskName } = {}) {
+export async function nativeDev(directory, { signal, verbose = false, log = console.log, interval = 5000, port = 4310, container = false, previewHost = null, onStatus = () => {}, reporter = null, taskName, hmrFactory = createFrontendHmr } = {}) {
   const config = await readConnection();
   const local = path.join(directory, '.nexia');
   async function readLocal(name, optional = false) {
@@ -88,7 +89,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   const writerSession = randomUUID();
   let writer = null, writerCheckedAt = 0, writerClaimAttempted = false;
   let connectionChecked = false, startupSelectionChecked = false;
-  let preview, build, runtimeLogs, browserRuntime = null, preparationFailed = false;
+  let preview, build, hmr, runtimeLogs, browserRuntime = null, preparationFailed = false;
   let localDatabase, localTunnel, localTunnelClosed = false;
   const sourceChanges = sourceWakeup(directory);
   // Keep the App discoverable while its current execution is unavailable.
@@ -97,6 +98,11 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
     update_status: preparationFailed ? 'runtime_failed' : build?.failed() ? 'build_failed' : (build && !build.ready())
       || state?.source_update || (state && state.revision_id !== browserRuntime.source_revision_id) ? 'preparing' : 'ready',
   } : { mode: preparationFailed ? 'runtime_failed' : build?.failed() ? 'build_failed' : 'preparing', app_id: scope.app_id, app_key: identity.key };
+  async function suspendRuntime() {
+    if (!browserRuntime) return;
+    browserRuntime = null;
+    await preview?.suspendHmr?.();
+  }
   try {
     while (!signal?.aborted) {
       try {
@@ -163,8 +169,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             lastStatus = undefined;
           } });
           if (signal?.aborted) break;
-          preview = previewHost ? previewHost.attach(directory, previewState, log, verbose)
-            : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: previewState });
+          hmr = hmrFactory(directory);
+          preview = previewHost ? previewHost.attach(directory, previewState, log, verbose, hmr)
+            : await startNativePreview(directory, { workspaceOrigin, port, container, log, verbose, state: previewState, hmr });
           launch.searchParams.set('preview', preview.url);
           onStatus({ status: 'watching', workspace_url: launch.href, apps: [identity.key] });
           if (!previewHost) {
@@ -198,7 +205,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             lastDatabaseStatus = status;
           }
           if (['queued', 'running'].includes(databaseOperation.status)) {
-            browserRuntime = null;
+            await suspendRuntime();
             const status = `database:${databaseOperation.id}:${databaseOperation.status}`;
             if (lastStatus !== status) {
               if (reporter) task('running', `Database ${databaseOperation.database_command} ${databaseOperation.status}…`);
@@ -233,6 +240,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           }
         }
         if (selection.mode === 'off') {
+          await suspendRuntime();
           browserRuntime = { mode: 'off', app_id: scope.app_id, app_key: identity.key };
           const status = `off:${selection.revision}:${selection.stop_pending}:${selection.resume_pending}`;
           if (lastStatus !== status) {
@@ -373,11 +381,12 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             // Recover the old outcome first, then pin current source for this writer.
             // Resubmitting the previous revision can repeat an already repaired failure.
             renewWriter = true;
-            browserRuntime = null;
+            await suspendRuntime();
           }
           if (!state.operation_id) await persist({ ...state, operation_id: operation.id });
           candidateRuntime = operation.status === 'completed' && !operation.stop_requested_at && !operation.stopped_at
             ? { operation_id: operation.id, source_revision_id: operation.source_revision_id, app_id: scope.app_id, app_key: identity.key } : null;
+          if (!candidateRuntime) await suspendRuntime();
           const phase = ['failed', 'needs_review'].includes(operation.status) ? operation.status : operation.stopped_at ? 'stopped' : operation.stop_requested_at ? 'stopping' : operation.status;
           const status = `${operation.id}:${phase}`;
           if (lastStatus !== status) {
@@ -402,7 +411,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             lastStatus = status;
           }
           if (waitingForMigration && !cancelled) {
-            browserRuntime = null;
+            await suspendRuntime();
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
           }
@@ -420,7 +429,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           if (operation.stop_requested_at && !operation.stopped_at) {
             // Keep the same operation until the operator acknowledges shutdown.
             // Do not expose stopped authority or submit replacement work early.
-            browserRuntime = null;
+            await suspendRuntime();
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
           }
@@ -456,8 +465,15 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           // Persisting legacy metadata can yield to the build worker. Recheck
           // before exposing an entry whose files may now be changing.
           if (build && (!build.ready() || build.generation() !== frontendGeneration)) { continue; }
-          quietDigest = snapshot.digest;
+          if (!candidateRuntime || (browserRuntime && browserRuntime.operation_id !== candidateRuntime.operation_id)) await suspendRuntime();
+          const approvedFrontend = candidateRuntime && state && (state.runtime_digest === runtimeDigest || (!state.runtime_digest && state.digest === snapshot.digest));
+          if (approvedFrontend) hmr?.stage?.(snapshot);
           browserRuntime = candidateRuntime && { ...candidateRuntime, ...(build?.snapshot() ? { frontend_generation: build.snapshot() } : {}) };
+          if (approvedFrontend) {
+            try { await hmr?.approve(snapshot); }
+            catch (error) { notice(`Fast Refresh unavailable; compiled frontend remains available: ${error.message}`); }
+          }
+          quietDigest = snapshot.digest;
           if (browserRuntime && reporter) {
             const resolved = reporter.resolve?.(name) === true;
             task('success', resolved ? 'Development ready; previous failure resolved' : 'Development ready');
@@ -468,7 +484,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           }
         }
         lastNotice = undefined;
-        await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
+        await sourceChanges.wait(interval, signal);
       } catch (error) {
         if (error.code === 'SOURCE_BUSY') {
           // A changing source tree does not invalidate the last completed execution.
@@ -501,7 +517,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           continue;
         }
         if (error.status !== 429) {
-          browserRuntime = null;
+          await suspendRuntime();
           const status = `error:${error.code || error.status || ''}:${error.message}`;
           if (lastStatus !== status) {
             if (reporter) reporter.failure(name, error, { verbose, next: 'Fix the error; source watching continues.' });

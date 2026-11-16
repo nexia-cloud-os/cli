@@ -1,5 +1,5 @@
 import { receiveBrowserLogs } from './dev-log.js';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile, stat, lstat } from 'node:fs/promises';
 import path from 'node:path';
@@ -7,12 +7,20 @@ import { resolvePublicFile } from './project.js';
 import { validateEndpoint } from './connection.js';
 
 const types = { '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff': 'font/woff', '.woff2': 'font/woff2' };
+const hmrPeers = ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', '@tanstack/react-query', 'react-router-dom', 'react-i18next', '@nexia/sdk', '@nexia/sdk/host'];
+function validHmrPath(raw) {
+  let value; try { value = decodeURIComponent(raw); } catch { return false; }
+  if (/[%\\\x00-\x20]/.test(value) || value.split('/').some(part => part === '.' || part === '..' || (part.startsWith('.') && part !== '.pnpm'))) return false;
+  if (/\.(?:php|env|map|sqlite|db|pem|key)$/i.test(value)) return false;
+  if (value.startsWith('resources/')) return /\.(?:[cm]?js|jsx|ts|tsx|css|scss|json|svg|png|jpe?g|webp|woff2?)$/i.test(value);
+  return /^(?:@vite\/client$|@react-refresh$|@id\/|@fs\/|node_modules\/)/.test(value);
+}
 
 // Serves only the developer's compiled frontend. Never executes a build or project script.
-export async function startNativePreview(directory, { workspaceOrigin, state, port = 4310, container = false, apps = null, log = console.log, verbose = false }) {
+export async function startNativePreview(directory, { workspaceOrigin, state, hmr = null, port = 4310, container = false, apps = null, log = console.log, verbose = false }) {
   workspaceOrigin = validateEndpoint(workspaceOrigin);
   const token = randomBytes(32).toString('hex');
-  const registrations = apps ?? new Map([[token, { directory, state, log, verbose }]]);
+  const registrations = apps ?? new Map([[token, { directory, state, hmr, log, verbose }]]);
   const server = createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     if (req.headers.host !== new URL(origin).host) { res.writeHead(403).end(); return; }
@@ -33,7 +41,35 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
       try { await receiveBrowserLogs(req, res, app); } catch { if (!res.headersSent) res.writeHead(400).end(); }
       return;
     }
+    if (req.method === 'POST' && /^\/[a-f0-9]{64}\/__nexia_hmr_start$/.test(url.pathname)) {
+      const key = url.pathname.split('/')[1], app = registrations.get(key);
+      if (!app?.hmr || !app.state()?.operation_id || app.state()?.update_status !== 'ready') { res.writeHead(409).end(); return; }
+      const epoch = app.epoch ?? 0;
+      try {
+        let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Invalid request.'); }
+        const { peers, refreshRuntime } = JSON.parse(body);
+        const allowed = value => { const target = new URL(value); return target.origin === workspaceOrigin && !target.username && !target.password && !target.search && !target.hash && /^\/build\/sandbox-hmr\/assets\/[A-Za-z0-9_.-]+\.js$/.test(target.pathname); };
+        if (!peers || typeof peers !== 'object' || Array.isArray(peers) || Object.keys(peers).length !== hmrPeers.length
+          || !hmrPeers.every(name => Object.hasOwn(peers, name) && allowed(peers[name])) || !allowed(refreshRuntime)) throw new Error('Invalid host assets.');
+        await app.hmr.start(key, peers, refreshRuntime);
+        if (registrations.get(key) !== app || (app.epoch ?? 0) !== epoch || !app.state()?.operation_id || app.state()?.update_status !== 'ready') { await app.hmr.suspend(); res.writeHead(409).end(); return; }
+        app.suspended = false;
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ entry: `${origin}/${key}/__nexia_vite/resources/js/index.ts` }));
+      } catch { res.writeHead(409).end(); }
+      return;
+    }
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
+    const vitePath = url.pathname.match(/^\/([a-f0-9]{64})\/__nexia_vite\/(.*)$/);
+    if (vitePath) {
+      const app = registrations.get(vitePath[1]), endpoint = app?.hmr?.endpoint();
+      if (!endpoint || app.suspended || !app.state()?.operation_id || !validHmrPath(vitePath[2])) { res.writeHead(404).end(); return; }
+      const upstream = httpRequest({ host: '127.0.0.1', port: endpoint.port, method: req.method, path: req.url,
+        headers: { host: `127.0.0.1:${endpoint.port}`, 'x-nexia-hmr-gateway': endpoint.gatewayKey } }, response => {
+        res.writeHead(response.statusCode, { ...response.headers, 'Access-Control-Allow-Origin': allowedOrigin, 'Cache-Control': 'no-store' }); response.pipe(res);
+      });
+      res.once('close', () => upstream.destroy());
+      upstream.once('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); }); upstream.end(); return;
+    }
     if (manifest && apps && !url.searchParams.has('app_id')) {
       const ready = [...registrations.values()].map(app => app.state()).filter(app => app?.app_id && app.mode !== 'off');
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -47,6 +83,7 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
     const [assetToken, app] = selected;
     const directory = app.directory;
     const current = manifest ? app.state() : null;
+    const manifestSnapshot = manifest ? app.hmr?.snapshot?.() : null;
     const assetPath = manifest ? current?.frontend_generation : url.pathname.slice(assetToken.length + 2).split('/')[0];
     const generation = typeof assetPath === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(assetPath) ? assetPath : null;
     const root = path.join(path.resolve(directory), 'dist', generation ? `frontend-generations/${generation}` : 'frontend');
@@ -69,8 +106,17 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
         const info = await stat(file);
         const langRoot = path.join(path.resolve(directory), 'resources', 'lang');
         const translations = {};
+        const snapshot = manifestSnapshot;
+        if (app.hmr?.snapshot && !snapshot) { res.writeHead(409).end(); return; }
         for (const locale of ['en', 'ko', 'zh']) {
           try {
+            if (snapshot) {
+              const file = snapshot.files.find(item => item.path === `resources/lang/${locale}.json`);
+              const bytes = file ? Buffer.from(file.content, 'base64') : Buffer.from('{}');
+              if (bytes.length > 1024 * 1024) throw new Error('Translation catalog is too large.');
+              translations[locale] = JSON.parse(bytes.toString('utf8'));
+              continue;
+            }
             if ((await lstat(path.dirname(langRoot))).isSymbolicLink()) throw new Error('Linked resources are not public.');
             const langFile = await resolvePublicFile(langRoot, `${locale}.json`);
             if ((await stat(langFile)).size > 1024 * 1024) throw new Error('Translation catalog is too large.');
@@ -99,6 +145,37 @@ export async function startNativePreview(directory, { workspaceOrigin, state, po
       res.end(req.method === 'HEAD' ? undefined : bytes);
     } catch { res.writeHead(404).end(); }
   });
+  server.on('upgrade', (req, socket, head) => {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    if (req.headers.host !== new URL(origin).host || req.headers.origin !== workspaceOrigin) return socket.destroy();
+    const url = new URL(req.url, origin), match = url.pathname.match(/^\/([a-f0-9]{64})\/__nexia_vite\/@vite\/__nexia_hmr$/);
+    const app = match && registrations.get(match[1]), endpoint = app?.hmr?.endpoint();
+    if (!endpoint || app.suspended || !app.state()?.operation_id || url.search || req.headers['sec-websocket-protocol'] !== 'vite-hmr') return socket.destroy();
+    url.searchParams.set('token', endpoint.wsToken);
+    const upstream = httpRequest({ host: '127.0.0.1', port: endpoint.port, path: `${url.pathname}${url.search}`, headers: {
+      ...req.headers, host: `127.0.0.1:${endpoint.port}`, 'x-nexia-hmr-gateway': endpoint.gatewayKey,
+    } });
+    upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {
+      if (socket.destroyed || registrations.get(match[1]) !== app || app.suspended || app.hmr.endpoint() !== endpoint || !app.state()?.operation_id) { upstreamSocket.destroy(); socket.destroy(); return; }
+      app.sockets ??= new Set(); app.sockets.add(socket); app.sockets.add(upstreamSocket);
+      socket.once('close', () => { app.sockets.delete(socket); upstreamSocket.destroy(); });
+      upstreamSocket.once('close', () => { app.sockets.delete(upstreamSocket); socket.destroy(); });
+      socket.once('error', () => { socket.destroy(); upstreamSocket.destroy(); });
+      upstreamSocket.once('error', () => { socket.destroy(); upstreamSocket.destroy(); });
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\n${response.rawHeaders.reduce((lines, value, i, all) => i % 2 ? lines : `${lines}${value}: ${all[i + 1]}\r\n`, '')}\r\n`);
+      if (upstreamHead.length) socket.write(upstreamHead); if (head.length) upstreamSocket.write(head);
+      upstreamSocket.pipe(socket).pipe(upstreamSocket);
+    });
+    socket.once('close', () => upstream.destroy());
+    upstream.on('response', () => socket.destroy());
+    upstream.on('error', () => socket.destroy()); upstream.end();
+  });
+  async function suspendHmr(key) {
+    const app = registrations.get(key);
+    if (app) { app.suspended = true; app.epoch = (app.epoch ?? 0) + 1; }
+    for (const socket of app?.sockets ?? []) socket.destroy();
+    await app?.hmr?.suspend();
+  }
   await new Promise((resolve, reject) => {
     const onError = error => reject(error.code === 'EADDRINUSE'
       ? new Error(`Port ${port} is already in use. If nexia dev is already running, open its workspace link.
@@ -115,10 +192,14 @@ Then run nexia dev again. To keep the existing process, retry with --port <unuse
     server.listen(port, container ? '0.0.0.0' : '127.0.0.1', () => { server.removeListener('error', onError); resolve(); });
   });
   return {
-    attach(directory, state, log = console.log, verbose = false) {
+    attach(directory, state, log = console.log, verbose = false, hmr = null) {
       const key = randomBytes(32).toString('hex');
-      registrations.set(key, { directory, state, log, verbose });
-      return { url: `http://127.0.0.1:${server.address().port}`, close: async () => { registrations.delete(key); } };
+      registrations.set(key, { directory, state, hmr, log, verbose });
+      return { url: `http://127.0.0.1:${server.address().port}`, suspendHmr: () => suspendHmr(key), close: async () => { const app = registrations.get(key); if (app) { app.suspended = true; app.epoch = (app.epoch ?? 0) + 1; } for (const socket of app?.sockets ?? []) socket.destroy(); await hmr?.close(); registrations.delete(key); } };
     },
-    url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };
+    url: `http://127.0.0.1:${server.address().port}`, suspendHmr: () => suspendHmr(token), close: async () => {
+      for (const app of registrations.values()) { app.suspended = true; app.epoch = (app.epoch ?? 0) + 1; for (const socket of app.sockets ?? []) socket.destroy(); }
+      await Promise.all([...registrations.values()].map(app => app.hmr?.close()));
+      await new Promise(resolve => server.close(resolve));
+    } };
 }
