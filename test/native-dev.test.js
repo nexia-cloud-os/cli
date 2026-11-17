@@ -216,7 +216,10 @@ for (const mode of ['legacy', 'batched', 'failed', 'persistent', 'stopped-update
     } }); }
     finally { clearTimeout(deadline); }
     assert.ok(readyStates.some(item => item.state === 'running' && item.detail.startsWith('Frontend build ready')));
-    assert.ok(readyStates.every(item => item.state !== 'success' || item.detail === 'Development ready'));
+    assert.ok(readyStates.every(item => item.state !== 'success' || item.detail === 'Development ready'
+      || item.detail.endsWith(' · Last confirmed version')));
+    if (!safeFailure) assert.ok(readyStates.some(item => item.state === 'success' && item.detail.startsWith('Uploading changed source… · Last confirmed version')));
+    else assert.ok(readyStates.some(item => item.state === 'running' && item.detail === 'Uploading changed source…'));
     assert.equal(sources.length, persistent && !conflict ? 4 : 3);
     assert.equal(operations.size, persistent && !recover ? 1 : 2);
     if (persistent && !conflict) { assert.equal(updates, 2); assert.ok(updatePosts >= 3); }
