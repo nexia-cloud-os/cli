@@ -20,6 +20,10 @@ contracts. SSO and named profiles are not implemented.
 platform advertises support. Older platforms keep the existing separate requests;
 App, project, sandbox and selection revision checks still apply.
 
+While code changes are applied, `nexia dev` displays the last confirmed execution
+status. When idle, new PHP logs from other requests may take up to 30 seconds to
+appear. Saving source prompts another log check.
+
 ## Start a project
 
 ```sh
