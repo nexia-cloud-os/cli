@@ -12,15 +12,18 @@ test('only source paths wake the development loop', () => {
 });
 
 test('source notification wakes a pending wait and polling works without a watcher', async () => {
-  let event;
+  let event, notifications = 0;
   const changes = sourceWakeup('/app', (_directory, _options, callback) => {
     event = callback;
     return { on() {}, close() {} };
-  });
+  }, () => { notifications++; });
   try {
     const waiting = changes.wait(3000);
     event('change', 'src/Example.php');
     await waiting;
+    assert.equal(notifications, 1);
+    event('change', 'node_modules/package/index.js');
+    assert.equal(notifications, 1);
     // An edit arriving during a completed loop must also wake the next wait.
     changes.notify();
     const immediate = changes.wait(3000);
