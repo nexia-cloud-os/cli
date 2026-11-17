@@ -2,14 +2,22 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { request } from './connection.js';
 import { devLog } from './dev-log.js';
 
+export const nextRuntimeLogDelay = (current, changed, interval) => changed ? interval : Math.min(Math.max(interval, 30000), current * 2);
+
 export function watchRuntimeLogs(config, operation, { log, signal, interval = 2000, verbose = false }) {
   const controller = new AbortController();
   const stopped = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  let idleWait = interval, wakeSleep, wakeRequested = false, lastRequestAt = -Infinity;
   const finished = (async () => {
-    let cursor = 0, disconnected = false, idleWait = interval;
+    let cursor = 0, disconnected = false;
     while (!stopped.aborted) {
-      let wait = interval;
+      const remaining = lastRequestAt + interval - performance.now();
+      if (remaining > 0) await delay(remaining, undefined, { signal: stopped }).catch(() => {});
+      if (stopped.aborted) break;
+      wakeRequested = false;
+      let wait = interval, canWake = false;
       try {
+        lastRequestAt = performance.now();
         const result = await request(config, `v2/runtime-operations/${operation}/logs?after=${cursor}&verbose=${verbose ? 1 : 0}`, { signal: stopped });
         if (stopped.aborted) break;
         if (result.operation_id !== operation || !Number.isSafeInteger(result.cursor) || result.cursor < cursor
@@ -21,8 +29,9 @@ export function watchRuntimeLogs(config, operation, { log, signal, interval = 20
         disconnected = false;
         if (result.truncated) devLog(log, 'php', 'warning', 'Earlier logs expired from the bounded buffer.', { verbose });
         for (const row of result.entries) devLog(log, 'php', row.level, row.message, { verbose });
-        idleWait = result.cursor !== cursor ? interval : Math.min(Math.max(interval, 10000), idleWait * 2);
+        idleWait = nextRuntimeLogDelay(idleWait, result.cursor !== cursor, interval);
         wait = idleWait;
+        canWake = true;
         cursor = result.cursor;
       } catch (error) {
         if (stopped.aborted) break;
@@ -34,8 +43,13 @@ export function watchRuntimeLogs(config, operation, { log, signal, interval = 20
         disconnected = true;
         wait = Math.max(10000, error.retryAfterMs || 0);
       }
-      await delay(wait, undefined, { signal: stopped }).catch(() => {});
+      if (canWake && wakeRequested) wait = 0;
+      const sleep = new AbortController();
+      wakeSleep = canWake ? sleep : undefined;
+      await delay(wait, undefined, { signal: AbortSignal.any([stopped, sleep.signal]) }).catch(() => {});
+      wakeSleep = undefined;
     }
   })();
-  return { operation, close: async () => { controller.abort(); await finished; } };
+  return { operation, wake() { if (!stopped.aborted) { idleWait = interval; wakeRequested = true; wakeSleep?.abort(); } },
+    close: async () => { controller.abort(); await finished; } };
 }

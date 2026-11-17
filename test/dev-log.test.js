@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { startNativePreview } from '../src/native-preview.js';
-import { watchRuntimeLogs } from '../src/runtime-logs.js';
+import { nextRuntimeLogDelay, watchRuntimeLogs } from '../src/runtime-logs.js';
 
 test('browser diagnostics require the workspace origin, private App token and live selection', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nexia-log-'));
@@ -54,6 +54,59 @@ test('runtime logs advance a cursor, never write, and stop polling on cancellati
   assert.match(urls[1], /after=2&verbose=0$/);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /PHP failure/);
+});
+
+test('idle log checks cap at thirty seconds and new output resumes the fast interval', () => {
+  let delay = 2000;
+  const delays = Array.from({ length: 6 }, () => delay = nextRuntimeLogDelay(delay, false, 2000));
+  assert.deepEqual(delays, [4000, 8000, 16000, 30000, 30000, 30000]);
+  assert.equal(nextRuntimeLogDelay(delay, true, 2000), 2000);
+});
+
+test('a source edit wakes an idle log check without waiting for its timer', async t => {
+  const original = globalThis.fetch, controller = new AbortController();
+  let calls = 0, first;
+  const times = [];
+  const requested = new Promise(resolve => { first = resolve; });
+  globalThis.fetch = async () => {
+    times.push(Date.now());
+    if (++calls === 1) first();
+    else controller.abort();
+    return new Response(JSON.stringify({ operation_id: 'operation', cursor: 0, truncated: false, entries: [] }),
+      { headers: { 'Content-Type': 'application/json' } });
+  };
+  const watcher = watchRuntimeLogs({ endpoint: 'http://127.0.0.1:4310', token: 'test' }, 'operation', {
+    log: () => {}, signal: controller.signal, interval: 80,
+  });
+  t.after(async () => { controller.abort(); await watcher.close(); globalThis.fetch = original; });
+  await requested;
+  await new Promise(resolve => setImmediate(resolve));
+  for (let i = 0; i < 10; i++) watcher.wake();
+  await Promise.race([
+    new Promise(resolve => controller.signal.addEventListener('abort', resolve, { once: true })),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('source edit did not wake log polling')), 500)),
+  ]);
+  assert.equal(calls, 2);
+  assert.ok(times[1] - times[0] >= 60, 'repeated source events do not bypass the minimum polling interval');
+});
+
+test('source edits do not bypass runtime log rate-limit backoff', async t => {
+  const original = globalThis.fetch, controller = new AbortController();
+  let calls = 0, first;
+  const requested = new Promise(resolve => { first = resolve; });
+  globalThis.fetch = async () => {
+    calls++; first();
+    return new Response('{}', { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '20' } });
+  };
+  const watcher = watchRuntimeLogs({ endpoint: 'http://127.0.0.1:4310', token: 'test' }, 'operation', {
+    log: () => {}, signal: controller.signal, interval: 20,
+  });
+  t.after(async () => { controller.abort(); await watcher.close(); globalThis.fetch = original; });
+  await requested;
+  await new Promise(resolve => setImmediate(resolve));
+  watcher.wake();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(calls, 1);
 });
 
 

@@ -37,7 +37,11 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   const binding = await readLocal('project.json');
   const identity = await readLocal('app.json');
   const name = taskName || identity.key;
-  const task = (state, detail) => reporter ? reporter.task(name, state, detail) : log(devTask(name, state, detail));
+  let failedProgress = false;
+  const task = (state, detail) => {
+    if (state === 'error') failedProgress = true;
+    return reporter ? reporter.task(name, state, detail) : log(devTask(name, state, detail));
+  };
   const detailLog = (value, options = {}) => reporter ? reporter.message(name, value, { verbose, ...options }) : log(value);
   const scope = { endpoint: config.endpoint, project_id: binding.project_id, app_id: identity.id };
   const consoleUrl = new URL(`/projects/${scope.project_id}/development#project-apps`, config.endpoint);
@@ -91,7 +95,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   let connectionChecked = false, startupSelectionChecked = false;
   let preview, build, hmr, runtimeLogs, browserRuntime = null, preparationFailed = false;
   let localDatabase, localTunnel, localTunnelClosed = false;
-  const sourceChanges = sourceWakeup(directory);
+  const progress = detail => task(browserRuntime?.operation_id && !preparationFailed && !failedProgress ? 'success' : 'running',
+    browserRuntime?.operation_id && !preparationFailed && !failedProgress ? `${detail} · Last confirmed version` : detail);
+  const sourceChanges = sourceWakeup(directory, undefined, () => runtimeLogs?.wake());
   // Keep the App discoverable while its current execution is unavailable.
   // A preparing identity grants no operation or source authority.
   const previewState = () => browserRuntime ? { ...browserRuntime,
@@ -163,9 +169,9 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           task('running', 'Building frontend…');
           build = await startFrontendBuild(directory, { verbose, signal, log: detailLog, onInvalidate: () => {}, onState: (phase, detail) => {
             if (phase === 'ready' || phase === 'failed') sourceChanges.notify();
-            if (phase === 'building') task('running', 'Building frontend…');
+            if (phase === 'building') progress('Building frontend…');
             if (phase === 'failed') task('error', detail || 'Frontend build failed. Fix the build output; watching continues.');
-            if (phase === 'ready') task('running', 'Frontend build ready; checking runtime preparation…');
+            if (phase === 'ready') progress('Frontend build ready; checking runtime preparation…');
             lastStatus = undefined;
           } });
           if (signal?.aborted) break;
@@ -300,7 +306,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             if (Date.now() - Date.parse(update.started_at || update.created_at) >= 120_000) {
               task('warning', 'Code changes are still waiting for platform confirmation.');
               notice(details);
-            } else task('running', 'Applying code changes…');
+            } else progress('Applying code changes…');
             await delay(interval, undefined, { signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
             continue;
           }
@@ -447,7 +453,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           const unchanged = state && (snapshot.digest === state.digest
             || (build && state.runtime_digest === runtimeDigest));
           if (!unchanged || operation?.stopped_at || renewWriter) {
-            task('running', 'Uploading changed source…');
+            progress('Uploading changed source…');
             if (uploadedSource?.revision.digest !== snapshot.digest) {
               uploadedSource = await syncSource(directory, { log: () => {}, config, scope });
             }
@@ -474,9 +480,12 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
             catch (error) { notice(`Fast Refresh unavailable; compiled frontend remains available: ${error.message}`); }
           }
           quietDigest = snapshot.digest;
-          if (browserRuntime && reporter) {
-            const resolved = reporter.resolve?.(name) === true;
-            task('success', resolved ? 'Development ready; previous failure resolved' : 'Development ready');
+          if (browserRuntime) {
+            failedProgress = false;
+            if (reporter) {
+              const resolved = reporter.resolve?.(name) === true;
+              task('success', resolved ? 'Development ready; previous failure resolved' : 'Development ready');
+            }
           }
           if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
             await runtimeLogs?.close();
@@ -520,6 +529,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           await suspendRuntime();
           const status = `error:${error.code || error.status || ''}:${error.message}`;
           if (lastStatus !== status) {
+            failedProgress = true;
             if (reporter) reporter.failure(name, error, { verbose, next: 'Fix the error; source watching continues.' });
             else task('error', `${error.message}\nWatching for changes. Fix the error; development stays open.`);
           }
