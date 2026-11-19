@@ -7,8 +7,9 @@ const projections = {
   legal_entities: 'key bigint PRIMARY KEY, public_id uuid UNIQUE, display_label text, code text, party_public_id uuid, active boolean',
   operating_units: 'key bigint PRIMARY KEY, public_id uuid UNIQUE, display_label text, code text, parent_key bigint, classification text, accent_color text, status text, effective_from date, effective_until date',
   sites: 'key bigint PRIMARY KEY, public_id uuid UNIQUE, code text, label text, type text, timezone text, address jsonb, status text, effective_from date, effective_until date',
-  site_roles: 'key bigint PRIMARY KEY, site_id bigint, legal_entity_id bigint, effective_from date, effective_until date',
 };
+
+const relationName = table => 'nexia_directory_' + (['users', 'sites'].includes(table) ? 'query_' : '') + table;
 
 export async function refreshLocalDirectory(client, config, route, binding) {
   const owner = 'nexia-directory:v1:' + binding.id;
@@ -16,7 +17,7 @@ export async function refreshLocalDirectory(client, config, route, binding) {
   try {
     // Stage every page before changing any view of the previous local snapshot.
     for (const [table, columns] of Object.entries(projections)) {
-      const name = pg.escapeIdentifier('nexia_directory_' + table);
+      const name = pg.escapeIdentifier(relationName(table));
       await client.query(`CREATE TEMP TABLE ${name} (${columns})`);
       let after = '0';
       for (;;) {
@@ -41,7 +42,7 @@ export async function refreshLocalDirectory(client, config, route, binding) {
       const migrator = pg.escapeIdentifier(binding.roles.migrator);
       await client.query(`GRANT USAGE ON SCHEMA public TO ${runtime}`);
       for (const [table, columns] of Object.entries(projections)) {
-        const relation = 'nexia_directory_' + table;
+        const relation = relationName(table);
         const name = pg.escapeIdentifier(relation);
         const existing = await client.query(`SELECT c.relkind, pg_get_userbyid(c.relowner) = current_user AS owned,
           obj_description(c.oid, 'pg_class') AS marker FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
