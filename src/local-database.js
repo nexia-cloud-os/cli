@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { request } from './connection.js';
+import { refreshLocalDirectory } from './local-directory.js';
 
 const tables = ['legal_entities', 'operating_units', 'parties', 'sites', 'users'];
 const identifier = value => pg.escapeIdentifier(value);
@@ -75,6 +76,9 @@ export async function setupLocalDatabase(config, appId, { host = process.env.PGH
         if (page.next_after === null) break;
         if (page.next_after !== after || page.keys.length !== 1000) throw new Error('Invalid Core reference key cursor.');
       }
+    }
+    if (binding.directory_snapshot === true) {
+      await refreshLocalDirectory(client, config, route, binding);
     }
   } finally { await client.end(); }
   const ready = binding.status === 'ready' ? { binding } : await request(config, `${route}/ready`, { method: 'POST', body: {} });
