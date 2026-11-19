@@ -326,7 +326,7 @@ try {
       if (!directory) throw new InputError('Run nexia db local from the selected App folder.');
       if (!await exists(path.join(directory, '.nexia', 'app.json'))) await registerApp(directory, { log });
       const binding = await databaseBinding(directory);
-      await input.confirm(`Prepare local PostgreSQL ${process.env.PGDATABASE || '(set PGDATABASE)'} for ${binding.app.key}. This creates exactly two App roles and key-only Core reference tables. Existing App data is retained.`);
+      await input.confirm(`Prepare local PostgreSQL ${process.env.PGDATABASE || '(set PGDATABASE)'} for ${binding.app.key}. This prepares two App roles, Core reference keys and the basic sandbox directory snapshot. Existing App data is retained.`);
       input.close();
       const local = await setupLocalDatabase(binding.config, binding.app.id);
       const file = path.join(directory, '.nexia', 'local-database.json');
