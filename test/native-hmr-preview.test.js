@@ -93,3 +93,23 @@ test('development translations come from the approved snapshot rather than chang
   snapshot = { files: [{ path: 'resources/lang/en.json', content: Buffer.from(JSON.stringify({ 'demo.title': 'approved new' })).toString('base64') }] };
   assert.equal(await read(), 'approved new');
 });
+
+test('local HMR accepts only configured loopback Vite peer paths', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'nexia-local-hmr-'));
+  await mkdir(path.join(dir, 'dist/frontend'), { recursive: true });
+  await writeFile(path.join(dir, 'dist/frontend/index.js'), 'export default 1;');
+  const hmr = { start: async () => {}, close: async () => {}, suspend: async () => {} };
+  const preview = await startNativePreview(dir, { workspaceOrigin: origin, localViteOrigin: 'http://localhost:18883', port: 0, hmr,
+    state: () => ({ operation_id: 'operation', app_id: 'app', app_key: 'demo', update_status: 'ready' }) });
+  t.after(async () => { await preview.close(); await rm(dir, { recursive: true, force: true }); });
+  const headers = { Origin: origin };
+  const manifest = await (await fetch(`${preview.url}/__nexia_native`, { headers })).json();
+  const token = new URL(manifest.entry).pathname.split('/')[1];
+  const local = { peers: Object.fromEntries(names.map((name, i) => [name, `http://localhost:18883/resources/js/app-sdk/peers/p${i}.ts`])),
+    refreshRuntime: 'http://localhost:18883/resources/js/app-sdk/peers/react-refresh.js' };
+  const start = body => fetch(`${preview.url}/${token}/__nexia_hmr_start`, { method: 'POST', headers, body: JSON.stringify(body) });
+  assert.equal((await start({ ...local, refreshRuntime: 'http://localhost:18883/private/secret.js' })).status, 409);
+  assert.equal((await start(local)).status, 200);
+  assert.equal((await start({ ...local, refreshRuntime: 'http://localhost:18883/@react-refresh' })).status, 200);
+  await assert.rejects(startNativePreview(dir, { workspaceOrigin: 'https://developers.example.com', localViteOrigin: 'http://localhost:18883' }), /loopback/);
+});
