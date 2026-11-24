@@ -254,6 +254,10 @@ their local state; App styles remain scoped. Custom Vite configurations, older S
 and unavailable sandbox assets use the compiled development path. Completed builds
 use immutable asset directories retained during this watch session.
 
+In a source-connected loopback workspace, the local host can supply matching
+Vite peer and React Refresh assets to the preview. This requires the local
+host setup to provide its HTTP Vite origin at localhost or 127.0.0.1.
+
 Adding or removing a resource module can change glob registrations; save drafts
 and refresh the workspace explicitly to load that new module list.
 

@@ -17,8 +17,15 @@ function validHmrPath(raw) {
 }
 
 // Serves only the developer's compiled frontend. Never executes a build or project script.
-export async function startNativePreview(directory, { workspaceOrigin, state, hmr = null, port = 4310, container = false, apps = null, log = console.log, verbose = false }) {
+export async function startNativePreview(directory, { workspaceOrigin, state, hmr = null, port = 4310, container = false, apps = null, log = console.log, verbose = false, localViteOrigin = null }) {
   workspaceOrigin = validateEndpoint(workspaceOrigin);
+  if (localViteOrigin !== null) {
+    const local = new URL(workspaceOrigin);
+    const vite = new URL(validateEndpoint(localViteOrigin));
+    if (local.protocol !== 'http:' || !(local.hostname === 'localhost' || local.hostname.endsWith('.localhost') || local.hostname === '127.0.0.1')
+        || vite.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(vite.hostname)) throw new Error('Local HMR requires loopback origins.');
+    localViteOrigin = vite.origin;
+  }
   const token = randomBytes(32).toString('hex');
   const registrations = apps ?? new Map([[token, { directory, state, hmr, log, verbose }]]);
   const server = createServer(async (req, res) => {
@@ -48,7 +55,10 @@ export async function startNativePreview(directory, { workspaceOrigin, state, hm
       try {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 16384) throw new Error('Invalid request.'); }
         const { peers, refreshRuntime } = JSON.parse(body);
-        const allowed = value => { const target = new URL(value); return target.origin === workspaceOrigin && !target.username && !target.password && !target.search && !target.hash && /^\/build\/sandbox-hmr\/assets\/[A-Za-z0-9_.-]+\.js$/.test(target.pathname); };
+        const allowed = value => { const target = new URL(value); return !target.username && !target.password && !target.search && !target.hash
+          && ((target.origin === workspaceOrigin && /^\/build\/sandbox-hmr\/assets\/[A-Za-z0-9_.-]+\.js$/.test(target.pathname))
+            || (localViteOrigin && target.origin === localViteOrigin && (target.pathname === '/@react-refresh'
+              || /^\/resources\/js\/app-sdk\/peers\/[A-Za-z0-9_-]+\.(?:ts|js)$/.test(target.pathname)))); };
         if (!peers || typeof peers !== 'object' || Array.isArray(peers) || Object.keys(peers).length !== hmrPeers.length
           || !hmrPeers.every(name => Object.hasOwn(peers, name) && allowed(peers[name])) || !allowed(refreshRuntime)) throw new Error('Invalid host assets.');
         await app.hmr.start(key, peers, refreshRuntime);
