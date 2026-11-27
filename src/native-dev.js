@@ -1,4 +1,5 @@
 import { watchRuntimeLogs } from './runtime-logs.js';
+import { createRuntimeLogFile } from './runtime-log-file.js';
 import { terminalLink } from './terminal-link.js';
 import path from 'node:path';
 import { retryDevRead, transientPlatformError } from './dev-retry.js';
@@ -94,6 +95,7 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
   let writer = null, writerCheckedAt = 0, writerClaimAttempted = false;
   let connectionChecked = false, startupSelectionChecked = false;
   let preview, build, hmr, runtimeLogs, browserRuntime = null, preparationFailed = false;
+  let archive;
   let localDatabase, localTunnel, localTunnelClosed = false;
   const progress = detail => task(browserRuntime?.operation_id && !preparationFailed && !failedProgress ? 'success' : 'running',
     browserRuntime?.operation_id && !preparationFailed && !failedProgress ? `${detail} · Last confirmed version` : detail);
@@ -489,7 +491,11 @@ export async function nativeDev(directory, { signal, verbose = false, log = cons
           }
           if (initialConnection.capabilities?.development_logs && browserRuntime && runtimeLogs?.operation !== browserRuntime.operation_id) {
             await runtimeLogs?.close();
-            runtimeLogs = watchRuntimeLogs(config, browserRuntime.operation_id, { log: detailLog, signal, verbose });
+            if (archive === undefined) {
+              archive = await createRuntimeLogFile(scope, identity.key).catch(() => null);
+              detailLog(archive ? 'Local runtime logs: ' + archive.filename : 'Could not open a private local runtime log file.', { wrap: true });
+            }
+            runtimeLogs = watchRuntimeLogs(config, browserRuntime.operation_id, { log: detailLog, signal, verbose, archive: archive?.write });
           }
         }
         lastNotice = undefined;

@@ -206,14 +206,14 @@ export function createDevReporter(log = console.error, {
       return resolved;
     },
     panel(title, rows) { writeLog(devPanel(title, rows, stream)); },
-    message(name, value, { verbose = false, failure = false } = {}) {
+    message(name, value, { verbose = false, failure = false, wrap = false } = {}) {
       const diagnostic = /^\[[^\]]+\s+(error|fatal|critical|alert|emergency)\]/.test(plain(value));
       const visible = failure ? safeLines(value) : visibleLines(value, { verbose: verbose || diagnostic });
       const lines = visible.map(line => {
         const level = line.match(/^\[[^\]]+\s+(error|fatal|critical|alert|emergency|warning|warn)\]/)?.[1];
         const style = failure ? 'error' : styleForLevel(level);
         const marker = style === 'error' ? '✕' : style === 'warning' ? '!' : '·';
-        return formatDetail(marker, name, line, style, failure || style === 'error');
+        return formatDetail(marker, name, line, style, wrap || failure || style === 'error');
       });
       if (lines.length) writeLog(lines.join('\n'), { owner: name, failure });
     },
