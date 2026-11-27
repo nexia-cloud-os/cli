@@ -63,6 +63,31 @@ test('idle log checks cap at thirty seconds and new output resumes the fast inte
   assert.equal(nextRuntimeLogDelay(delay, true, 2000), 2000);
 });
 
+test('a failed local log write leaves terminal output and the existing poll cursor available', async t => {
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  const urls = [], logs = [];
+  let writes = 0;
+  globalThis.fetch = async url => {
+    urls.push(url);
+    const id = urls.length;
+    return new Response(JSON.stringify({ operation_id: 'operation', cursor: id, truncated: false,
+      entries: [{ id, level: 'error', message: 'runtime message ' + id }] }));
+  };
+  const watcher = watchRuntimeLogs({ endpoint: 'http://127.0.0.1:4310', token: 'test' }, 'operation', {
+    signal: controller.signal, interval: 3,
+    log(line) { logs.push(line); if (line.includes('runtime message 2')) controller.abort(); },
+    async archive() { writes++; throw new Error('local disk failure'); },
+  });
+  t.after(async () => { await watcher.close(); globalThis.fetch = original; });
+  await new Promise(resolve => controller.signal.addEventListener('abort', resolve, { once: true }));
+  assert.equal(writes, 1);
+  assert.match(urls[1], /after=1&verbose=0$/);
+  assert.match(logs[0], /runtime message 1/);
+  assert.match(logs[1], /Could not save local runtime logs/);
+  assert.match(logs[2], /runtime message 2/);
+});
+
 test('a source edit wakes an idle log check without waiting for its timer', async t => {
   const original = globalThis.fetch, controller = new AbortController();
   let calls = 0, first;

@@ -603,6 +603,11 @@ or `TERM=dumb` disables colors. Piped/JSON output stays plain and noninteractive
 timings. Routine messages are filtered before serialization and transmission in
 the default mode. Vite uses its warning log level by default.
 
+When PHP streaming starts, the CLI prints the path to a private App-specific
+log file under the CLI configuration directory's logs folder. The file includes
+the runtime output received by that CLI session. At 2 MiB the CLI rotates it
+and retains one previous file. File errors leave the terminal stream available.
+
 Browser diagnostics include console calls attributed to the local App, uncaught
 errors, rejected promises, API failures and React boundary errors. Host-only
 messages are not attributed to an App. Output is batched, with at most 20 queued
