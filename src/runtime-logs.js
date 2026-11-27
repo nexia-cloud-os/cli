@@ -4,7 +4,7 @@ import { devLog } from './dev-log.js';
 
 export const nextRuntimeLogDelay = (current, changed, interval) => changed ? interval : Math.min(Math.max(interval, 30000), current * 2);
 
-export function watchRuntimeLogs(config, operation, { log, signal, interval = 2000, verbose = false }) {
+export function watchRuntimeLogs(config, operation, { log, signal, interval = 2000, verbose = false, archive = null }) {
   const controller = new AbortController();
   const stopped = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   let idleWait = interval, wakeSleep, wakeRequested = false, lastRequestAt = -Infinity;
@@ -29,6 +29,14 @@ export function watchRuntimeLogs(config, operation, { log, signal, interval = 20
         disconnected = false;
         if (result.truncated) devLog(log, 'php', 'warning', 'Earlier logs expired from the bounded buffer.', { verbose });
         for (const row of result.entries) devLog(log, 'php', row.level, row.message, { verbose });
+        if (archive !== null && result.entries.length > 0) {
+          try {
+            await archive(operation, result.entries);
+          } catch {
+            archive = null;
+            devLog(log, 'php', 'warning', 'Could not save local runtime logs; terminal streaming continues.', { verbose });
+          }
+        }
         idleWait = nextRuntimeLogDelay(idleWait, result.cursor !== cursor, interval);
         wait = idleWait;
         canWake = true;
