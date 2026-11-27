@@ -17,6 +17,7 @@ import { configuredDevApps, configureDevApps } from './dev-selection.js';
 import { startDevSession, listDevSessions, stopDevSessions, formatSessions } from './dev-sessions.js';
 import { workspaceDev } from './workspace-dev.js';
 import { testApp } from './app-tests.js';
+import { checkMigrationHistory } from './migration-history.js';
 import { nativeDev } from './native-dev.js';
 import { runDatabaseOperation, formatSeedingResult } from './database-operations.js';
 import { setupLocalDatabase } from './local-database.js';
@@ -253,6 +254,12 @@ try {
     } else if (name === 'check') {
       const targets = await appTargets(options, input, { all: true });
       input.close();
+      const baseline = options['migration-baseline'];
+      if (baseline !== undefined) {
+        if (targets.length !== 1) throw new InputError('Select one App with --app when using --migration-baseline.');
+        await checkMigrationHistory(targets[0], baseline);
+        console.log('Migration history matches the selected baseline under database/migrations.');
+      }
       let failed = false;
       for (const directory of targets) {
         log(`Check: ${directory}`);

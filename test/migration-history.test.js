@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { parseCommand } from '../src/commands.js';
+import { checkMigrationHistory } from '../src/migration-history.js';
+
+test('check accepts a baseline and detects edits and removals without blocking new migrations', async t => {
+  assert.equal(parseCommand(['check', '--migration-baseline', 'v1.0.0']).options['migration-baseline'], 'v1.0.0');
+  const directory = await mkdtemp(path.join(tmpdir(), 'nexia-migration-history-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: directory, stdio: 'pipe' });
+  git('init', '-q');
+  const migrations = path.join(directory, 'database/migrations/tenant');
+  await mkdir(migrations, { recursive: true });
+  const original = path.join(migrations, '001_create_programs.php');
+  await writeFile(original, '<?php // published');
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Publish');
+  git('tag', 'v1.0.0');
+  await writeFile(path.join(migrations, '002_update_programs.php'), '<?php // new');
+  git('add', '.');
+  await checkMigrationHistory(directory, 'v1.0.0');
+  await writeFile(original, '<?php // edited');
+  await assert.rejects(checkMigrationHistory(directory, 'v1.0.0'), /001_create_programs\.php/);
+  await rm(original);
+  await assert.rejects(checkMigrationHistory(directory, 'v1.0.0'), /001_create_programs\.php/);
+  await assert.rejects(checkMigrationHistory(directory, 'v2.0.0'), /baseline is unavailable/);
+});

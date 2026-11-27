@@ -343,7 +343,13 @@ From the project root, DB commands run all Apps sequentially; `--app=people` sel
 Keep `nexia dev` running while correcting errors. Use `migrate → status → rollback → edit → migrate`. Editing an applied file does not replay it automatically. If a nontransactional migration fails, inspect its effects, repair the App database, then run migrate explicitly; source changes and administrator approval are not prerequisites. Successful rollback cannot be assumed for an unrecorded failed file. `fresh` is optional and deletes data. A lost response can be queried with the original `--request-id` (one App only), preserving the original source and options. New commands require matching CLI, Core and Manager versions.
 
 Commit and push source and the intended version tag with Git yourself. From the
-App run `nexia check`, then `nexia submit --tag v1.0.0`. If repository connection is
+App run `nexia check`, then `nexia submit --tag v1.0.0`. To catch edits or removals
+of published files under `database/migrations` before submitting, run
+`nexia check --migration-baseline <published-tag>` with that tag fetched locally.
+Use `--app` to select one App from a multi-App project. New migrations are allowed.
+Developers review compares all applicable published versions and runs the upgrade checks.
+
+If repository connection is
 missing, interactive submission opens Developers for approval. Automated callers
 must connect it in Developers first. Submission does not create tags, push code,
 publish or install an App. Use the returned ID with `submit status`; cancel/retry
